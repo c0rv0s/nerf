@@ -214,6 +214,7 @@ function applyDamage(target, dmg, attacker) {
     target.deaths++;
     attacker.kills++;
     dropPoints(target); // the points fall with the victim — go collect them
+    if (!attacker.isPlayer && attacker.noticeDrop) attacker.noticeDrop(target.pos);
     hud.killfeed(attacker, target);
     G.fxPool.spawnPuff(new THREE.Vector3(target.pos.x, target.pos.y + 1, target.pos.z),
       target.team === 'blue' ? 0x5cb3ff : 0xff5c5c, 2);

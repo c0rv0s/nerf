@@ -58,6 +58,8 @@ export class Bot {
     this.aimYaw = rand(-Math.PI, Math.PI); // actual facing — turns at a finite rate
     this.lastAttacker = null;
     this.alertTimer = 0;                // "just got shot" — may turn on the attacker
+    this.shopping = null;               // pickup we're heading for (refreshed each think)
+    this.lootLock = 0;                  // seconds of shopping focus after a kill drop
 
     const { group } = buildBotMesh(color);
     this.mesh = group;
@@ -91,7 +93,19 @@ export class Bot {
     this.weapon = 'blaster';
     this.path = null;
     this.target = null;
+    this.shopping = null;
+    this.lootLock = 0;
     this.mesh.visible = true;
+  }
+
+  // A kill just dropped point orbs — beeline for them before someone steals them.
+  noticeDrop(pos) {
+    if (this.pos.distanceTo(pos) > 45) return;
+    const from = nearestWaypoint(this.world, this.pos);
+    const to = nearestWaypoint(this.world, pos);
+    this.path = findPath(this.world, from, to) || [from];
+    this.pathIdx = 0;
+    this.lootLock = 4;
   }
 
   die() {
@@ -114,6 +128,7 @@ export class Bot {
   //  - getting shot reveals the attacker for a few seconds
   //  - stickiness: keep fighting the current target instead of hopping to whoever's nearest
   think(characters) {
+    this.shopping = this.bestLoot();
     const myEye = this.eye();
     const eyeOf = (ch) => ch.eye ? ch.eye() : new THREE.Vector3(ch.pos.x, ch.pos.y + 1.5, ch.pos.z);
 
@@ -180,6 +195,8 @@ export class Bot {
 
   // Repath occasionally, or when the path is exhausted
   repath(force) {
+    // committed to a fresh kill drop — don't let combat rolls redirect us
+    if (!force && this.lootLock > 0 && this.path && this.pathIdx < this.path.length) return;
     if (!force && this.path && this.pathIdx < this.path.length && Math.random() >= 0.06) return;
     const from = nearestWaypoint(this.world, this.pos);
     const aggression = this.world.gravity < 12 ? 0.35 : 0.7;
@@ -211,6 +228,7 @@ export class Bot {
     }
     this.reactionTimer -= dt;
     this.alertTimer -= dt;
+    this.lootLock -= dt;
 
     const speed = this.world.playerSpeed * 0.82;
     const lowGrav = this.world.gravity < 12;
@@ -223,6 +241,17 @@ export class Bot {
       const flatD = Math.hypot(wpTarget.x - this.pos.x, wpTarget.z - this.pos.z);
       // flat platform tops now — no sphere shoulders to avoid, keep it tight
       if (flatD < 2.2 && Math.abs(wpTarget.y - this.pos.y) < 3) this.pathIdx++;
+    }
+
+    // Final approach: waypoints only get you *near* an item — walk the last
+    // stretch straight onto it, or the orb just spins there forever.
+    const shop = this.shopping;
+    if (shop && shop.active && (!this.target || this.lootLock > 0)) {
+      const lp = shop.def.pos;
+      const fd = Math.hypot(lp.x - this.pos.x, lp.z - this.pos.z);
+      // low grav: only beeline on the same flat — a straight walk can cross a void gap
+      const [maxD, maxDy] = lowGrav ? [5, 1] : [12, 2.5];
+      if (fd < maxD && Math.abs(lp.y - this.pos.y) < maxDy) wpTarget = lp;
     }
 
     if (this.target && !lowGrav) {
