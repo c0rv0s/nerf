@@ -133,7 +133,7 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'poster1', 'target', 'hazard']
+   'poster1', 'target', 'hazard', 'grass', 'dirt', 'flowers']
     .map((name) => new Promise((done) => {
       const url = `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -403,11 +403,21 @@ function buildArena(scene) {
     addBox(scene, world, x, 15, z, 3, 1.2, 2, 0xffffff, { collide: false, shadow: false, emissive: 0xeef4ff, emissiveIntensity: 2.2 });
   }
   // wall art — the complex is a sports venue, let it look like one
-  addDecal(scene, 'poster1', -50, 10, -56.9, 9, 0);
-  addDecal(scene, 'target', 50, 10, -56.9, 9, 0);
-  addDecal(scene, 'hazard', 0, 10.5, 56.9, 12, Math.PI);
-  addDecal(scene, 'poster1', -76.9, 9, 30, 9, Math.PI / 2);
-  addDecal(scene, 'target', 76.9, 8, -30, 9, -Math.PI / 2);
+  // (bottoms sit above the y≈7 glow stripes — intersecting them glitched)
+  addDecal(scene, 'poster1', -50, 12.2, -56.9, 9, 0);
+  addDecal(scene, 'target', 50, 12.2, -56.9, 9, 0);
+  addDecal(scene, 'hazard', 0, 10.6, 56.9, 12, Math.PI, 6);
+  addDecal(scene, 'poster1', -76.9, 12.2, 30, 9, Math.PI / 2);
+  addDecal(scene, 'target', 76.9, 12.2, -30, 9, -Math.PI / 2);
+  // ground variety: an arcade-carpet lounge in the west wing
+  addBox(scene, world, -52, 0.031, -30, 40, 0.06, 40, 0x9088b0, { tex: 'arcade', repeat: [8, 8] });
+  addBox(scene, world, -52, 0.031, 30, 36, 0.06, 36, 0x7a94b0, { tex: 'grass', repeat: [7, 7] });
+  // floating platform over the east basement + pad up
+  addBox(scene, world, 54, 6.7, 30, 10, 0.6, 8, 0x7a4fc0, { tex: 'panel' });
+  addJumpPad(scene, world, 45, -5, 30, 28, 5, 0, 0xffd23c); // offset — straight under bonks the underside
+  pk(world, 'ammo', 54, 7.2, 30, { weapon: 'hyper' });
+  wp(world, 45, -5, 30); wp(world, 54, 7, 30);
+  world.manualLinks.push([45, -5, 30, 54, 7, 30, true]);
 
   const wallC = 0x7a4fc0; // interior partition color
 
@@ -666,6 +676,23 @@ function buildFortress(scene) {
   addDecal(scene, 'hazard', 76.9, 5.5, 20, 8, -Math.PI / 2);
   addDecal(scene, 'poster1', -76.9, 5.5, -20, 8, Math.PI / 2);
   addDecal(scene, 'target', -9, 6, -3.06, 4, Math.PI);
+  // ground variety: grass courtyards, dirt lanes
+  addBox(scene, world, -45, 0.031, 30, 26, 0.06, 22, 0x6aa84f, { tex: 'grass', repeat: [5, 4] });
+  addBox(scene, world, 45, 0.031, -30, 26, 0.06, 22, 0x6aa84f, { tex: 'grass', repeat: [5, 4] });
+  addBox(scene, world, 0, 0.031, 14.75, 100, 0.06, 8, 0xb08a5a, { tex: 'dirt', repeat: [14, 1] });
+  addBox(scene, world, 0, 0.031, -14.75, 100, 0.06, 8, 0xb08a5a, { tex: 'dirt', repeat: [14, 1] });
+  addBox(scene, world, -45, 0.036, -30, 20, 0.07, 16, 0xd8a8c8, { tex: 'flowers', repeat: [4, 3] });
+  // floating platforms over the courtyards + pads
+  addBox(scene, world, -30, 8.7, 30, 9, 0.6, 9, 0x9a6fe0, { tex: 'panel' });
+  addJumpPad(scene, world, -39, 0, 30, 24, 6.4, 0, 0x9dff70);
+  pk(world, 'health', -30, 9.2, 30);
+  wp(world, -39, 0, 30); wp(world, -30, 9, 30);
+  world.manualLinks.push([-39, 0, 30, -30, 9, 30, true]);
+  addBox(scene, world, 30, 8.7, -30, 9, 0.6, 9, 0x9a6fe0, { tex: 'panel' });
+  addJumpPad(scene, world, 39, 0, -30, 24, -6.4, 0, 0x9dff70);
+  pk(world, 'ammo', 30, 9.2, -30, { weapon: 'sidewinder' });
+  wp(world, 39, 0, -30); wp(world, 30, 9, -30);
+  world.manualLinks.push([39, 0, -30, 30, 9, -30, true]);
   // glow strips along the trench lips
   addBox(scene, world, 0, 0, 7.5, 146, 0.15, 0.3, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.3 });
   addBox(scene, world, 0, 0, -7.5, 146, 0.15, 0.3, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.3 });
@@ -1125,6 +1152,23 @@ function buildCanopy(scene) {
   addBox(scene, world, -54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] }); // plank bridge
   addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -2.6, h1: 0.3, color: 0x4a7a52 });
   addRamp(scene, world, { axis: 'x', minX: -58, maxX: -51.5, minZ: -52, maxZ: -48, h0: 0.3, h1: -2.6, color: 0x4a7a52 });
+  // ground variety: dirt roads + flower meadows across the lawn
+  addBox(scene, world, 10, 0.031, -40, 120, 0.06, 7, 0xb08a5a, { tex: 'dirt', repeat: [16, 1] });
+  addBox(scene, world, 55, 0.031, 20, 7, 0.06, 113, 0xb08a5a, { tex: 'dirt', repeat: [1, 15] });
+  addBox(scene, world, -20, 0.036, 55, 22, 0.07, 18, 0xd8a8c8, { tex: 'flowers', repeat: [4, 3] });
+  addBox(scene, world, 40, 0.036, -65, 18, 0.07, 14, 0xd8a8c8, { tex: 'flowers', repeat: [3, 3] });
+  addBox(scene, world, -70, 0.036, 30, 16, 0.07, 20, 0xd8a8c8, { tex: 'flowers', repeat: [3, 4] });
+  // floating platforms + pads
+  addBox(scene, world, 30, 13.7, 55, 10, 0.6, 10, 0x8a6a40, { tex: 'crate' });
+  addJumpPad(scene, world, 21, 0, 55, 30, 5, 0, 0xffd23c);
+  pk(world, 'star', 30, 14.2, 55, { hidden: true });
+  wp(world, 21, 0, 55); wp(world, 30, 14, 55);
+  world.manualLinks.push([21, 0, 55, 30, 14, 55, true]);
+  addBox(scene, world, -35, 11.7, -60, 10, 0.6, 10, 0x8a6a40, { tex: 'crate' });
+  addJumpPad(scene, world, -44, 0, -60, 28, 5, 0, 0xffd23c);
+  pk(world, 'health', -35, 12.2, -60);
+  wp(world, -44, 0, -60); wp(world, -35, 12, -60);
+  world.manualLinks.push([-44, 0, -60, -35, 12, -60, true]);
   // tournament banners on the hedges + the big tree
   addDecal(scene, 'target', -20, 8, -79.94, 10, 0);
   addDecal(scene, 'poster1', 20, 9, 79.94, 10, Math.PI);
@@ -1251,7 +1295,9 @@ function buildCanopy(scene) {
 
   // Canopy blobs + bushes (visual only)
   const deco = { colliders: [], ramps: [] };
-  for (const [x, y, z, r] of [[-45, 33, -45, 13], [45, 33, -45, 13], [-45, 33, 45, 13], [45, 33, 45, 13], [0, 39, 0, 16],
+  const autumn = addAsteroid(scene, deco, 45, 33, 45, 13, 0xd8742a); // one tree turns first
+  autumn.material.map = null;
+  for (const [x, y, z, r] of [[-45, 33, -45, 13], [45, 33, -45, 13], [-45, 33, 45, 13], [0, 39, 0, 16],
                               [-20, 1, -60, 3], [60, 1, 20, 3], [-60, 1, 10, 2.5], [25, 1, 60, 3]]) {
     const blob = addAsteroid(scene, deco, x, y, z, r, 0x3f7a33);
     blob.material.map = null;
@@ -1524,6 +1570,21 @@ function buildCity(scene) {
   addBox(scene, world, -12, 40.5, 44, 1.8, 0.6, 1.8, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
   // lava pool by the SE corner — mind the glow
   addLava(scene, world, 56, -50, 8, 8);
+  // ground variety: galleria plaza, crosswalk bands
+  addBox(scene, world, -12, 0.031, 14, 30, 0.06, 14, 0x9088b0, { tex: 'arcade', repeat: [6, 3] });
+  addBox(scene, world, 0, 0.031, -20, 8, 0.06, 30, 0x8a94b0, { tex: 'checker', repeat: [2, 7] });
+  addBox(scene, world, 40, 0.031, 0, 10, 0.06, 60, 0x8a94b0, { tex: 'checker', repeat: [2, 14] });
+  // floating platforms over the street + pads
+  addBox(scene, world, 0, 11.7, -20, 12, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
+  addJumpPad(scene, world, -9, 0, -20, 28, 3.8, 0, 0x30e0ff);
+  pk(world, 'shield', 0, 12.2, -20);
+  wp(world, -9, 0, -20); wp(world, 0, 12, -20);
+  world.manualLinks.push([-9, 0, -20, 0, 12, -20, true]);
+  addBox(scene, world, -40, 9.7, 20, 10, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
+  addJumpPad(scene, world, -49, 0, 20, 26, 5.5, 0, 0x30e0ff);
+  pk(world, 'ammo', -40, 10.2, 20, { weapon: 'whomper' });
+  wp(world, -49, 0, 20); wp(world, -40, 10, 20);
+  world.manualLinks.push([-49, 0, 20, -40, 10, 20, true]);
   // billboards — it's a city, sell something
   addDecal(scene, 'poster1', -40, 14, -63.94, 14, 0);
   addDecal(scene, 'target', 40, 14, -63.94, 12, 0);
@@ -2129,31 +2190,36 @@ export function buildAtrium(scene) {
     ['asteroids', 'ASTEROID BELT', 0x8fb8d8, 'w', -14],
     ['canopy', 'CANOPY', 0x4dbf6a, 'e', 14],
     ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -14],
-    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'n', 18],
+    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 's', 0],  // behind you at spawn
   ];
   for (const [id, name, color, wall, off] of bays) {
-    const n = wall === 'n';
-    const sgn = wall === 'e' ? 1 : -1;
-    const px = n ? off : sgn * 30.6, pz = n ? -46.6 : off;   // pillar centerline
+    const horiz = wall === 'n' || wall === 's';
+    const sgn = (wall === 'e' || wall === 's') ? 1 : -1;
+    const px = horiz ? off : sgn * 30.6, pz = horiz ? sgn * 46.6 : off;  // pillar centerline
     const P = (dx, dz, w, h, d) => addBox(scene, world, px + dx, h / 2, pz + dz, w, h, d, 0x4a4266, { tex: 'neonwall' });
-    if (n) {
+    if (horiz) {
       P(-4, 0, 1.6, 7, 1.6); P(4, 0, 1.6, 7, 1.6);
       addBox(scene, world, px, 7.6, pz, 9.6, 1.4, 1.6, 0x4a4266, { tex: 'neonwall' });
-      addBox(scene, world, px, 3.2, pz - 0.9, 7, 6, 0.5, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
+      addBox(scene, world, px, 3.2, pz + sgn * 0.9, 7, 6, 0.5, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
     } else {
       P(0, -4, 1.6, 7, 1.6); P(0, 4, 1.6, 7, 1.6);
       addBox(scene, world, px, 7.6, pz, 1.6, 1.4, 9.6, 0x4a4266, { tex: 'neonwall' });
       addBox(scene, world, px + sgn * 0.9, 3.2, pz, 0.5, 6, 7, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
     }
-    // sign panel flat on the wall above the gate (walls' inner faces: z −48, x ±32)
-    makeSign(scene, n ? px : sgn * 31.9, 9.6, n ? -47.95 : pz, 10,
-      '#' + color.toString(16).padStart(6, '0'), name, n ? 0 : -sgn * Math.PI / 2);
+    // sign panel flat on the wall above the gate (inner faces: z ±48, x ±32)
+    makeSign(scene, horiz ? px : sgn * 31.9, 9.6, horiz ? sgn * 47.95 : pz, 10,
+      '#' + color.toString(16).padStart(6, '0'), name,
+      horiz ? (sgn === -1 ? 0 : Math.PI) : -sgn * Math.PI / 2);
     const L = new THREE.PointLight(color, 26, 20);
-    L.position.set(n ? px : px - sgn * 2.5, 4.5, n ? pz + 2.5 : pz);
+    L.position.set(horiz ? px : px - sgn * 2.5, 4.5, horiz ? pz - sgn * 2.5 : pz);
     scene.add(L);
-    world.portals.push({ x: n ? px : px + sgn * 0.5, z: n ? pz - 0.5 : pz, map: id, name });
+    world.portals.push({ x: horiz ? px : px + sgn * 0.5, z: horiz ? pz + sgn * 0.5 : pz, map: id, name });
   }
   world.portals.push({ x: 44, z: 11.5, map: 'prism', name: '???' });
+
+  // flower borders flanking the boulevard
+  addBox(scene, world, -8.5, 0.036, 14, 5, 0.07, 52, 0xd8a8c8, { tex: 'flowers', repeat: [1, 10] });
+  addBox(scene, world, 8.5, 0.036, 14, 5, 0.07, 52, 0xd8a8c8, { tex: 'flowers', repeat: [1, 10] });
 
   // controls board to the left of spawn (replaces the old overlay text)
   {

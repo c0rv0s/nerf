@@ -507,6 +507,7 @@ document.addEventListener('pointerlockchange', () => {
     board.style.display = showPause ? 'block' : 'none';
     board.style.top = showPause ? '27%' : '';    // scoreboard on top, resume mid, quit bottom
     board.style.zIndex = showPause ? 3 : '';     // above the pause overlay
+    board.style.background = showPause ? 'rgba(10,12,30,.96)' : ''; // solid — the tint washed it out
     if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
   } else {
     clickcatch.style.display = 'none';
