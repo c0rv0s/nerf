@@ -18,6 +18,27 @@ const MATCH_TIME = 5 * 60; // no score limit — most points when time expires w
 const RESPAWN_TIME = 3;
 
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
+const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
+
+// Soundtrack — matches only, never the lobby. Alternates tracks per match.
+const MUSIC = ['./music/track1.mp3', './music/track2.mp3'];
+let musicEl = null;
+let musicIdx = Math.floor(Math.random() * MUSIC.length);
+function musicPlay() {
+  if (!musicEl) {
+    musicEl = new Audio();
+    musicEl.volume = 0.3;
+    musicEl.addEventListener('ended', () => {
+      musicIdx = (musicIdx + 1) % MUSIC.length;
+      musicEl.src = MUSIC[musicIdx];
+      musicEl.play().catch(() => {});
+    });
+  }
+  musicIdx = (musicIdx + 1) % MUSIC.length;
+  musicEl.src = MUSIC[musicIdx];
+  musicEl.play().catch(() => {}); // blocked until a user gesture — fine
+}
+function musicStop() { musicEl?.pause(); }
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -78,6 +99,7 @@ function teardown() {
 // THE LOBBY: a walkable atrium — stroll into a glowing gate to start a match.
 function startAtrium() {
   teardown();
+  musicStop();
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildAtrium(scene);
@@ -211,6 +233,7 @@ function startMatch(mapDef, mode = 'ffa') {
   document.getElementById('scores').style.display = '';
   clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
   requestPointerLock();
+  musicPlay();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
 }
@@ -482,7 +505,7 @@ document.addEventListener('pointerlockchange', () => {
     quitBtn.style.display = showPause ? '' : 'none';
     const board = hud.els.board;
     board.style.display = showPause ? 'block' : 'none';
-    board.style.top = showPause ? '74%' : '';    // below the PAUSED text
+    board.style.top = showPause ? '27%' : '';    // scoreboard on top, resume mid, quit bottom
     board.style.zIndex = showPause ? 3 : '';     // above the pause overlay
     if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
   } else {
@@ -578,6 +601,20 @@ function step(dt) {
     G.player.update(dt, fire);
     for (const ch of G.characters) {
       if (!ch.isPlayer) ch.update(dt, G.characters, fire);
+    }
+
+    // lava burns ~34 hp/s in three pulses per second
+    if (G.world.lavaZones) {
+      for (const ch of G.characters) {
+        if (!ch.alive) continue;
+        const burning = G.world.lavaZones.some(zn =>
+          ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
+          ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ && ch.pos.y < zn.maxY);
+        if (burning) {
+          ch._lavaT = (ch._lavaT || 0) + dt;
+          if (ch._lavaT > 0.33) { ch._lavaT = 0; applyDamage(ch, 11.3, LAVA); }
+        } else ch._lavaT = 0;
+      }
     }
 
     // fell into the void?

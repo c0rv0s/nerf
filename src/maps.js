@@ -132,7 +132,8 @@ export function aiTex(name, rx = 1, ry = 1) {
 // Resolves when every texture is loaded (or confirmed missing) — the boot
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
-  ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade']
+  ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
+   'poster1', 'target', 'hazard']
     .map((name) => new Promise((done) => {
       const url = `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -149,6 +150,19 @@ export const texturesReady = Promise.all(
         }, undefined, () => done());
       }).catch(() => done());
     })));
+
+// Loud 90s wall art (posters / targets / hazard banners), unlit for punch.
+// Pure decoration — no collider, mounted a few cm off the wall face.
+function addDecal(scene, name, x, y, z, w, yaw = 0, h = w) {
+  const ai = AI_TEX[name];
+  if (!ai) return;
+  const map = ai.map.clone();
+  map.needsUpdate = true;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map }));
+  m.position.set(x, y, z);
+  m.rotation.y = yaw;
+  scene.add(m);
+}
 
 function mat(color, opts = {}) {
   const { tex, repeat, emissive, ...rest } = opts;
@@ -388,6 +402,12 @@ function buildArena(scene) {
   for (const [x, z] of [[-50, -57.9], [0, -57.9], [50, -57.9], [-50, 57.9], [0, 57.9], [50, 57.9]]) {
     addBox(scene, world, x, 15, z, 3, 1.2, 2, 0xffffff, { collide: false, shadow: false, emissive: 0xeef4ff, emissiveIntensity: 2.2 });
   }
+  // wall art — the complex is a sports venue, let it look like one
+  addDecal(scene, 'poster1', -50, 10, -56.9, 9, 0);
+  addDecal(scene, 'target', 50, 10, -56.9, 9, 0);
+  addDecal(scene, 'hazard', 0, 10.5, 56.9, 12, Math.PI);
+  addDecal(scene, 'poster1', -76.9, 9, 30, 9, Math.PI / 2);
+  addDecal(scene, 'target', 76.9, 8, -30, 9, -Math.PI / 2);
 
   const wallC = 0x7a4fc0; // interior partition color
 
@@ -640,6 +660,15 @@ function buildFortress(scene) {
   addBox(scene, world, -9, 5, 0, 6, 10, 6, 0x7a4fc0, { tex: 'panel' });
   addBox(scene, world, 9, 5, 0, 6, 10, 6, 0x7a4fc0, { tex: 'panel' });
   addBox(scene, world, 0, 10.8, 0, 24, 1.6, 6, 0x9a6fe0);   // arch overhead
+  // banners on the perimeter + a target on the west gatehouse tower
+  addDecal(scene, 'target', -30, 6.5, -44.9, 7, 0);
+  addDecal(scene, 'poster1', 30, 6.5, 44.9, 7, Math.PI);
+  addDecal(scene, 'hazard', 76.9, 5.5, 20, 8, -Math.PI / 2);
+  addDecal(scene, 'poster1', -76.9, 5.5, -20, 8, Math.PI / 2);
+  addDecal(scene, 'target', -9, 6, -3.06, 4, Math.PI);
+  // glow strips along the trench lips
+  addBox(scene, world, 0, 0, 7.5, 146, 0.15, 0.3, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.3 });
+  addBox(scene, world, 0, 0, -7.5, 146, 0.15, 0.3, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.3 });
 
   // THE KEEP (north-center): interior room w/ gold, walkable roof
   addBox(scene, world, 0, 3.5, 37, 22, 7, 2, 0x8a5fd0, { tex: 'panel' });   // north wall
@@ -685,7 +714,10 @@ function buildFortress(scene) {
   // the keep roof (edge abut at z=13 — no overlap, no z-fight).
   addBox(scene, world, 0, 7.4, -12.5, 4, 0.8, 51, 0x9a6fe0, { tex: 'panel' });
   addBox(scene, world, -1.85, 8.3, -12.5, 0.3, 1.0, 51, 0xffd23c);          // rails
-  addBox(scene, world, 1.85, 8.3, -12.5, 0.3, 1.0, 51, 0xffd23c);
+  // east rail splits around the perch ramp (z −30..−19) — the ramp slab cut
+  // through it at a near-flat angle and the intersection shimmered
+  addBox(scene, world, 1.85, 8.3, -3, 0.3, 1.0, 32, 0xffd23c);
+  addBox(scene, world, 1.85, 8.3, -34, 0.3, 1.0, 8, 0xffd23c);
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -41.75, maxZ: -38, h0: 5.0, h1: 7.8, color: 0x8a5fd0 });
   // Sniper perch two levels up (top y=12.6), reached by a half-width ramp on
   // the catwalk's east lane; the west lane stays walkable underneath it.
@@ -1093,6 +1125,11 @@ function buildCanopy(scene) {
   addBox(scene, world, -54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] }); // plank bridge
   addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -2.6, h1: 0.3, color: 0x4a7a52 });
   addRamp(scene, world, { axis: 'x', minX: -58, maxX: -51.5, minZ: -52, maxZ: -48, h0: 0.3, h1: -2.6, color: 0x4a7a52 });
+  // tournament banners on the hedges + the big tree
+  addDecal(scene, 'target', -20, 8, -79.94, 10, 0);
+  addDecal(scene, 'poster1', 20, 9, 79.94, 10, Math.PI);
+  addDecal(scene, 'hazard', -79.94, 8, 20, 10, Math.PI / 2);
+  addDecal(scene, 'target', 0, 12, -2.56, 4, Math.PI);
   for (const [x, z, w, d] of [[0, -83, 172, 6], [0, 83, 172, 6], [-83, 0, 6, 172], [83, 0, 6, 172]]) {
     addBox(scene, world, x, 14, z, w, 40, d, 0x2e4d2a, { tex: 'rock' });
   }
@@ -1485,6 +1522,16 @@ function buildCity(scene) {
   addBox(scene, world, 38, 29.5, -40, 3, 3, 3, 0x2a3040, { tex: 'panel' });
   addBox(scene, world, -12, 37, 44, 1, 6, 1, 0x8892a8, { collide: false });
   addBox(scene, world, -12, 40.5, 44, 1.8, 0.6, 1.8, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
+  // lava pool by the SE corner — mind the glow
+  addLava(scene, world, 56, -50, 8, 8);
+  // billboards — it's a city, sell something
+  addDecal(scene, 'poster1', -40, 14, -63.94, 14, 0);
+  addDecal(scene, 'target', 40, 14, -63.94, 12, 0);
+  addDecal(scene, 'hazard', 0, 12, 63.94, 16, Math.PI);
+  addDecal(scene, 'poster1', 84.94, 12, 20, 12, -Math.PI / 2);
+  addDecal(scene, 'target', -12, 29, 21.94, 8, Math.PI);
+  addDecal(scene, 'hazard', -12, 15, -27.56, 9, Math.PI);
+
   // street clutter (cars/kiosks)
   addBox(scene, world, -48, 1.2, 2, 5, 2.4, 10, 0x7a3a4a, { tex: 'panel' });
   addBox(scene, world, 18, 1.2, -6, 5, 2.4, 10, 0x3a6a7a, { tex: 'panel' });
@@ -1625,6 +1672,30 @@ function buildCity(scene) {
   return world;
 }
 
+/* ---------------- lava pools ---------------- */
+// A rimmed basin of glowing lava. Standing in it burns ~34 hp/s (handled in
+// main.js via world.lavaZones) — about three seconds to scramble out.
+function addLava(scene, world, x, z, w, d) {
+  const rim = 0x2a2030;
+  addBox(scene, world, x, 0.3, z - d / 2 + 0.35, w, 0.6, 0.7, rim, { tex: 'rock' });
+  addBox(scene, world, x, 0.3, z + d / 2 - 0.35, w, 0.6, 0.7, rim, { tex: 'rock' });
+  addBox(scene, world, x - w / 2 + 0.35, 0.3, z, 0.7, 0.6, d - 1.4, rim, { tex: 'rock' });
+  addBox(scene, world, x + w / 2 - 0.35, 0.3, z, 0.7, 0.6, d - 1.4, rim, { tex: 'rock' });
+  const lava = new THREE.Mesh(new THREE.PlaneGeometry(w - 1.4, d - 1.4),
+    new THREE.MeshStandardMaterial({ color: 0xff5a20, emissive: 0xff4a10, emissiveIntensity: 1.1, roughness: 0.4 }));
+  lava.rotation.x = -Math.PI / 2;
+  lava.position.set(x, 0.18, z);
+  scene.add(lava);
+  world.anim.push((dt, t) => { lava.material.emissiveIntensity = 1.05 + Math.sin(t * 2.6 + x) * 0.3; });
+  const L = new THREE.PointLight(0xff5a20, 32, 20);
+  L.position.set(x, 2.5, z);
+  scene.add(L);
+  (world.lavaZones ||= []).push({
+    minX: x - w / 2 + 0.7, maxX: x + w / 2 - 0.7,
+    minZ: z - d / 2 + 0.7, maxZ: z + d / 2 - 0.7, maxY: 0.5,
+  });
+}
+
 /* ============== SECRET MAP — THE SANCTUM (hidden gate in the lobby) ==============
    An obsidian temple: obelisk chamber at the center, four rune rooms reached
    through tight corridors, a crypt below (the gold), a balcony, rooftops via
@@ -1713,6 +1784,10 @@ function buildSanctum(scene) {
   }
   addJumpPad(scene, world, 20, 0, 40, 20, -7, 0, 0x8a5fff);
   addJumpPad(scene, world, -20, 0, -40, 20, 7, 0, 0x8a5fff);
+
+  // lava pools in the NW and SE courts — the temple demands sacrifice
+  addLava(scene, world, -28, 28, 9, 9);
+  addLava(scene, world, 28, -28, 9, 9);
 
   // ambulatory braziers
   for (const [x, z] of [[47, 47], [-47, 47], [47, -47], [-47, -47]]) {
@@ -1873,6 +1948,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 33.5, 6, 46.75, 3, 12, 5.5, 0x6a5f88, { tex: 'neonwall' });
   addBox(scene, world, 33.5, 8.5, 42, 3, 7, 4, 0x6a5f88, { tex: 'neonwall' });     // lintel
   addBox(scene, world, 30.2, 2.5, 40, 0.6, 5, 5.6, 0x6a5f88, { tex: 'neonwall' }); // concealer slab
+  addBox(scene, world, 32.5, -0.5, 42, 1.2, 1, 4.2, 0x3a3452, { tex: 'panel' });   // door threshold (no void gap)
   // the passage: east hallway, then a leg north to the gate chamber
   // hall pieces start at x 33, buried inside the wall box (32..35) — ending
   // exactly on the wall's inner face plane (x 32) z-fought with it
@@ -1981,6 +2057,10 @@ export function buildAtrium(scene) {
   addBox(scene, world, -14, 1.2, 30, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
   addBox(scene, world, -16.6, 1.2, 31, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
   addBox(scene, world, -15, 3.6, 30.4, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
+  addDecal(scene, 'poster1', -14, 6, -47.94, 8, 0);
+  addDecal(scene, 'target', 14, 6, -47.94, 8, 0);
+  addDecal(scene, 'hazard', -31.94, 6, 30, 8, Math.PI / 2);
+  addDecal(scene, 'hazard', 31.94, 6, -30, 8, -Math.PI / 2);
   for (const [x, z, c] of [[-20, -46.9, 0xff40a0], [20, -46.9, 0x30e0ff]]) {
     addBox(scene, world, x, 8, z, 14, 0.8, 0.3, c, { collide: false, shadow: false, emissive: c, emissiveIntensity: 1.5 });
   }

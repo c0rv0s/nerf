@@ -26,7 +26,7 @@ export const WEAPONS = {
   whomper:    { name: 'WHOMPER',      slot: 6, dmg: 85, rof: 0.5, speed: 42,  spread: 0.004,
                 pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.42,
                 splash: 10, splashDmg: 50, sound: 'whomp' },
-  hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 160, spread: 0.001,
+  hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 320, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
                 trail: true, sound: 'hyper' },
 };
