@@ -84,7 +84,6 @@ function resolveSphere(pos, radius, colliders, out) {
         dx /= d; dy /= d; dz /= d;
         pos.x += dx * push; pos.y += dy * push; pos.z += dz * push;
         out.hit = true; if (dy > out.ny) out.ny = dy;
-        if (dy < out.nyMin) out.nyMin = dy;
         out.nx += dx; out.nz += dz;
       } else {
         // Center inside the box: exit through the nearest face.
@@ -97,7 +96,6 @@ function resolveSphere(pos, radius, colliders, out) {
         const [dist, ex, ey, ez] = exits[0];
         pos.x += ex * dist; pos.y += ey * dist; pos.z += ez * dist;
         out.hit = true; if (ey > out.ny) out.ny = ey;
-        if (ey < out.nyMin) out.nyMin = ey;
       }
     } else if (c.type === 'sphere') {
       _v.set(pos.x - c.center.x, pos.y - c.center.y, pos.z - c.center.z);
@@ -108,7 +106,6 @@ function resolveSphere(pos, radius, colliders, out) {
         out.hit = true;
         const ny = _v.y / (min - d) || 0;
         if (ny > out.ny) out.ny = ny;
-        if (ny < out.nyMin) out.nyMin = ny;
       }
     }
   }
@@ -117,12 +114,11 @@ function resolveSphere(pos, radius, colliders, out) {
 // Move a character (feet-position capsule) with gravity + collision.
 // char: {pos, vel, radius, height}; world: {colliders, ramps, gravity}
 export function moveCharacter(char, world, dt) {
-  const gdir = char.gdir || 1;   // -1 = gravity pulls up (Escher paths)
-  char.vel.y -= world.gravity * dt * gdir;
+  char.vel.y -= world.gravity * dt;
   char.pos.addScaledVector(char.vel, dt);
 
   const r = char.radius;
-  const out = { hit: false, ny: 0, nyMin: 0, nx: 0, nz: 0 };
+  const out = { hit: false, ny: 0, nx: 0, nz: 0 };
   const sphereYs = [r, char.height * 0.5, char.height - r];
   const sp = new THREE.Vector3();
   for (let iter = 0; iter < 2; iter++) {
@@ -136,11 +132,8 @@ export function moveCharacter(char, world, dt) {
 
   let grounded = false;
   if (out.hit) {
-    // "support" opposes gravity (floor tops normally, undersides when inverted)
-    const support = gdir === 1 ? out.ny : -out.nyMin;
-    const bonk = gdir === 1 ? -out.nyMin : out.ny;
-    if (support > 0.55) { grounded = true; if (char.vel.y * gdir < 0) char.vel.y = 0; }
-    else if (bonk > 0.55 && char.vel.y * gdir > 0) char.vel.y = 0; // bonked head
+    if (out.ny > 0.55) { grounded = true; if (char.vel.y < 0) char.vel.y = 0; }
+    else if (out.ny < -0.55 && char.vel.y > 0) char.vel.y = 0; // bonked head
     else {
       // wall — damp velocity into the wall a bit
       const n = new THREE.Vector3(out.nx, 0, out.nz);
@@ -155,7 +148,7 @@ export function moveCharacter(char, world, dt) {
   // Walkable ramps: when approaching from above, snap onto the surface (smooth
   // walking). In every other case the slab is a solid oriented box — sides and
   // underside block like any wall.
-  for (const ramp of gdir === 1 ? world.ramps : []) {
+  for (const ramp of world.ramps) {
     if (!inRampFootprint(ramp, char.pos.x, char.pos.z, char.radius + 0.2)) continue;
     const surf = rampSurfaceY(ramp, char.pos.x, char.pos.z);
     // Snap onto the surface only when walking/falling — never while rising,
@@ -183,7 +176,7 @@ export function moveCharacter(char, world, dt) {
   }
 
   // Jump pads: {x, y, z, r, vy, vx?, vz?}
-  if (grounded && gdir === 1 && world.jumpPads) {
+  if (grounded && world.jumpPads) {
     for (const pad of world.jumpPads) {
       if (pad.playersOnly && !char.isPlayer) continue;
       if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
@@ -200,25 +193,93 @@ export function moveCharacter(char, world, dt) {
   return grounded;
 }
 
-// Escher worlds: jumping toward another path captures you into its gravity —
-// leap at the underside of an overhead walkway and you fall UP onto it.
-export function gravityCapture(char, world) {
-  if (!world.escher || char.grounded) return false;
-  const gdir = char.gdir || 1;
-  if (char.vel.y * gdir < 0.5) return false;   // only while leaping away from the floor
-  const lead = gdir === 1 ? char.pos.y + char.height : char.pos.y;
-  for (const c of world.colliders) {
+/* ============ Arbitrary-gravity mover (PRISM RUN wall-walking) ============
+   Same capsule-vs-box resolution, but "down" is -char.up (any cardinal), so
+   the character can stand on floors, walls and ceilings alike. Returns the
+   world-space contact-normal sum in `nOut` (for grounded / climb decisions). */
+function resolveSphereVec(pos, radius, colliders, nsum) {
+  for (const c of colliders) {
     if (c.type !== 'box') continue;
-    if (char.pos.x < c.min.x - 0.2 || char.pos.x > c.max.x + 0.2 ||
-        char.pos.z < c.min.z - 0.2 || char.pos.z > c.max.z + 0.2) continue;
-    if (gdir === 1 ? (c.min.y >= lead && c.min.y < lead + 2.4)
-                   : (c.max.y <= lead && c.max.y > lead - 2.4)) {
-      char.gdir = -gdir;
-      char.vel.y *= 0.5;
-      return true;
+    const cx = clamp(pos.x, c.min.x, c.max.x);
+    const cy = clamp(pos.y, c.min.y, c.max.y);
+    const cz = clamp(pos.z, c.min.z, c.max.z);
+    let dx = pos.x - cx, dy = pos.y - cy, dz = pos.z - cz;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > radius * radius) continue;
+    if (d2 > 1e-9) {
+      const d = Math.sqrt(d2), push = radius - d;
+      dx /= d; dy /= d; dz /= d;
+      pos.x += dx * push; pos.y += dy * push; pos.z += dz * push;
+      nsum.x += dx; nsum.y += dy; nsum.z += dz;
+    } else {
+      const exits = [
+        [c.max.x - pos.x + radius, 1, 0, 0], [pos.x - c.min.x + radius, -1, 0, 0],
+        [c.max.y - pos.y + radius, 0, 1, 0], [pos.y - c.min.y + radius, 0, -1, 0],
+        [c.max.z - pos.z + radius, 0, 0, 1], [pos.z - c.min.z + radius, 0, 0, -1],
+      ];
+      exits.sort((a, b) => a[0] - b[0]);
+      const [dist, ex, ey, ez] = exits[0];
+      pos.x += ex * dist; pos.y += ey * dist; pos.z += ez * dist;
+      nsum.x += ex; nsum.y += ey; nsum.z += ez;
     }
   }
-  return false;
+}
+
+export function moveCharacterUp(char, world, dt, nOut) {
+  const up = char.up;
+  char.vel.addScaledVector(up, -world.gravity * dt);
+  char.pos.addScaledVector(char.vel, dt);
+
+  const r = char.radius;
+  const offs = [r, char.height * 0.5, char.height - r];
+  const sp = new THREE.Vector3();
+  const before = new THREE.Vector3();
+  nOut.set(0, 0, 0);
+  for (let iter = 0; iter < 2; iter++) {
+    for (const o of offs) {
+      sp.copy(char.pos).addScaledVector(up, o);
+      before.copy(sp);
+      resolveSphereVec(sp, r, world.colliders, nOut);
+      char.pos.add(sp.sub(before));
+    }
+  }
+
+  let grounded = false;
+  if (nOut.lengthSq() > 1e-6) {
+    const n = _v.copy(nOut).normalize();
+    const along = n.dot(up);              // +1 = surface under your feet
+    const vUp = char.vel.dot(up);
+    if (along > 0.55) { grounded = true; if (vUp < 0) char.vel.addScaledVector(up, -vUp); }
+    else if (along < -0.55) { if (vUp > 0) char.vel.addScaledVector(up, -vUp); } // head bonk
+    else {                                // wall: kill velocity into it
+      const into = char.vel.dot(n);
+      if (into < 0) char.vel.addScaledVector(n, -into);
+    }
+  }
+
+  // Jump pads still fire when you're stood on a +Y surface (the arena floor)
+  if (grounded && up.y > 0.9 && world.jumpPads) {
+    for (const pad of world.jumpPads) {
+      if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
+          Math.abs(char.pos.y - pad.y) < 1.2) {
+        char.vel.y = pad.vy;
+        if (pad.vx) char.vel.x = pad.vx;
+        if (pad.vz) char.vel.z = pad.vz;
+        grounded = false;
+        world.onPad?.(char);
+        break;
+      }
+    }
+  }
+  return grounded;
+}
+
+// Nearest cardinal axis to a vector.
+export function cardinal(v) {
+  const ax = Math.abs(v.x), ay = Math.abs(v.y), az = Math.abs(v.z);
+  if (ax >= ay && ax >= az) return new THREE.Vector3(Math.sign(v.x), 0, 0);
+  if (ay >= az) return new THREE.Vector3(0, Math.sign(v.y), 0);
+  return new THREE.Vector3(0, 0, Math.sign(v.z));
 }
 
 // Point-with-radius vs world, for projectiles.

@@ -634,9 +634,12 @@ function step(dt) {
       }
     }
 
-    // fell into the void? (inverted gravity falls UP — cap that side too)
+    // fell into the void? (Escher maps: drifting off any edge counts, so a
+    // radius from the play center catches sideways/upward falls too)
+    const kc = G.world.killCenter, kr = G.world.killRadius;
     for (const ch of G.characters) {
-      if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity))) {
+      const drifted = kc && ch.pos.distanceToSquared(kc) > kr * kr;
+      if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity) || drifted)) {
         ch.hp = 0;
         ch.deaths++;
         if (ch.isPlayer) {

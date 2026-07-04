@@ -1,7 +1,7 @@
 // First-person player: pointer-lock look, WASD movement, firing, weapon switching,
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
-import { moveCharacter, gravityCapture, clamp } from './engine.js';
+import { moveCharacter, moveCharacterUp, cardinal, clamp } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, blasterSkin } from './weapons.js';
 import { sfx } from './audio.js';
 
@@ -33,7 +33,11 @@ export class Player {
     this.jumpBuffer = 0;       // grace after pressing jump
 
     this.yaw = 0; this.pitch = 0;
-    this.gdir = 1;             // gravity direction (-1 = walking on undersides)
+    // Escher worlds (PRISM RUN): a full body frame that can tilt onto any wall.
+    // up = which way is "down" (negated); fwd = look/run direction in that plane.
+    this.up = new THREE.Vector3(0, 1, 0);
+    this.bodyFwd = new THREE.Vector3(0, 0, -1);
+    this._nrm = new THREE.Vector3();
     this.djumpTime = 0;        // double-jump powerup timer
     this._airJumped = false;
     this.keys = {};
@@ -94,14 +98,22 @@ export class Player {
     this.setSkin(null);
     this.yaw = Math.atan2(pos.x, pos.z); // face map center
     this.pitch = 0;
-    this.gdir = 1;
+    this.up.set(0, 1, 0);
+    this.bodyFwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this.djumpTime = 0;
     this._airJumped = false;
   }
 
   onMouseMove(dx, dy) {
-    this.yaw -= dx * 0.0022 * this.gdir;
-    this.pitch = clamp(this.pitch - dy * 0.0022 * this.gdir, -1.5, 1.5);
+    const s = 0.0022;
+    if (this.world.escher) {
+      // yaw = swing forward around your current up; works on any wall
+      this.bodyFwd.applyAxisAngle(this.up, -dx * s).normalize();
+      this.pitch = clamp(this.pitch - dy * s, -1.4, 1.4);
+    } else {
+      this.yaw -= dx * s;
+      this.pitch = clamp(this.pitch - dy * s, -1.5, 1.5);
+    }
   }
 
   switchWeapon(id) {
@@ -126,59 +138,8 @@ export class Player {
       this.speedTime -= dt;
       if (this.speedTime <= 0) this.speedMult = 1;
     }
-    // Movement intent in camera-yaw space
-    const speed = this.world.playerSpeed * (this.speedMult || 1);
-    const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
-    const s = ((this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0)) * this.gdir;
-    const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-    let wx = (-sin * f + cos * s), wz = (-cos * f - sin * s);
-    const wl = Math.hypot(wx, wz);
-    if (wl > 0) { wx /= wl; wz /= wl; }
-
-    const prevHs = Math.hypot(this.vel.x, this.vel.z);
-    const accel = this.grounded ? 60 : 18;
-    this.vel.x += wx * speed * accel * dt * 0.12;
-    this.vel.z += wz * speed * accel * dt * 0.12;
-    // friction / speed clamp (horizontal)
-    const damp = this.grounded ? Math.exp(-8 * dt) : Math.exp(-0.4 * dt);
-    if (wl === 0 && this.grounded) { this.vel.x *= damp; this.vel.z *= damp; }
-    // Speed cap: run speed on the ground. In the air, cap at whatever speed you
-    // took off with — keeps jump-pad momentum without letting air-control
-    // accelerate ordinary jumps past run speed.
-    const hs = Math.hypot(this.vel.x, this.vel.z);
-    const cap = this.grounded ? speed : Math.max(speed, prevHs);
-    if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
-
-    // Buffered + coyote jump: pressing Space slightly early or just after the
-    // ground curves away (asteroids!) still jumps.
-    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
-    if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
-    if (this.djumpTime > 0) this.djumpTime -= dt;
-    if (this.jumpBuffer > 0 && this.coyote > 0) {
-      this.vel.y = this.world.jumpVel * this.gdir; // jump away from your floor
-      this.jumpBuffer = 0;
-      this.coyote = 0;
-      sfx('jump');
-    } else if (this.jumpBuffer > 0 && !this.grounded && this.djumpTime > 0 && !this._airJumped) {
-      // double-jump powerup: the second leap is half again as big
-      this.vel.y = this.world.jumpVel * 1.5 * this.gdir;
-      this._airJumped = true;
-      this.jumpBuffer = 0;
-      sfx('boing');
-    }
-
-    this.grounded = moveCharacter(this, this.world, dt);
-    if (this.grounded) this._airJumped = false;
-    if (this.world.escher && gravityCapture(this, this.world)) sfx('boing');
-    this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
-
-    // Camera
-    const eyeY = this.gdir === 1 ? this.eyeHeight : this.height - this.eyeHeight;
-    this.camera.position.set(this.pos.x, this.pos.y + eyeY, this.pos.z);
-    this.camera.rotation.set(0, 0, 0);
-    this.camera.rotateY(this.yaw);
-    this.camera.rotateX(this.pitch);
-    if (this.gdir === -1) this.camera.rotateZ(Math.PI); // world flips with you
+    if (this.world.escher) this._moveEscher(dt);
+    else this._moveNormal(dt);
 
     // Firing
     this.cooldown -= dt;
@@ -207,7 +168,7 @@ export class Player {
 
     // Viewmodel bob + recoil
     this.recoil = Math.max(0, this.recoil - dt * 6);
-    const bob = this.grounded ? Math.sin(performance.now() * 0.012) * Math.min(hs / speed, 1) * 0.012 : 0;
+    const bob = this.grounded ? Math.sin(performance.now() * 0.012) * (this._speedRatio || 0) * 0.012 : 0;
     this.viewmodel.position.set(0.3, -0.28 + bob, -0.6 + this.recoil * 0.09);
     this.viewmodel.rotation.x = this.recoil * 0.25;
 
@@ -220,5 +181,144 @@ export class Player {
         this.setSkin(null);
       }
     }
+  }
+
+  // ---- normal, Y-gravity movement + camera (all maps except PRISM RUN) ----
+  _moveNormal(dt) {
+    const speed = this.world.playerSpeed * (this.speedMult || 1);
+    const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
+    const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
+    let wx = (-sin * f + cos * s), wz = (-cos * f - sin * s);
+    const wl = Math.hypot(wx, wz);
+    if (wl > 0) { wx /= wl; wz /= wl; }
+
+    const prevHs = Math.hypot(this.vel.x, this.vel.z);
+    const accel = this.grounded ? 60 : 18;
+    this.vel.x += wx * speed * accel * dt * 0.12;
+    this.vel.z += wz * speed * accel * dt * 0.12;
+    const damp = this.grounded ? Math.exp(-8 * dt) : Math.exp(-0.4 * dt);
+    if (wl === 0 && this.grounded) { this.vel.x *= damp; this.vel.z *= damp; }
+    const hs = Math.hypot(this.vel.x, this.vel.z);
+    const cap = this.grounded ? speed : Math.max(speed, prevHs);
+    if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
+    this._speedRatio = Math.min(hs / speed, 1);
+
+    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
+    if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
+    if (this.djumpTime > 0) this.djumpTime -= dt;
+    if (this.jumpBuffer > 0 && this.coyote > 0) {
+      this.vel.y = this.world.jumpVel;
+      this.jumpBuffer = 0; this.coyote = 0; sfx('jump');
+    } else if (this.jumpBuffer > 0 && !this.grounded && this.djumpTime > 0 && !this._airJumped) {
+      this.vel.y = this.world.jumpVel * 1.5;
+      this._airJumped = true; this.jumpBuffer = 0; sfx('boing');
+    }
+
+    this.grounded = moveCharacter(this, this.world, dt);
+    if (this.grounded) this._airJumped = false;
+    this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
+
+    this.camera.up.set(0, 1, 0);
+    this.camera.position.set(this.pos.x, this.pos.y + this.eyeHeight, this.pos.z);
+    this.camera.rotation.set(0, 0, 0);
+    this.camera.rotateY(this.yaw);
+    this.camera.rotateX(this.pitch);
+  }
+
+  // ---- PRISM RUN: gravity is -up; run up walls, across ceilings, camera rolls ----
+  _moveEscher(dt) {
+    const up = this.up, fwd = this.bodyFwd;
+    const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+    const speed = this.world.playerSpeed * (this.speedMult || 1);
+    const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
+    const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    const want = new THREE.Vector3().addScaledVector(fwd, f).addScaledVector(right, s);
+    const wl = want.length();
+    if (wl > 1) want.multiplyScalar(1 / wl);
+
+    // split velocity: along-up (gravity/jump) stays, planar gets input
+    const vUp = this.vel.dot(up);
+    const planar = this.vel.clone().addScaledVector(up, -vUp);
+    const prevHs = planar.length();
+    const accel = this.grounded ? 60 : 18;
+    planar.addScaledVector(want, speed * accel * dt * 0.12);
+    if (wl === 0 && this.grounded) planar.multiplyScalar(Math.exp(-8 * dt));
+    const hs = planar.length();
+    const cap = this.grounded ? speed : Math.max(speed, prevHs);
+    if (hs > cap) planar.multiplyScalar(cap / hs);
+    this._speedRatio = Math.min(hs / speed, 1);
+    this.vel.copy(planar).addScaledVector(up, vUp);
+
+    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
+    if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
+    if (this.djumpTime > 0) this.djumpTime -= dt;
+    if (this.jumpBuffer > 0 && this.coyote > 0) {
+      this.vel.addScaledVector(up, this.world.jumpVel - this.vel.dot(up));
+      this.jumpBuffer = 0; this.coyote = 0; sfx('jump');
+    } else if (this.jumpBuffer > 0 && !this.grounded && this.djumpTime > 0 && !this._airJumped) {
+      this.vel.addScaledVector(up, this.world.jumpVel * 1.5 - this.vel.dot(up));
+      this._airJumped = true; this.jumpBuffer = 0; sfx('boing');
+    }
+
+    this.grounded = moveCharacterUp(this, this.world, dt, this._nrm);
+    if (this.grounded) { this._airJumped = false; this._climb(); }
+    else this._capture();
+    this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
+
+    // camera from the tilted body basis (eye offset along up, pitch about right)
+    const eye = this.pos.clone().addScaledVector(this.up, this.eyeHeight);
+    const rgt = new THREE.Vector3().crossVectors(this.bodyFwd, this.up).normalize();
+    const look = this.bodyFwd.clone().applyAxisAngle(rgt, this.pitch);
+    this.camera.up.copy(this.up);
+    this.camera.position.copy(eye);
+    this.camera.lookAt(eye.clone().add(look));
+  }
+
+  _solidAt(p) {
+    for (const c of this.world.colliders) {
+      if (c.type !== 'box') continue;
+      if (p.x > c.min.x && p.x < c.max.x && p.y > c.min.y && p.y < c.max.y &&
+          p.z > c.min.z && p.z < c.max.z) return true;
+    }
+    return false;
+  }
+
+  // Concave corner: a wall rises directly ahead → rotate onto it and climb.
+  _climb() {
+    if (this.vel.dot(this.bodyFwd) < 1) return;   // only when actually running forward
+    const probe = this.pos.clone()
+      .addScaledVector(this.bodyFwd, this.radius + 0.4)
+      .addScaledVector(this.up, 0.6);
+    if (!this._solidAt(probe)) return;
+    const oldUp = this.up.clone();
+    this.up = cardinal(this.bodyFwd.clone().negate());  // wall face becomes the floor
+    this.bodyFwd.copy(oldUp);                            // old up = new "up the wall" heading
+    this.pos.addScaledVector(this.up, 0.06);
+    this.vel.multiplyScalar(0.85);
+    sfx('boing');
+  }
+
+  // Airborne: leaping at another surface snaps your gravity onto it.
+  _capture() {
+    const c0 = this.pos.clone().addScaledVector(this.up, this.height * 0.5);
+    let best = null, bd = 1.2;
+    for (const c of this.world.colliders) {
+      if (c.type !== 'box') continue;
+      const cx = clamp(c0.x, c.min.x, c.max.x), cy = clamp(c0.y, c.min.y, c.max.y), cz = clamp(c0.z, c.min.z, c.max.z);
+      const dx = c0.x - cx, dy = c0.y - cy, dz = c0.z - cz;
+      const d = Math.hypot(dx, dy, dz);
+      if (d < 1e-3 || d > bd) continue;
+      const n = new THREE.Vector3(dx / d, dy / d, dz / d);
+      if (this.vel.dot(n) < -2 && n.dot(this.up) < 0.7) { best = n; bd = d; }
+    }
+    if (!best) return;
+    const newUp = cardinal(best);
+    if (newUp.dot(this.up) > 0.9) return;
+    const f = this.bodyFwd.clone().addScaledVector(newUp, -this.bodyFwd.dot(newUp));
+    this.bodyFwd.copy(f.lengthSq() < 0.02 ? this.up : f).normalize();
+    this.up = newUp;
+    this.vel.multiplyScalar(0.4);
+    sfx('boing');
   }
 }
