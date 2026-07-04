@@ -135,12 +135,16 @@ function startAtrium() {
     padCooldown: 0,
     lastT: performance.now(),
   };
-  player.spawn(world.spawns.ffa[0].clone());
+  const perch = world.spawns.ffa[0].clone();
+  perch.y += 2.6;                  // float above the floor; you drop in on the first click
+  player.spawn(perch);
   player.yaw = 0; // face the courtyard
+  player.update(0, () => {});      // set the camera NOW — paused frames render this view
   renderer.compile(scene, camera);
 
   hud.show(true);
   document.getElementById('scores').style.display = 'none';
+  document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
   clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
   requestPointerLock();
   hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
@@ -229,6 +233,7 @@ function startMatch(mapDef, mode = 'ffa') {
   scene.add(probes);
   renderer.compile(scene, camera);
 
+  player.update(0, () => {});      // camera on the spawn point before the first tick
   hud.show(true);
   document.getElementById('scores').style.display = '';
   clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
@@ -454,6 +459,12 @@ function onPickup(ch, def) {
       ch.speedMult = 2;
       ch.speedTime = 15;
       if (ch.isPlayer) { sfx('powerup'); announce('⚡ SPEED BOOST — 2× FOR 15s ⚡', '#6dff6d'); }
+      return true;
+    case 'djump':
+      if (!ch.isPlayer) return false;   // bots don't air-jump — leave it for players
+      ch.djumpTime = 20;
+      sfx('powerup');
+      announce('⇈ DOUBLE JUMP — 20s ⇈', '#30e0ff');
       return true;
     case 'points':
       ch.score += def.amount;

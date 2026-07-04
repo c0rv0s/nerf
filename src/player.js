@@ -34,6 +34,8 @@ export class Player {
 
     this.yaw = 0; this.pitch = 0;
     this.gdir = 1;             // gravity direction (-1 = walking on undersides)
+    this.djumpTime = 0;        // double-jump powerup timer
+    this._airJumped = false;
     this.keys = {};
     this.firing = false;
     this.grounded = false;
@@ -93,6 +95,8 @@ export class Player {
     this.yaw = Math.atan2(pos.x, pos.z); // face map center
     this.pitch = 0;
     this.gdir = 1;
+    this.djumpTime = 0;
+    this._airJumped = false;
   }
 
   onMouseMove(dx, dy) {
@@ -149,14 +153,22 @@ export class Player {
     // ground curves away (asteroids!) still jumps.
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
+    if (this.djumpTime > 0) this.djumpTime -= dt;
     if (this.jumpBuffer > 0 && this.coyote > 0) {
       this.vel.y = this.world.jumpVel * this.gdir; // jump away from your floor
       this.jumpBuffer = 0;
       this.coyote = 0;
       sfx('jump');
+    } else if (this.jumpBuffer > 0 && !this.grounded && this.djumpTime > 0 && !this._airJumped) {
+      // double-jump powerup: the second leap is half again as big
+      this.vel.y = this.world.jumpVel * 1.5 * this.gdir;
+      this._airJumped = true;
+      this.jumpBuffer = 0;
+      sfx('boing');
     }
 
     this.grounded = moveCharacter(this, this.world, dt);
+    if (this.grounded) this._airJumped = false;
     if (this.world.escher && gravityCapture(this, this.world)) sfx('boing');
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 

@@ -531,6 +531,7 @@ function buildArena(scene) {
   // Pickups
   pk(world, 'shield', -4, 4.2, 0);                       // atrium base tier
   pk(world, 'speed', 20, 0.2, -20);                      // crate maze lane
+  pk(world, 'djump', -52, 0.2, 30);                      // west-wing turf
   pk(world, 'gold', 2, 15, -7);                          // floating top platform
   pk(world, 'silver', -62, 0.2, -28);                    // deep in the crate maze
   pk(world, 'weapon', 72, -4.8, -45, { weapon: 'zooka' });   // basement south corner
@@ -820,6 +821,7 @@ function buildFortress(scene) {
   pk(world, 'health', 64, 0.2, -30);
   pk(world, 'shield', 0, 0.6, 0);                        // on the center bridge
   pk(world, 'speed', -30, 0.2, 0);                       // west field
+  pk(world, 'djump', 30, 0.2, 30);                       // NE courtyard
   pk(world, 'gold', 0, 0.2, 26);                       // inside the keep
   pk(world, 'silver', 0, -3.8, 4);                     // under the center bridge
   pk(world, 'star', 8, 8.2, 36, { hidden: true });     // keep roof corner
@@ -1095,6 +1097,7 @@ function buildAsteroids(scene) {
   pk(world, 'health', 16, -7.8, 72);
   pk(world, 'shield', -18, 9, 0);                        // station west wing
   pk(world, 'speed', 18, 9, 0);                          // station east wing
+  pk(world, 'djump', 0, 9.2, 4);                         // station center
   pk(world, 'gold', 0, 22.2, 0);                          // the perch above the station
   pk(world, 'silver', 0, 14.4, -8);                       // station core roof
   pk(world, 'star', 72, 4.2, -62, { hidden: true });      // far rocks
@@ -1314,6 +1317,7 @@ function buildCanopy(scene) {
   // Pickups
   pk(world, 'shield', 40, 10.4, 40);                     // NE 10-deck
   pk(world, 'speed', 20, 0.2, 42);                       // NE lawn
+  pk(world, 'djump', 55, 0.2, -20);                      // on the dirt road
   pk(world, 'gold', 4, 30.2, 0);                          // the crown
   pk(world, 'silver', 0, 0.2, 0);                         // hidden in the tree-base room
   pk(world, 'health', 0, 16.2, 4);
@@ -1628,6 +1632,7 @@ function buildCity(scene) {
   // Pickups
   pk(world, 'shield', -12, 20.2, -32);                   // A2 rooftop
   pk(world, 'speed', -56, 0.2, -55);                     // back alley mid
+  pk(world, 'djump', -20, 0.2, 10);                      // galleria plaza edge
   pk(world, 'gold', -12, 34.2, 36);                        // tallest roof
   pk(world, 'silver', 32, 28.2, -35);
   pk(world, 'weapon', 0, -5.8, -7, { weapon: 'whomper' }); // deep in the subway
@@ -1930,6 +1935,7 @@ function buildSanctum(scene) {
   pk(world, 'silver', 0, 0.8, -3.2);                      // dais
   pk(world, 'shield', 0, 0.8, 3.2);
   pk(world, 'speed', 0, 0.2, -32);                        // S room
+  pk(world, 'djump', 0, 0.2, 47);                         // north ambulatory
   pk(world, 'weapon', 0, 6.7, 35, { weapon: 'whomper' }); // N roof
   pk(world, 'weapon', -39, 5.2, 4, { weapon: 'hyper' });  // W balcony
   pk(world, 'weapon', 26, -5.8, 0, { weapon: 'zooka' });  // crypt
@@ -2087,6 +2093,7 @@ function buildPrism(scene) {
   pk(world, 'star', -45, -3.4, -30, { hidden: true });    // under the west diving board
   pk(world, 'shield', 0, 8.2, 0);                         // cross center
   pk(world, 'speed', 0, 0.2, -30);
+  pk(world, 'djump', 18, 16.2, 18);                       // L2 corner
   pk(world, 'weapon', -30, 0.2, 0, { weapon: 'scatter' });
   pk(world, 'weapon', 30, 0.2, 0, { weapon: 'pulsar' });
   pk(world, 'weapon', 0, 8.2, -45, { weapon: 'hyper' });  // north spur

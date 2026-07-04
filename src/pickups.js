@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { WEAPONS, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
-const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45 };
+const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45 };
 
 // Neon point-value badges (canvas sprites, cached per value)
 const POINT_COLORS = { 1000: '#ffd23c', 750: '#ff9c40', 500: '#c86aff', 250: '#4dffd2' };
@@ -67,6 +67,13 @@ function makeMesh(def) {
         roughness: 0.1, emissive: 0x3aa0e0, emissiveIntensity: 0.5 }));
     const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.28), glowMat(0x7fd0ff, 1.2));
     g.add(bubble, core);
+  } else if (def.kind === 'djump') {
+    // stacked up-chevrons — jump, then jump again
+    for (const dy of [-0.18, 0.24]) {
+      const c = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.45, 4), glowMat(0x30e0ff, 1.2));
+      c.position.y = dy;
+      g.add(c);
+    }
   } else if (def.kind === 'speed') {
     // double chevron — go faster
     for (const dx of [-0.22, 0.22]) {
