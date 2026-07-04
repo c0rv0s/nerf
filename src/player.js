@@ -123,16 +123,19 @@ export class Player {
     const wl = Math.hypot(wx, wz);
     if (wl > 0) { wx /= wl; wz /= wl; }
 
+    const prevHs = Math.hypot(this.vel.x, this.vel.z);
     const accel = this.grounded ? 60 : 18;
     this.vel.x += wx * speed * accel * dt * 0.12;
     this.vel.z += wz * speed * accel * dt * 0.12;
     // friction / speed clamp (horizontal)
     const damp = this.grounded ? Math.exp(-8 * dt) : Math.exp(-0.4 * dt);
     if (wl === 0 && this.grounded) { this.vel.x *= damp; this.vel.z *= damp; }
-    // clamp run speed on the ground only — jump pads launch you far faster
-    // than run speed, and clamping mid-air made every big hop fall short
+    // Speed cap: run speed on the ground. In the air, cap at whatever speed you
+    // took off with — keeps jump-pad momentum without letting air-control
+    // accelerate ordinary jumps past run speed.
     const hs = Math.hypot(this.vel.x, this.vel.z);
-    if (this.grounded && hs > speed) { this.vel.x *= speed / hs; this.vel.z *= speed / hs; }
+    const cap = this.grounded ? speed : Math.max(speed, prevHs);
+    if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
 
     // Buffered + coyote jump: pressing Space slightly early or just after the
     // ground curves away (asteroids!) still jumps.

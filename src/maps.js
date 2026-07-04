@@ -300,7 +300,8 @@ function baseLighting(scene, skyColor, groundColor, sunDir, shadowHalf) {
   const c = sun.shadow.camera;
   c.left = -shadowHalf; c.right = shadowHalf; c.top = shadowHalf; c.bottom = -shadowHalf;
   c.near = 10; c.far = 400;
-  sun.shadow.bias = -0.0006;
+  sun.shadow.bias = -0.0002;
+  sun.shadow.normalBias = 0.6; // kills the jagged acne on large flat surfaces
   scene.add(sun);
   scene.add(sun.target);
   return sun;
@@ -550,9 +551,19 @@ function buildFortress(scene) {
     addBox(scene, world, x, 2.5, z, w, 14, d, 0x6e5a8c, { tex: 'panel' });
   }
 
-  // Trench end ramps (inside the trench, overlapping the lips)
-  addRamp(scene, world, { axis: 'x', minX: -68, maxX: -55, minZ: -8, maxZ: 8, h0: 0, h1: -4, color: 0x9a8050 });
-  addRamp(scene, world, { axis: 'x', minX: 55, maxX: 68, minZ: -8, maxZ: 8, h0: -4, h1: 0, color: 0x9a8050 });
+  // Trench end ramps — run all the way to the end walls so there's no
+  // 4-deep dead pocket you can drop into and never climb out of
+  addRamp(scene, world, { axis: 'x', minX: -73, maxX: -55, minZ: -8, maxZ: 8, h0: 0, h1: -4, color: 0x9a8050 });
+  addRamp(scene, world, { axis: 'x', minX: 55, maxX: 73, minZ: -8, maxZ: 8, h0: -4, h1: 0, color: 0x9a8050 });
+
+  // Canal water + tunnel ceilings between the bridges (walkable on top)
+  const water = new THREE.Mesh(new THREE.BoxGeometry(146, 0.5, 12.6),
+    new THREE.MeshStandardMaterial({ color: 0x2b8fc4, transparent: true, opacity: 0.55,
+      roughness: 0.15, metalness: 0.1, emissive: 0x0f4c70, emissiveIntensity: 0.25 }));
+  water.position.set(0, -3.3, 0);
+  scene.add(water);
+  addBox(scene, world, -24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
+  addBox(scene, world, 24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
 
   // Bridges: grand center bridge + two side bridges
   addBox(scene, world, 0, -0.4, 0, 9, 0.8, 20, 0xc8461e, { tex: 'panel' });
@@ -653,7 +664,7 @@ function buildFortress(scene) {
   pk(world, 'ammo', 34, -3.8, 0, { weapon: 'zooka' });
   pk(world, 'ammo', -28, 0.2, -14, { weapon: 'scatter' });
   pk(world, 'ammo', 28, 0.2, 14, { weapon: 'pulsar' });
-  pk(world, 'ammo', -71, -3.8, 0, { weapon: 'hyper' });       // trench dead-end pocket
+  pk(world, 'ammo', -71, -0.2, 0, { weapon: 'hyper' });       // top of the west canal ramp
   pk(world, 'health', 0, 0.2, -34);
   pk(world, 'health', -40, 0.2, 30);
   pk(world, 'health', 40, 0.2, -30);
@@ -663,7 +674,7 @@ function buildFortress(scene) {
   pk(world, 'gold', 0, 0.2, 26);                       // inside the keep
   pk(world, 'silver', 0, -3.8, 4);                     // under the center bridge
   pk(world, 'star', 8, 8.2, 36, { hidden: true });     // keep roof corner
-  pk(world, 'star', 71, -3.8, 0, { hidden: true });    // trench dead-end pocket
+  pk(world, 'star', 71, -0.2, 0, { hidden: true });    // top of the east canal ramp
   pk(world, 'star', -24, 2.6, 31, { hidden: true });   // atop crate cluster
   pk(world, 'star', -68, 0.2, -13, { hidden: true });  // behind SW perimeter crate
   pk(world, 'star', -68, 5.4, 43.5, { hidden: true }); // north battlement dead end
@@ -682,8 +693,8 @@ function buildFortress(scene) {
     // bridges
     [0, 0, 0], [-40, 0, 0], [40, 0, 0],
     // trench
-    [-71, -4, 0], [-61, -2, 0], [-50, -4, 0], [-28, -4, 0], [-12, -4, 0],
-    [0, -4, 0], [12, -4, 0], [28, -4, 0], [50, -4, 0], [61, -2, 0], [71, -4, 0],
+    [-71, -0.5, 0], [-61, -2.5, 0], [-50, -4, 0], [-28, -4, 0], [-12, -4, 0],
+    [0, -4, 0], [12, -4, 0], [28, -4, 0], [50, -4, 0], [61, -2.5, 0], [71, -0.5, 0],
     // keep: door, interior, roof + ramp
     [0, 0, 11], [0, 0, 26], [9, 7.8, 27], [-5, 7.8, 26], [22, 3.9, 27], [34, 0, 27],
     // towers
@@ -772,7 +783,8 @@ function buildAsteroids(scene) {
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   Object.assign(sun.shadow.camera, { left: -140, right: 140, top: 140, bottom: -140, near: 10, far: 500 });
-  sun.shadow.bias = -0.0006;
+  sun.shadow.bias = -0.0002;
+  sun.shadow.normalBias = 0.6;
   scene.add(sun);
   const rim = new THREE.DirectionalLight(0x5570ff, 1.2); // cool rim fill (cheaper than giant point lights)
   rim.position.set(-200, -80, 150);

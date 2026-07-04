@@ -25,7 +25,7 @@ export const WEAPONS = {
                 splash: 5.5, splashDmg: 32, gravity: true, trail: true, sound: 'zooka' },
   whomper:    { name: 'WHOMPER',      slot: 6, dmg: 85, rof: 0.5, speed: 42,  spread: 0.004,
                 pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.42,
-                splash: 3.5, splashDmg: 25, sound: 'whomp' },
+                splash: 10, splashDmg: 50, sound: 'whomp' },
   hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 160, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
                 trail: true, sound: 'hyper' },
@@ -263,7 +263,7 @@ export class ProjectileSystem {
 
   explode(p) {
     sfx('explode');
-    this.fx.spawnPuff(p.pos, 0xffa030, 3.2);
+    this.fx.spawnPuff(p.pos, 0xffa030, Math.max(3.2, p.weapon.splash * 0.75));
     for (const ch of this.fx.characters()) {
       if (!ch.alive || ch.team === p.owner.team && ch !== p.owner) continue;
       if (ch === p.owner) continue; // no self-splash damage (keeps zooka fun)
