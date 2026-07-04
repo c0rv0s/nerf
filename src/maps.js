@@ -1870,6 +1870,143 @@ function buildSanctum(scene) {
   return world;
 }
 
+/* ============== SECRET MAP — PRISM RUN (Escher space paths) ==============
+   Neon walkways floating in space, low gravity, and two-way gravity: leap at
+   the underside of an overhead path and you fall UP onto it — walk upside
+   down while someone runs beneath you. Miss everything and you drift into
+   the void (both directions). */
+function buildPrism(scene) {
+  const world = newWorld({
+    killY: -40, killYTop: 110, escher: true,
+    gravity: 6, jumpVel: 8.5, playerSpeed: 11,
+    waypointLinkDist: 24, waypointLinkDy: 4.6,
+  });
+  scene.background = new THREE.Color(0x0b0518);
+  baseLighting(scene, 0xc8a8ff, 0x1a0f2e, [40, 90, -30], 130);
+
+  // starfield dome + drifting nebula veils
+  const sc = document.createElement('canvas');
+  sc.width = sc.height = 512;
+  const sg = sc.getContext('2d');
+  sg.fillStyle = '#0b0518'; sg.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 340; i++) {
+    sg.fillStyle = `rgba(255,255,255,${0.2 + Math.random() * 0.7})`;
+    const s = Math.random() < 0.1 ? 2 : 1;
+    sg.fillRect(Math.random() * 512, Math.random() * 512, s, s);
+  }
+  const st = new THREE.CanvasTexture(sc);
+  st.colorSpace = THREE.SRGBColorSpace;
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(400, 24, 12),
+    new THREE.MeshBasicMaterial({ map: st, side: THREE.BackSide, fog: false })));
+  const nebC = document.createElement('canvas');
+  nebC.width = nebC.height = 128;
+  const ng = nebC.getContext('2d');
+  const grad = ng.createRadialGradient(64, 64, 4, 64, 64, 62);
+  grad.addColorStop(0, 'rgba(255,255,255,.9)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ng.fillStyle = grad; ng.fillRect(0, 0, 128, 128);
+  const nebT = new THREE.CanvasTexture(nebC);
+  for (const [x, y, z, s, c] of [[-140, 60, -180, 220, 0xb040ff], [180, -40, 120, 260, 0x30e0ff],
+                                 [60, 120, 200, 200, 0xff40a0], [-200, -80, 60, 180, 0x6dff6d]]) {
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: nebT, color: c, transparent: true, opacity: 0.22, depthWrite: false }));
+    spr.position.set(x, y, z);
+    spr.scale.setScalar(s);
+    scene.add(spr);
+  }
+
+  // A path segment: deep-purple slab (1.2 thick — both faces walkable) with a
+  // neon edge stripe pair. Rainbow: each segment gets its own hue.
+  const seg = (x, y, z, w, d, glow) => {
+    addBox(scene, world, x, y - 0.6, z, w, 1.2, d, 0x2a1a4a, { tex: 'neonwall', repeat: [Math.max(1, Math.round(Math.max(w, d) / 6)), 1] });
+    const along = w >= d;
+    for (const side of [1, -1]) {
+      addBox(scene, world,
+        x + (along ? 0 : side * (w / 2 - 0.25)), y + 0.08, z + (along ? side * (d / 2 - 0.25) : 0),
+        along ? w : 0.5, 0.25, along ? 0.5 : d,
+        glow, { collide: false, shadow: false, emissive: glow, emissiveIntensity: 1.6 });
+    }
+  };
+  // L0 ring (tops at 0) — red/orange/yellow/green
+  seg(0, 0, -30, 66, 6, 0xff3050);
+  seg(0, 0, 30, 66, 6, 0xff9c20);
+  seg(-30, 0, 0, 6, 54, 0xffe030);
+  seg(30, 0, 0, 6, 54, 0x40ff60);
+  // L1 cross (tops at 8) — cyan + magenta (split so tops never overlap)
+  seg(0, 8, 0, 74, 6, 0x30e0ff);
+  seg(0, 8, -20, 6, 34, 0xff40e0);
+  seg(0, 8, 20, 6, 34, 0xff40e0);
+  // L2 ring (tops at 16) — violet/blue
+  seg(0, 16, -18, 42, 6, 0xb040ff);
+  seg(0, 16, 18, 42, 6, 0x4060ff);
+  seg(-18, 16, 0, 6, 30, 0xb040ff);
+  seg(18, 16, 0, 6, 30, 0x4060ff);
+  // spurs: diving boards off the rings
+  seg(-45, 0, -30, 24, 5, 0x30e0ff);
+  seg(45, 0, 30, 24, 5, 0xff40e0);
+  seg(0, 8, -45, 5, 16, 0xffe030);
+  seg(0, 8, 45, 5, 16, 0x40ff60);
+
+  // pads between levels for the gravity-shy (and the bots)
+  addJumpPad(scene, world, -30, 0, -27, 11, 0, 10, 0xb040ff);   // L0 → L1 west (drift onto the beam)
+  addJumpPad(scene, world, 30, 0, 27, 11, 0, -10, 0xb040ff);    // L0 → L1 east
+  addJumpPad(scene, world, 0, 8, -34, 11, 0, 6, 0x30e0ff);      // L1 → L2 north
+  addJumpPad(scene, world, 0, 8, 34, 11, 0, -6, 0x30e0ff);      // L1 → L2 south
+
+  // Spawns
+  for (const [x, z] of [[-30, -30], [30, -30], [-30, 30], [30, 30]]) world.spawns.ffa.push(V(x, 0.1, z));
+  for (const [x, z] of [[-15, -30], [15, 30], [-30, 15], [30, -15]]) world.spawns.ffa.push(V(x, 0.1, z));
+  for (const dz of [-30, -15, 15, 30]) world.spawns.blue.push(V(-30, 0.1, dz));
+  for (const dz of [-30, -15, 15, 30]) world.spawns.red.push(V(30, 0.1, dz));
+
+  // Pickups — the best loot hangs from the UNDERSIDES (flip to grab it)
+  pk(world, 'gold', 0, 16.2, -18);                        // L2 north arm
+  pk(world, 'silver', 0, 8.2, 45);                        // south spur
+  pk(world, 'star', 0, 4.6, 0, { hidden: true });         // under the cross center
+  pk(world, 'star', 0, 12.6, 18, { hidden: true });       // under L2 south arm
+  pk(world, 'star', -45, -3.4, -30, { hidden: true });    // under the west diving board
+  pk(world, 'shield', 0, 8.2, 0);                         // cross center
+  pk(world, 'speed', 0, 0.2, -30);
+  pk(world, 'weapon', -30, 0.2, 0, { weapon: 'scatter' });
+  pk(world, 'weapon', 30, 0.2, 0, { weapon: 'pulsar' });
+  pk(world, 'weapon', 0, 8.2, -45, { weapon: 'hyper' });  // north spur
+  pk(world, 'weapon', -18, 16.2, 0, { weapon: 'sidewinder' });
+  pk(world, 'weapon', 45, 0.2, 30, { weapon: 'zooka' });
+  pk(world, 'ammo', -24, 0.2, -30, { weapon: 'scatter' });
+  pk(world, 'ammo', 24, 0.2, 30, { weapon: 'pulsar' });
+  pk(world, 'ammo', 0, 8.2, 40, { weapon: 'hyper' });
+  pk(world, 'ammo', 18, 16.2, 0, { weapon: 'sidewinder' });
+  pk(world, 'ammo', -40, 0.2, -30, { weapon: 'zooka' });
+  pk(world, 'health', 0, 0.2, 30);
+  pk(world, 'health', 0, 16.2, 18);
+  pk(world, 'health', -30, 0.2, -15);
+
+  // Waypoints (tops only — bots keep their feet down and ride the pads)
+  const wps = [
+    [-30, 0, -30], [0, 0, -30], [30, 0, -30], [-30, 0, 30], [0, 0, 30], [30, 0, 30],
+    [-15, 0, -30], [15, 0, -30], [-15, 0, 30], [15, 0, 30],
+    [-30, 0, -15], [-30, 0, 0], [-30, 0, 15], [30, 0, -15], [30, 0, 0], [30, 0, 15],
+    [-45, 0, -30], [45, 0, 30],
+    [-30, 8, 0], [-15, 8, 0], [0, 8, 0], [15, 8, 0], [30, 8, 0],
+    [0, 8, -15], [0, 8, 15], [0, 8, -30], [0, 8, 30], [0, 8, -43], [0, 8, 43],
+    [-18, 16, -18], [0, 16, -18], [18, 16, -18], [-18, 16, 18], [0, 16, 18], [18, 16, 18],
+    [-18, 16, 0], [18, 16, 0],
+  ];
+  for (const [x, y, z] of wps) wp(world, x, y, z);
+  world.manualLinks.push(
+    [-30, 0, -30, -30, 8, 0, true],   // pad rides
+    [30, 0, 30, 30, 8, 0, true],
+    [0, 8, -30, 0, 16, -18, true],
+    [0, 8, 30, 0, 16, 18, true],
+    [-30, 8, 0, -30, 0, 15, true],    // step-off drops back down
+    [30, 8, 0, 30, 0, -15, true],
+    [-18, 16, 0, -15, 8, 0, true],
+    [18, 16, 0, 15, 8, 0, true],
+  );
+  mergeStatic(scene, world);
+  return world;
+}
+
 /* ============== THE LOBBY — walk-in map select, like the original ==============
    A dusk courtyard: grass strip, fountain, and five glowing gates. Walk into
    a gate to enter that arena; step on the mode pad to toggle FFA/TDM. */
@@ -1962,7 +2099,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 40.5, 6.1, 42, 15, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
   addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
   addBox(scene, world, 44, 2.6, 10.9, 5, 4.4, 0.4, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.9 });
-  makeSign(scene, 44, 5.1, 11.2, 7, '#8a5fff', 'THE SANCTUM');
+  makeSign(scene, 44, 5.1, 11.2, 7, '#ff40e0', '? ? ?');
   const sancLight = new THREE.PointLight(0x8a5fff, 20, 16);
   sancLight.position.set(44, 3, 14);
   scene.add(sancLight);
@@ -1992,6 +2129,7 @@ export function buildAtrium(scene) {
     ['asteroids', 'ASTEROID BELT', 0x8fb8d8, 'w', -14],
     ['canopy', 'CANOPY', 0x4dbf6a, 'e', 14],
     ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -14],
+    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'n', 18],
   ];
   for (const [id, name, color, wall, off] of bays) {
     const n = wall === 'n';
@@ -2015,7 +2153,7 @@ export function buildAtrium(scene) {
     scene.add(L);
     world.portals.push({ x: n ? px : px + sgn * 0.5, z: n ? pz - 0.5 : pz, map: id, name });
   }
-  world.portals.push({ x: 44, z: 11.5, map: 'sanctum', name: 'THE SANCTUM' });
+  world.portals.push({ x: 44, z: 11.5, map: 'prism', name: '???' });
 
   // controls board to the left of spawn (replaces the old overlay text)
   {
@@ -2057,8 +2195,8 @@ export function buildAtrium(scene) {
   addBox(scene, world, -14, 1.2, 30, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
   addBox(scene, world, -16.6, 1.2, 31, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
   addBox(scene, world, -15, 3.6, 30.4, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
-  addDecal(scene, 'poster1', -14, 6, -47.94, 8, 0);
-  addDecal(scene, 'target', 14, 6, -47.94, 8, 0);
+  addDecal(scene, 'poster1', -24, 6, -47.94, 8, 0);
+  addDecal(scene, 'target', 27, 6, -47.94, 8, 0);
   addDecal(scene, 'hazard', -31.94, 6, 30, 8, Math.PI / 2);
   addDecal(scene, 'hazard', 31.94, 6, -30, 8, -Math.PI / 2);
   for (const [x, z, c] of [[-20, -46.9, 0xff40a0], [20, -46.9, 0x30e0ff]]) {
@@ -2089,7 +2227,10 @@ export const MAPS = [
   { id: 'city', name: 'NEON HEIGHTS', emoji: '🌃',
     desc: 'Night rooftops over a street canyon: a hollow neon galleria with catwalks, an arcade block, back alleys, a subway. Gold on the tallest tower.',
     thumb: 'linear-gradient(135deg,#0b1026,#5a4a78)', build: buildCity },
-  { id: 'sanctum', name: 'THE SANCTUM', emoji: '🔮',
-    desc: 'A hidden obsidian temple: rune rooms off a central obelisk chamber, a crypt below, rooftops above.',
+  { id: 'sanctum', name: 'THE LABYRINTH', emoji: '🔮',
+    desc: 'An obsidian temple: rune rooms off a central obelisk chamber, a crypt below, rooftops above.',
     thumb: 'linear-gradient(135deg,#14101f,#8a5fff)', build: buildSanctum },
+  { id: 'prism', name: 'PRISM RUN', emoji: '🌈',
+    desc: 'Neon paths in deep space. Low gravity — and jumping at a path overhead flips yours.',
+    thumb: 'linear-gradient(135deg,#0b0518,#ff40e0)', build: buildPrism },
 ];

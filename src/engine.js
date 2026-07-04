@@ -84,6 +84,7 @@ function resolveSphere(pos, radius, colliders, out) {
         dx /= d; dy /= d; dz /= d;
         pos.x += dx * push; pos.y += dy * push; pos.z += dz * push;
         out.hit = true; if (dy > out.ny) out.ny = dy;
+        if (dy < out.nyMin) out.nyMin = dy;
         out.nx += dx; out.nz += dz;
       } else {
         // Center inside the box: exit through the nearest face.
@@ -96,6 +97,7 @@ function resolveSphere(pos, radius, colliders, out) {
         const [dist, ex, ey, ez] = exits[0];
         pos.x += ex * dist; pos.y += ey * dist; pos.z += ez * dist;
         out.hit = true; if (ey > out.ny) out.ny = ey;
+        if (ey < out.nyMin) out.nyMin = ey;
       }
     } else if (c.type === 'sphere') {
       _v.set(pos.x - c.center.x, pos.y - c.center.y, pos.z - c.center.z);
@@ -106,6 +108,7 @@ function resolveSphere(pos, radius, colliders, out) {
         out.hit = true;
         const ny = _v.y / (min - d) || 0;
         if (ny > out.ny) out.ny = ny;
+        if (ny < out.nyMin) out.nyMin = ny;
       }
     }
   }
@@ -114,11 +117,12 @@ function resolveSphere(pos, radius, colliders, out) {
 // Move a character (feet-position capsule) with gravity + collision.
 // char: {pos, vel, radius, height}; world: {colliders, ramps, gravity}
 export function moveCharacter(char, world, dt) {
-  char.vel.y -= world.gravity * dt;
+  const gdir = char.gdir || 1;   // -1 = gravity pulls up (Escher paths)
+  char.vel.y -= world.gravity * dt * gdir;
   char.pos.addScaledVector(char.vel, dt);
 
   const r = char.radius;
-  const out = { hit: false, ny: 0, nx: 0, nz: 0 };
+  const out = { hit: false, ny: 0, nyMin: 0, nx: 0, nz: 0 };
   const sphereYs = [r, char.height * 0.5, char.height - r];
   const sp = new THREE.Vector3();
   for (let iter = 0; iter < 2; iter++) {
@@ -132,9 +136,12 @@ export function moveCharacter(char, world, dt) {
 
   let grounded = false;
   if (out.hit) {
-    if (out.ny > 0.55) { grounded = true; if (char.vel.y < 0) char.vel.y = 0; }
-    else if (out.ny < -0.55 && char.vel.y > 0) char.vel.y = 0; // bonked head
-    else if (out.ny <= 0.55) {
+    // "support" opposes gravity (floor tops normally, undersides when inverted)
+    const support = gdir === 1 ? out.ny : -out.nyMin;
+    const bonk = gdir === 1 ? -out.nyMin : out.ny;
+    if (support > 0.55) { grounded = true; if (char.vel.y * gdir < 0) char.vel.y = 0; }
+    else if (bonk > 0.55 && char.vel.y * gdir > 0) char.vel.y = 0; // bonked head
+    else {
       // wall — damp velocity into the wall a bit
       const n = new THREE.Vector3(out.nx, 0, out.nz);
       if (n.lengthSq() > 0.01) {
@@ -148,7 +155,7 @@ export function moveCharacter(char, world, dt) {
   // Walkable ramps: when approaching from above, snap onto the surface (smooth
   // walking). In every other case the slab is a solid oriented box — sides and
   // underside block like any wall.
-  for (const ramp of world.ramps) {
+  for (const ramp of gdir === 1 ? world.ramps : []) {
     if (!inRampFootprint(ramp, char.pos.x, char.pos.z, char.radius + 0.2)) continue;
     const surf = rampSurfaceY(ramp, char.pos.x, char.pos.z);
     // Snap onto the surface only when walking/falling — never while rising,
@@ -176,7 +183,7 @@ export function moveCharacter(char, world, dt) {
   }
 
   // Jump pads: {x, y, z, r, vy, vx?, vz?}
-  if (grounded && world.jumpPads) {
+  if (grounded && gdir === 1 && world.jumpPads) {
     for (const pad of world.jumpPads) {
       if (pad.playersOnly && !char.isPlayer) continue;
       if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
@@ -191,6 +198,27 @@ export function moveCharacter(char, world, dt) {
     }
   }
   return grounded;
+}
+
+// Escher worlds: jumping toward another path captures you into its gravity —
+// leap at the underside of an overhead walkway and you fall UP onto it.
+export function gravityCapture(char, world) {
+  if (!world.escher || char.grounded) return false;
+  const gdir = char.gdir || 1;
+  if (char.vel.y * gdir < 0.5) return false;   // only while leaping away from the floor
+  const lead = gdir === 1 ? char.pos.y + char.height : char.pos.y;
+  for (const c of world.colliders) {
+    if (c.type !== 'box') continue;
+    if (char.pos.x < c.min.x - 0.2 || char.pos.x > c.max.x + 0.2 ||
+        char.pos.z < c.min.z - 0.2 || char.pos.z > c.max.z + 0.2) continue;
+    if (gdir === 1 ? (c.min.y >= lead && c.min.y < lead + 2.4)
+                   : (c.max.y <= lead && c.max.y > lead - 2.4)) {
+      char.gdir = -gdir;
+      char.vel.y *= 0.5;
+      return true;
+    }
+  }
+  return false;
 }
 
 // Point-with-radius vs world, for projectiles.

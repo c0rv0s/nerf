@@ -617,9 +617,9 @@ function step(dt) {
       }
     }
 
-    // fell into the void?
+    // fell into the void? (inverted gravity falls UP — cap that side too)
     for (const ch of G.characters) {
-      if (ch.alive && ch.pos.y < G.world.killY) {
+      if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity))) {
         ch.hp = 0;
         ch.deaths++;
         if (ch.isPlayer) {

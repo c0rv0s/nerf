@@ -1,7 +1,7 @@
 // First-person player: pointer-lock look, WASD movement, firing, weapon switching,
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
-import { moveCharacter, clamp } from './engine.js';
+import { moveCharacter, gravityCapture, clamp } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, blasterSkin } from './weapons.js';
 import { sfx } from './audio.js';
 
@@ -33,6 +33,7 @@ export class Player {
     this.jumpBuffer = 0;       // grace after pressing jump
 
     this.yaw = 0; this.pitch = 0;
+    this.gdir = 1;             // gravity direction (-1 = walking on undersides)
     this.keys = {};
     this.firing = false;
     this.grounded = false;
@@ -91,11 +92,12 @@ export class Player {
     this.setSkin(null);
     this.yaw = Math.atan2(pos.x, pos.z); // face map center
     this.pitch = 0;
+    this.gdir = 1;
   }
 
   onMouseMove(dx, dy) {
-    this.yaw -= dx * 0.0022;
-    this.pitch = clamp(this.pitch - dy * 0.0022, -1.5, 1.5);
+    this.yaw -= dx * 0.0022 * this.gdir;
+    this.pitch = clamp(this.pitch - dy * 0.0022 * this.gdir, -1.5, 1.5);
   }
 
   switchWeapon(id) {
@@ -123,7 +125,7 @@ export class Player {
     // Movement intent in camera-yaw space
     const speed = this.world.playerSpeed * (this.speedMult || 1);
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
-    const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    const s = ((this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0)) * this.gdir;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     let wx = (-sin * f + cos * s), wz = (-cos * f - sin * s);
     const wl = Math.hypot(wx, wz);
@@ -148,20 +150,23 @@ export class Player {
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.jumpBuffer > 0 && this.coyote > 0) {
-      this.vel.y = this.world.jumpVel;
+      this.vel.y = this.world.jumpVel * this.gdir; // jump away from your floor
       this.jumpBuffer = 0;
       this.coyote = 0;
       sfx('jump');
     }
 
     this.grounded = moveCharacter(this, this.world, dt);
+    if (this.world.escher && gravityCapture(this, this.world)) sfx('boing');
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
     // Camera
-    this.camera.position.set(this.pos.x, this.pos.y + this.eyeHeight, this.pos.z);
+    const eyeY = this.gdir === 1 ? this.eyeHeight : this.height - this.eyeHeight;
+    this.camera.position.set(this.pos.x, this.pos.y + eyeY, this.pos.z);
     this.camera.rotation.set(0, 0, 0);
     this.camera.rotateY(this.yaw);
     this.camera.rotateX(this.pitch);
+    if (this.gdir === -1) this.camera.rotateZ(Math.PI); // world flips with you
 
     // Firing
     this.cooldown -= dt;
