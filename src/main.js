@@ -12,7 +12,7 @@ import { Bot, BOT_NAMES } from './bots.js';
 import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx } from './audio.js';
+import { sfx, setListener } from './audio.js';
 
 const MATCH_TIME = 7 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -225,6 +225,7 @@ function applyDamage(target, dmg, attacker) {
       hud.showRespawn(true, RESPAWN_TIME);
     } else {
       target.die();
+      sfx('death', target.pos);
     }
     if (attacker.isPlayer) sfx('kill');
     G.respawnTimers.set(target, RESPAWN_TIME);
@@ -406,6 +407,7 @@ function tick(now) {
 function step(dt) {
   if (!G.over) {
     G.timeLeft -= dt;
+    setListener(G.player.pos); // distance-based sfx volume
 
     const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
     G.player.update(dt, fire);

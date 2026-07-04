@@ -6,6 +6,14 @@ function ac() {
   return ctx;
 }
 
+// Distance attenuation: sfx(name, at) scales volume by how far `at` is from
+// the listener (set every frame). sfx(name) plays at full volume (your own).
+const _listener = { x: 0, y: 0, z: 0 };
+export function setListener(pos) {
+  _listener.x = pos.x; _listener.y = pos.y; _listener.z = pos.z;
+}
+let _mult = 1;
+
 function blip({ freq = 440, end = freq, type = 'square', dur = 0.1, vol = 0.15, delay = 0 }) {
   try {
     const a = ac();
@@ -15,7 +23,7 @@ function blip({ freq = 440, end = freq, type = 'square', dur = 0.1, vol = 0.15, 
     o.type = type;
     o.frequency.setValueAtTime(freq, t);
     o.frequency.exponentialRampToValueAtTime(Math.max(end, 1), t + dur);
-    g.gain.setValueAtTime(vol, t);
+    g.gain.setValueAtTime(vol * _mult, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g).connect(a.destination);
     o.start(t); o.stop(t + dur + 0.02);
@@ -49,4 +57,15 @@ const SFX = {
                     blip({ freq: 90, end: 25, dur: 0.5, vol: 0.2, type: 'square', delay: 0.03 }); },
 };
 
-export function sfx(name) { (SFX[name] || (() => {}))(); }
+export function sfx(name, at = null) {
+  if (at) {
+    const dx = at.x - _listener.x, dy = at.y - _listener.y, dz = at.z - _listener.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist > 90) return;                    // out of earshot
+    _mult = 1 / (1 + dist * 0.07);            // gentle rolloff
+  } else {
+    _mult = 1;
+  }
+  (SFX[name] || (() => {}))();
+  _mult = 1;
+}

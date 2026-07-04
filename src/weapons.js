@@ -192,7 +192,7 @@ export class ProjectileSystem {
     }
     // muzzle flash only for other shooters — your own fills the screen
     if (!owner.isPlayer) this.fx.spawnPuff(origin, w.color, 0.3);
-    sfx(w.sound);
+    sfx(w.sound, owner.isPlayer ? null : origin);
   }
 
   // Characters: array of {pos, height, radius, alive, team, ...}
@@ -262,7 +262,7 @@ export class ProjectileSystem {
   }
 
   explode(p) {
-    sfx('explode');
+    sfx('explode', p.pos);
     this.fx.spawnPuff(p.pos, 0xffa030, Math.max(3.2, p.weapon.splash * 0.75));
     for (const ch of this.fx.characters()) {
       if (!ch.alive || ch.team === p.owner.team && ch !== p.owner) continue;

@@ -604,6 +604,10 @@ function buildFortress(scene) {
   // 4-deep dead pocket you can drop into and never climb out of
   addRamp(scene, world, { axis: 'x', minX: -73, maxX: -55, minZ: -8, maxZ: 8, h0: 0, h1: -4, color: 0x9a8050 });
   addRamp(scene, world, { axis: 'x', minX: 55, maxX: 73, minZ: -8, maxZ: 8, h0: -4, h1: 0, color: 0x9a8050 });
+  // solid fill between each ramp top and the perimeter wall — this used to be
+  // a 4-deep pit you could fall into and only escape by crawling under the ramp
+  addBox(scene, world, -75, -2.5, 0, 4, 5, 14, 0x9a8050, { tex: 'panel' });
+  addBox(scene, world, 75, -2.5, 0, 4, 5, 14, 0x9a8050, { tex: 'panel' });
 
   // Canal water + tunnel ceilings between the bridges (walkable on top)
   addWater(scene, world, 0, -3.15, 0, 146, 12.6);
