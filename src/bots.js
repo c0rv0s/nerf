@@ -92,6 +92,8 @@ export class Bot {
     this.shield = 0;
     this.alive = true;
     this.damageMult = 1;
+    this.speedMult = 1;
+    this.speedTime = 0;
     this.powerup = null;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
@@ -208,7 +210,8 @@ export class Bot {
       const want = k === 'points' || k === 'gold' || k === 'silver' || k === 'drop' ||
         (k === 'weapon' && !(this.weapons[it.def.weapon] && this.ammo[it.def.weapon] > 0)) ||
         (k === 'health' && this.hp < 60) ||
-        (k === 'shield' && !(this.shield > 0));
+        (k === 'shield' && !(this.shield > 0)) ||
+        (k === 'speed' && !(this.speedMult > 1));
       if (!want) continue;
       const d = it.def.pos.distanceTo(this.pos);
       if (d > 80) continue;
@@ -280,7 +283,11 @@ export class Bot {
       }
     }
 
-    const speed = this.world.playerSpeed * 0.82;
+    if (this.speedTime > 0) {
+      this.speedTime -= dt;
+      if (this.speedTime <= 0) this.speedMult = 1;
+    }
+    const speed = this.world.playerSpeed * 0.82 * (this.speedMult || 1);
     const lowGrav = this.world.gravity < 12;
     let moveX = 0, moveZ = 0;
 

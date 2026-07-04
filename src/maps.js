@@ -500,6 +500,7 @@ function buildArena(scene) {
 
   // Pickups
   pk(world, 'shield', -4, 4.2, 0);                       // atrium base tier
+  pk(world, 'speed', 20, 0.2, -20);                      // crate maze lane
   pk(world, 'gold', 2, 15, -7);                          // floating top platform
   pk(world, 'silver', -62, 0.2, -28);                    // deep in the crate maze
   pk(world, 'weapon', 72, -4.8, -45, { weapon: 'zooka' });   // basement south corner
@@ -759,6 +760,7 @@ function buildFortress(scene) {
   pk(world, 'health', -64, 0.2, 30);
   pk(world, 'health', 64, 0.2, -30);
   pk(world, 'shield', 0, 0.6, 0);                        // on the center bridge
+  pk(world, 'speed', -30, 0.2, 0);                       // west field
   pk(world, 'gold', 0, 0.2, 26);                       // inside the keep
   pk(world, 'silver', 0, -3.8, 4);                     // under the center bridge
   pk(world, 'star', 8, 8.2, 36, { hidden: true });     // keep roof corner
@@ -1033,6 +1035,7 @@ function buildAsteroids(scene) {
   pk(world, 'health', 52, 8.2, -38);
   pk(world, 'health', 16, -7.8, 72);
   pk(world, 'shield', -18, 9, 0);                        // station west wing
+  pk(world, 'speed', 18, 9, 0);                          // station east wing
   pk(world, 'gold', 0, 22.2, 0);                          // the perch above the station
   pk(world, 'silver', 0, 14.4, -8);                       // station core roof
   pk(world, 'star', 72, 4.2, -62, { hidden: true });      // far rocks
@@ -1076,8 +1079,20 @@ function buildCanopy(scene) {
   scene.fog = new THREE.Fog(0x14291f, 110, 320);
   baseLighting(scene, 0xa8d8a0, 0x1c3020, [60, 120, -40], 130);
 
-  // Mossy ground + hedge walls
-  addBox(scene, world, 0, -0.5, 0, 164, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [16, 16] });
+  // Mossy ground split by a RIVER (channel x −58..−50, bed −2.6, water −0.55):
+  // wade it, cross the plank bridge, or duck through the two covered flooded
+  // tunnels; in-channel ramps at both ends climb back out
+  addBox(scene, world, -70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
+  addBox(scene, world, 16, -0.5, 0, 132, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [13, 16] });
+  addBox(scene, world, -54, -3.1, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });   // riverbed
+  addBox(scene, world, -58.35, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);   // channel sides (tops tucked
+  addBox(scene, world, -49.65, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);   //  below the banks)
+  addWater(scene, world, -54, -0.55, 0, 7.8, 162);
+  addBox(scene, world, -54, -0.1, 4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });   // flooded tunnel covers
+  addBox(scene, world, -54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
+  addBox(scene, world, -54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] }); // plank bridge
+  addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -2.6, h1: 0.3, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: -58, maxX: -51.5, minZ: -52, maxZ: -48, h0: 0.3, h1: -2.6, color: 0x4a7a52 });
   for (const [x, z, w, d] of [[0, -83, 172, 6], [0, 83, 172, 6], [-83, 0, 6, 172], [83, 0, 6, 172]]) {
     addBox(scene, world, x, 14, z, w, 40, d, 0x2e4d2a, { tex: 'rock' });
   }
@@ -1215,6 +1230,7 @@ function buildCanopy(scene) {
 
   // Pickups
   pk(world, 'shield', 40, 10.4, 40);                     // NE 10-deck
+  pk(world, 'speed', 20, 0.2, 42);                       // NE lawn
   pk(world, 'gold', 4, 30.2, 0);                          // the crown
   pk(world, 'silver', 0, 0.2, 0);                         // hidden in the tree-base room
   pk(world, 'health', 0, 16.2, 4);
@@ -1266,6 +1282,10 @@ function buildCanopy(scene) {
     // fallen log tunnel + SE hedge maze pocket
     [-27, 0, -24], [-20, 0, -24], [-34, 0, -24],
     [16, 0, -18], [16, 0, -29], [4, 0, -29], [28, 0, -37],
+    // river: bed line, flooded tunnels, exit-ramp mids, crossings on top
+    [-54, -2.6, -20], [-54, -2.6, 4], [-54, -2.6, 24], [-54, -2.6, 40], [-54, -2.6, 56],
+    [-53, -1.2, 30], [-55, -1.2, -50],
+    [-54, 0, -40], [-54, 0, 10], [-54, 0, 46],
     // center tree-base room + interior stairs
     [0, 0, 2], [0, 0, 12], [-4.5, 2, 0], [-1.5, 4, -5], [3, 6, -5],
     // SW hollow tree: door, shaft, ledge, attic, top exit
@@ -1499,6 +1519,7 @@ function buildCity(scene) {
 
   // Pickups
   pk(world, 'shield', -12, 20.2, -32);                   // A2 rooftop
+  pk(world, 'speed', -56, 0.2, -55);                     // back alley mid
   pk(world, 'gold', -12, 34.2, 36);                        // tallest roof
   pk(world, 'silver', 32, 28.2, -35);
   pk(world, 'weapon', 0, -5.8, -7, { weapon: 'whomper' }); // deep in the subway
@@ -1604,6 +1625,176 @@ function buildCity(scene) {
   return world;
 }
 
+/* ============== SECRET MAP — THE SANCTUM (hidden gate in the lobby) ==============
+   An obsidian temple: obelisk chamber at the center, four rune rooms reached
+   through tight corridors, a crypt below (the gold), a balcony, rooftops via
+   pads, and a dark ambulatory ring around it all. */
+function buildSanctum(scene) {
+  const world = newWorld({ killY: -25, waypointLinkDist: 20, waypointLinkDy: 4.6 });
+  scene.background = new THREE.Color(0x0a0714);
+  scene.fog = new THREE.Fog(0x0a0714, 70, 220);
+  baseLighting(scene, 0x8a7fb8, 0x1a1428, [40, 90, -30], 110);
+  const STONE = 0x3e3358, FLOOR = 0x2c2440, DARK = 0x14101f;
+
+  // shell + floor (two stair holes over the crypt at x ±(30..40), z −2..2)
+  for (const [x, z, w, d] of [[0, -50.5, 104, 3], [0, 50.5, 104, 3], [-50.5, 0, 3, 104], [50.5, 0, 3, 104]]) {
+    addBox(scene, world, x, 6, z, w, 12, d, STONE, { tex: 'rock', repeat: [12, 2] });
+  }
+  addBox(scene, world, 0, -0.5, 26, 100, 1, 48, FLOOR, { tex: 'panel', repeat: [12, 6] });
+  addBox(scene, world, 0, -0.5, -26, 100, 1, 48, FLOOR, { tex: 'panel', repeat: [12, 6] });
+  addBox(scene, world, -45, -0.5, 0, 10, 1, 4, FLOOR, { tex: 'panel' });
+  addBox(scene, world, 0, -0.5, 0, 60, 1, 4, FLOOR, { tex: 'panel', repeat: [8, 1] });
+  addBox(scene, world, 45, -0.5, 0, 10, 1, 4, FLOOR, { tex: 'panel' });
+
+  // CRYPT (x −40..40, z −6..6, floor −6) + stair ramps down from the E/W rooms
+  addBox(scene, world, 0, -6.5, 0, 80, 1, 12, DARK, { tex: 'panel', repeat: [10, 2] });
+  addBox(scene, world, 0, -3.5, 6.35, 80.7, 5.1, 0.7, STONE, { tex: 'rock' });
+  addBox(scene, world, 0, -3.5, -6.35, 80.7, 5.1, 0.7, STONE, { tex: 'rock' });
+  addBox(scene, world, 40.35, -3.5, 0, 0.7, 5.1, 13.4, STONE, { tex: 'rock' });
+  addBox(scene, world, -40.35, -3.5, 0, 0.7, 5.1, 13.4, STONE, { tex: 'rock' });
+  // feet face the crypt CENTER — pointed outward, the slab undersides pinch
+  // you against the floor before you can reach the climbable end (a gold trap)
+  addRamp(scene, world, { axis: 'x', minX: 30, maxX: 40, minZ: -2, maxZ: 2, h0: -6, h1: 0.3, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: -40, maxX: -30, minZ: -2, maxZ: 2, h0: 0.3, h1: -6, color: STONE });
+  addBox(scene, world, 0, -1.6, 5.9, 60, 0.3, 0.2, 0x30ffc8, { collide: false, shadow: false, emissive: 0x30ffc8, emissiveIntensity: 1.4 });
+  addBox(scene, world, 0, -1.6, -5.9, 60, 0.3, 0.2, 0x30ffc8, { collide: false, shadow: false, emissive: 0x30ffc8, emissiveIntensity: 1.4 });
+  const cryptLight = new THREE.PointLight(0x30ffc8, 30, 40);
+  cryptLight.position.set(0, -3, 0);
+  scene.add(cryptLight);
+
+  // CENTER CHAMBER (36×36, walls h6, door mid each side) + obelisk dais
+  for (const s of [1, -1]) {
+    addBox(scene, world, -10, 3, 18 * s, 16, 6, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 10, 3, 18 * s, 16, 6, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 18 * s, 3, -10, 1.2, 6, 16, STONE, { tex: 'rock' });
+    addBox(scene, world, 18 * s, 3, 10, 1.2, 6, 16, STONE, { tex: 'rock' });
+    addBox(scene, world, 0, 4.8, 18.8 * s, 24, 0.35, 0.25, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.4 });
+    addBox(scene, world, 18.8 * s, 4.8, 0, 0.25, 0.35, 24, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.4 });
+  }
+  addBox(scene, world, 0, 0.3, 0, 10, 0.6, 10, DARK, { tex: 'panel' });          // dais
+  addBox(scene, world, 0, 4.6, 0, 2.6, 8, 2.6, DARK, { tex: 'rock', repeat: [1, 3] }); // obelisk
+  addBox(scene, world, 0, 9.2, 0, 1.4, 1.2, 1.4, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.6 });
+  const obLight = new THREE.PointLight(0x8a5fff, 55, 34);
+  obLight.position.set(0, 10, 0);
+  scene.add(obLight);
+
+  // corridors to the four rooms (h4 — tight) with walkable roof slabs
+  for (const s of [1, -1]) {
+    addBox(scene, world, 2.6, 2, 22.3 * s, 1.2, 4, 7.4, STONE, { tex: 'rock' });
+    addBox(scene, world, -2.6, 2, 22.3 * s, 1.2, 4, 7.4, STONE, { tex: 'rock' });
+    addBox(scene, world, 0, 4.3, 22.3 * s, 6.4, 0.6, 7.4, STONE, { tex: 'rock' });
+    addBox(scene, world, 22.3 * s, 2, 2.6, 7.4, 4, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 22.3 * s, 2, -2.6, 7.4, 4, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 22.3 * s, 4.3, 0, 7.4, 0.6, 6.4, STONE, { tex: 'rock' });
+  }
+
+  // E/W ROOMS (x ±(26..44), z −9..9) — the crypt stairs open in their floors
+  for (const s of [1, -1]) {
+    addBox(scene, world, 26.6 * s, 3, 5.5, 1.2, 6, 7, STONE, { tex: 'rock' });
+    addBox(scene, world, 26.6 * s, 3, -5.5, 1.2, 6, 7, STONE, { tex: 'rock' });
+    addBox(scene, world, 43.4 * s, 3, 5.5, 1.2, 6, 7, STONE, { tex: 'rock' });
+    addBox(scene, world, 43.4 * s, 3, -5.5, 1.2, 6, 7, STONE, { tex: 'rock' });
+    addBox(scene, world, 35 * s, 3, 9.4, 18, 6, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 35 * s, 3, -9.4, 18, 6, 1.2, STONE, { tex: 'rock' });
+  }
+  // W room balcony (top 5) + its ramp along the south wall
+  addBox(scene, world, -39.4, 4.7, 1.5, 8, 0.6, 14.6, STONE, { tex: 'rock' });
+  addRamp(scene, world, { axis: 'x', minX: -43, maxX: -33, minZ: -8.8, maxZ: -5.8, h0: 5.3, h1: 0, color: STONE });
+
+  // N/S ROOMS (z ±(26..44), x −14..14) with walkable roofs (pads in the ring)
+  for (const s of [1, -1]) {
+    addBox(scene, world, -8, 3, 26.6 * s, 12, 6, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 8, 3, 26.6 * s, 12, 6, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, 0, 3, 43.4 * s, 28, 6, 1.2, STONE, { tex: 'rock' });
+    addBox(scene, world, -13.4, 3, 35 * s, 1.2, 6, 18, STONE, { tex: 'rock' });
+    addBox(scene, world, 13.4, 3, 30.5 * s, 1.2, 6, 9, STONE, { tex: 'rock' });   // ring door z ±(35..40)
+    addBox(scene, world, 13.4, 3, 42 * s, 1.2, 6, 4, STONE, { tex: 'rock' });
+    addBox(scene, world, 0, 6.2, 35 * s, 28.6, 0.6, 18.6, STONE, { tex: 'rock' }); // roof (top 6.5)
+  }
+  addJumpPad(scene, world, 20, 0, 40, 20, -7, 0, 0x8a5fff);
+  addJumpPad(scene, world, -20, 0, -40, 20, 7, 0, 0x8a5fff);
+
+  // ambulatory braziers
+  for (const [x, z] of [[47, 47], [-47, 47], [47, -47], [-47, -47]]) {
+    addBox(scene, world, x, 0.6, z, 1.2, 1.2, 1.2, DARK, { tex: 'rock' });
+    addBox(scene, world, x, 1.45, z, 0.7, 0.5, 0.7, 0xff9c40, { collide: false, shadow: false, emissive: 0xff9c40, emissiveIntensity: 1.6 });
+    const L = new THREE.PointLight(0xff9c40, 18, 22);
+    L.position.set(x, 2.5, z);
+    scene.add(L);
+  }
+
+  // Spawns
+  for (const dz of [-44, -20, 20, 44]) world.spawns.blue.push(V(-47, 0.1, dz));
+  for (const dz of [-44, -20, 20, 44]) world.spawns.red.push(V(47, 0.1, dz));
+  for (const [x, z] of [[44, 44], [-44, 44], [44, -44], [-44, -44], [0, 35], [0, -35], [35, 6], [-35, 6]]) {
+    world.spawns.ffa.push(V(x, 0.1, z));
+  }
+
+  // Pickups
+  pk(world, 'gold', 0, -5.8, 0);                          // crypt heart
+  pk(world, 'silver', 0, 0.8, -3.2);                      // dais
+  pk(world, 'shield', 0, 0.8, 3.2);
+  pk(world, 'speed', 0, 0.2, -32);                        // S room
+  pk(world, 'weapon', 0, 6.7, 35, { weapon: 'whomper' }); // N roof
+  pk(world, 'weapon', -39, 5.2, 4, { weapon: 'hyper' });  // W balcony
+  pk(world, 'weapon', 26, -5.8, 0, { weapon: 'zooka' });  // crypt
+  pk(world, 'weapon', 35, 0.2, 6, { weapon: 'scatter' });
+  pk(world, 'weapon', 0, 0.2, -37, { weapon: 'pulsar' });
+  pk(world, 'weapon', 22, 0.2, 22, { weapon: 'sidewinder' });
+  pk(world, 'ammo', 4, 6.7, 35, { weapon: 'whomper' });
+  pk(world, 'ammo', -39, 5.2, -1, { weapon: 'hyper' });
+  pk(world, 'ammo', 20, -5.8, 0, { weapon: 'zooka' });
+  pk(world, 'ammo', 35, 0.2, -6, { weapon: 'scatter' });
+  pk(world, 'ammo', -5, 0.2, -35, { weapon: 'pulsar' });
+  pk(world, 'ammo', -22, 0.2, -22, { weapon: 'sidewinder' });
+  pk(world, 'health', 14, 0.2, 14);
+  pk(world, 'health', -14, 0.2, -14);
+  pk(world, 'health', 47, 0.2, 0);
+  pk(world, 'health', -47, 0.2, 24);
+  pk(world, 'star', -26, -5.8, 0, { hidden: true });      // crypt west run
+  pk(world, 'star', 47, 0.2, -47, { hidden: true });      // ring corner brazier
+  pk(world, 'star', 0, 6.7, -35, { hidden: true });       // S roof
+  pk(world, 'star', -12, 0.2, 42, { hidden: true });      // N room corner
+
+  // Waypoints
+  const wps = [
+    // chamber + dais ring
+    [0, 0, 12], [0, 0, -12], [12, 0, 0], [-12, 0, 0],
+    [13, 0, 13], [-13, 0, 13], [13, 0, -13], [-13, 0, -13],
+    // corridors
+    [0, 0, 22], [0, 0, -22], [22, 0, 0], [-22, 0, 0],
+    // E/W rooms (skirting the stair holes) + hole ramps + crypt line
+    [30, 0, 6], [40, 0, 6], [35, 0, -6], [42, 0, 0],
+    [-30, 0, 6], [-40, 0, 6], [-35, 0, -6], [-42, 0, 0],
+    [35, -2.85, 0], [-35, -2.85, 0],
+    [28, -6, 0], [14, -6, 0], [0, -6, 0], [-14, -6, 0], [-28, -6, 0],
+    // N/S rooms + their ring doors
+    [0, 0, 30], [-8, 0, 40], [8, 0, 40], [16, 0, 37.5],
+    [0, 0, -30], [-8, 0, -40], [8, 0, -40], [16, 0, -37.5],
+    // W balcony ramp + deck
+    [-38, 2.6, -7.3], [-39, 5, 2],
+    // ambulatory ring (≤16 apart so it chains) + diagonal courts
+    [47, 0, 0], [47, 0, 16], [47, 0, -16], [47, 0, 32], [47, 0, -32],
+    [-47, 0, 0], [-47, 0, 16], [-47, 0, -16], [-47, 0, 32], [-47, 0, -32],
+    [0, 0, 47], [16, 0, 47], [-16, 0, 47], [32, 0, 47], [-32, 0, 47],
+    [0, 0, -47], [16, 0, -47], [-16, 0, -47], [32, 0, -47], [-32, 0, -47],
+    [46, 0, 46], [-46, 0, 46], [46, 0, -46], [-46, 0, -46],
+    [22, 0, 22], [-22, 0, 22], [22, 0, -22], [-22, 0, -22],
+    [30, 0, 16], [-30, 0, 16], [30, 0, -16], [-30, 0, -16],
+    [16, 0, 30], [-16, 0, 30], [16, 0, -30], [-16, 0, -30],
+    // roofs + pads
+    [0, 6.5, 35], [0, 6.5, -35], [20, 0, 40], [-20, 0, -40],
+  ];
+  for (const [x, y, z] of wps) wp(world, x, y, z);
+  world.manualLinks.push(
+    [-38, 2.6, -7.3, -39, 5, 2, false],   // balcony ramp → deck (deck edge blocks LOS)
+    [20, 0, 40, 0, 6.5, 35, true],        // pads → roofs
+    [-20, 0, -40, 0, 6.5, -35, true],
+  );
+  mergeStatic(scene, world);
+  return world;
+}
+
 /* ============== THE LOBBY — walk-in map select, like the original ==============
    A dusk courtyard: grass strip, fountain, and five glowing gates. Walk into
    a gate to enter that arena; step on the mode pad to toggle FFA/TDM. */
@@ -1676,7 +1867,27 @@ export function buildAtrium(scene) {
   addBox(scene, world, 0, 6, -49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
   addBox(scene, world, 0, 6, 49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
   addBox(scene, world, -33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
-  addBox(scene, world, 33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
+  // east wall hides a doorway in the NE corner (z 40..44) behind a slab —
+  // slip around its north edge into the passage to the secret gate
+  addBox(scene, world, 33.5, 6, -4.75, 3, 12, 89.5, 0x6a5f88, { tex: 'neonwall', repeat: [11, 2] });
+  addBox(scene, world, 33.5, 6, 46.75, 3, 12, 5.5, 0x6a5f88, { tex: 'neonwall' });
+  addBox(scene, world, 33.5, 8.5, 42, 3, 7, 4, 0x6a5f88, { tex: 'neonwall' });     // lintel
+  addBox(scene, world, 30.2, 2.5, 40, 0.6, 5, 5.6, 0x6a5f88, { tex: 'neonwall' }); // concealer slab
+  // the passage: east hallway, then a leg north to the gate chamber
+  addBox(scene, world, 40, -0.5, 42, 16, 1, 8, 0x3a3452, { tex: 'panel' });
+  addBox(scene, world, 44, -0.5, 24, 8, 1, 28, 0x3a3452, { tex: 'panel' });
+  addBox(scene, world, 36, 3, 38.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 40, 3, 45.7, 16, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 47.7, 3, 28, 0.6, 6, 36, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 40.3, 3, 24, 0.6, 6, 28, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 44, 3, 10.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });     // gate wall
+  addBox(scene, world, 40, 6.1, 42, 16, 0.6, 8, 0x3a3452, { tex: 'panel' });       // roofs
+  addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
+  addBox(scene, world, 44, 2.6, 10.9, 5, 4.4, 0.4, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.9 });
+  makeSign(scene, 44, 5.1, 11.2, 7, '#8a5fff', 'THE SANCTUM');
+  const sancLight = new THREE.PointLight(0x8a5fff, 20, 16);
+  sancLight.position.set(44, 3, 14);
+  scene.add(sancLight);
 
   // grass boulevard + fountain
   addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35);
@@ -1726,6 +1937,7 @@ export function buildAtrium(scene) {
     scene.add(L);
     world.portals.push({ x: n ? px : px + sgn * 0.5, z: n ? pz - 0.5 : pz, map: id, name });
   }
+  world.portals.push({ x: 44, z: 11.5, map: 'sanctum', name: 'THE SANCTUM' });
 
   // mode pad beside the spawn
   addBox(scene, world, 11, 0.3, 38, 3.4, 0.6, 3.4, 0x2a6a8a, { tex: 'panel' });
@@ -1766,4 +1978,7 @@ export const MAPS = [
   { id: 'city', name: 'NEON HEIGHTS', emoji: '🌃',
     desc: 'Night rooftops over a street canyon: a hollow neon galleria with catwalks, an arcade block, back alleys, a subway. Gold on the tallest tower.',
     thumb: 'linear-gradient(135deg,#0b1026,#5a4a78)', build: buildCity },
+  { id: 'sanctum', name: 'THE SANCTUM', emoji: '🔮',
+    desc: 'A hidden obsidian temple: rune rooms off a central obelisk chamber, a crypt below, rooftops above.',
+    thumb: 'linear-gradient(135deg,#14101f,#8a5fff)', build: buildSanctum },
 ];

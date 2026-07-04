@@ -71,6 +71,7 @@ function teardown() {
   G.fxPool.clear();
   camera.remove(G.player.viewmodel);
   G.scene.clear();
+  dmgMarkers = [];
   G = null;
 }
 
@@ -241,8 +242,59 @@ function respawnCharacter(ch, initial = false) {
 }
 
 /* ---------------- damage & kills ---------------- */
+// Floating damage numbers above whoever YOU hit. Rapid hits on the same
+// target within a beat accumulate into one growing number.
+let dmgMarkers = [];
+function spawnDmgMarker(target, amount) {
+  const recent = dmgMarkers.find(m => m.target === target && m.age < 0.4);
+  if (recent) {
+    recent.amount += amount;
+    recent.age = 0;
+    drawDmg(recent);
+    return;
+  }
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 64;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false, depthTest: false }));
+  sprite.scale.set(1.5, 0.75, 1);
+  sprite.position.set(target.pos.x, target.pos.y + 2.3, target.pos.z);
+  G.scene.add(sprite);
+  const m = { target, amount, age: 0, sprite, tex, canvas: c };
+  drawDmg(m);
+  dmgMarkers.push(m);
+}
+function drawDmg(m) {
+  const g = m.canvas.getContext('2d');
+  g.clearRect(0, 0, 128, 64);
+  g.font = 'bold 40px "Arial Black", Arial';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 7; g.strokeStyle = '#301800';
+  const txt = String(Math.round(m.amount));
+  g.strokeText(txt, 64, 34);
+  g.fillStyle = m.amount >= 60 ? '#ff5c2e' : '#ffd23c';
+  g.fillText(txt, 64, 34);
+  m.tex.needsUpdate = true;
+}
+function updateDmgMarkers(dt) {
+  for (let i = dmgMarkers.length - 1; i >= 0; i--) {
+    const m = dmgMarkers[i];
+    m.age += dt;
+    m.sprite.position.y += dt * 1.1;
+    m.sprite.material.opacity = Math.min(1, 2.5 * (1 - m.age / 0.9));
+    if (m.age > 0.9) {
+      G.scene.remove(m.sprite);
+      m.tex.dispose();
+      dmgMarkers.splice(i, 1);
+    }
+  }
+}
+
 function applyDamage(target, dmg, attacker) {
   if (!target.alive || G.over) return;
+  if (attacker.isPlayer && attacker !== target) spawnDmgMarker(target, dmg);
   if (target.shield > 0) { // shield soaks damage first
     const absorbed = Math.min(target.shield, dmg);
     target.shield -= absorbed;
@@ -360,6 +412,11 @@ function onPickup(ch, def) {
       if (ch.shield >= 75) return false;
       ch.shield = 75;
       if (ch.isPlayer) { sfx('shieldup'); announce('+75 SHIELD', '#7fd0ff'); }
+      return true;
+    case 'speed':
+      ch.speedMult = 2;
+      ch.speedTime = 15;
+      if (ch.isPlayer) { sfx('powerup'); announce('⚡ SPEED BOOST — 2× FOR 15s ⚡', '#6dff6d'); }
       return true;
     case 'points':
       ch.score += def.amount;
@@ -541,6 +598,7 @@ function step(dt) {
 
   G.world.update?.(dt);
   G.fxPool.update(dt);
+  updateDmgMarkers(dt);
   hud.update(dt, {
     player: G.player, mode: G.atrium ? 'atrium' : G.mode, scores: G.scores,
     characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,

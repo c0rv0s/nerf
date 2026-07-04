@@ -116,8 +116,12 @@ export class Player {
   update(dt, fire) {
     if (!this.alive) return;
 
+    if (this.speedTime > 0) { // speed powerup wearing off
+      this.speedTime -= dt;
+      if (this.speedTime <= 0) this.speedMult = 1;
+    }
     // Movement intent in camera-yaw space
-    const speed = this.world.playerSpeed;
+    const speed = this.world.playerSpeed * (this.speedMult || 1);
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
