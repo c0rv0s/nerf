@@ -1098,8 +1098,14 @@ function buildAsteroids(scene) {
   pk(world, 'shield', -18, 9, 0);                        // station west wing
   pk(world, 'speed', 18, 9, 0);                          // station east wing
   pk(world, 'djump', 0, 9.2, 4);                         // station center
-  // molten patch on the NE mid rock — watch your landing
-  addLava(scene, world, 23, -41, 4, 4, 10);
+  // LAVA CRATER ROCK: walk the rim, fall in the heart, jump for your life
+  addBox(scene, world, 40, 2.75, 60, 20, 2.5, 20, 0x8a7f72, { tex: 'rock' });  // body (top 4) + safe apron
+  addBox(scene, world, 40, 4.55, 55, 16, 1.1, 6, 0x8a7f72, { tex: 'rock' });   // rim ring (top 5.1)
+  addBox(scene, world, 40, 4.55, 65, 16, 1.1, 6, 0x8a7f72, { tex: 'rock' });
+  addBox(scene, world, 35, 4.55, 60, 6, 1.1, 4, 0x8a7f72, { tex: 'rock' });
+  addBox(scene, world, 45, 4.55, 60, 6, 1.1, 4, 0x8a7f72, { tex: 'rock' });
+  addLava(scene, world, 40, 60, 4, 4, 3.95);
+  pk(world, 'star', 40, 5.5, 60, { hidden: true });    // hovers over the melt — jump the crater
   pk(world, 'gold', 0, 22.2, 0);                          // the perch above the station
   pk(world, 'silver', 0, 14.4, -8);                       // station core roof
   pk(world, 'star', 72, 4.2, -62, { hidden: true });      // far rocks
@@ -1423,7 +1429,10 @@ function buildCity(scene) {
   baseLighting(scene, 0x7788cc, 0x101018, [-60, 110, 40], 130);
 
   // Street (split into bands leaving two subway stair openings)
-  addBox(scene, world, 0, -0.5, -39.5, 174, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 7] });
+  addBox(scene, world, -17.5, -0.5, -39.5, 139, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [16, 7] });
+  addBox(scene, world, 73.5, -0.5, -39.5, 27, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [3, 7] });
+  addBox(scene, world, 56, -0.5, -29, 8, 1, 34, 0x3a3f4a, { tex: 'neonfloor', repeat: [1, 4] });
+  addBox(scene, world, 56, -0.5, -60.5, 8, 1, 13, 0x3a3f4a, { tex: 'neonfloor', repeat: [1, 2] });
   addBox(scene, world, -60.5, -0.5, -7, 53, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [7, 2] });
   addBox(scene, world, 30.5, -0.5, -7, 113, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
   addBox(scene, world, 0, -0.5, 0, 174, 1, 4, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 1] });
@@ -1574,8 +1583,8 @@ function buildCity(scene) {
   addBox(scene, world, 38, 29.5, -40, 3, 3, 3, 0x2a3040, { tex: 'panel' });
   addBox(scene, world, -12, 37, 44, 1, 6, 1, 0x8892a8, { collide: false });
   addBox(scene, world, -12, 40.5, 44, 1.8, 0.6, 1.8, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
-  // lava pool by the SE corner — mind the glow
-  addLava(scene, world, 56, -50, 8, 8);
+  // lava pit in the SE corner — mind the glow, and mind the edge
+  addLava(scene, world, 56, -50, 8, 8, -1.1);
   // ground variety: galleria plaza, crosswalk bands
   addBox(scene, world, -12, 0.031, 14, 30, 0.06, 14, 0x9088b0, { tex: 'arcade', repeat: [6, 3] });
   addBox(scene, world, 0, 0.031, -20, 8, 0.06, 30, 0x8a94b0, { tex: 'checker', repeat: [2, 7] });
@@ -1789,30 +1798,51 @@ function addDoor(scene, world, x, y, z, w, h, d) {
 /* ---------------- lava pools ---------------- */
 // A rimmed basin of glowing lava. Standing in it burns ~34 hp/s (handled in
 // main.js via world.lavaZones) — about three seconds to scramble out.
-function addLava(scene, world, x, z, w, d, y = 0) {
-  // no rim, no railing — it reads as floor until you're in it. A trap.
+function addLava(scene, world, x, z, w, d, floorY = -1.1) {
+  // A waist-deep molten basin sunk into the floor: fall in, burn, and you
+  // have to JUMP to get back out. floorY = the basin bottom you stand on.
+  addBox(scene, world, x, floorY - 0.5, z, w, 1, d, 0x3a2018, { tex: 'rock' });
   const lmat = new THREE.MeshStandardMaterial({
-    color: 0xff8040, roughness: 0.55, emissive: 0xff5a10, emissiveIntensity: 1.1 });
+    color: 0xff8040, roughness: 0.35, emissive: 0xff5a10, emissiveIntensity: 1.1 });
   const ai = AI_TEX.lava;
   if (ai) {
     lmat.map = ai.map.clone();
     lmat.map.needsUpdate = true;
-    lmat.map.repeat.set(Math.max(1, Math.round(w / 9)), Math.max(1, Math.round(d / 9)));
-    lmat.emissiveMap = lmat.map;          // the cracks glow, the crust stays dark
+    lmat.map.repeat.set(Math.max(1, Math.round(w / 10)), Math.max(1, Math.round(d / 10)));
+    lmat.emissiveMap = lmat.map;
     lmat.color = new THREE.Color(0xffffff);
-    lmat.emissive = new THREE.Color(0xffa060);
+    lmat.emissive = new THREE.Color(0xcc7040); // the liquid texture is bright — keep bloom in check
   }
+  const surfY = floorY + 0.85;
   const lava = new THREE.Mesh(new THREE.PlaneGeometry(w, d), lmat);
   lava.rotation.x = -Math.PI / 2;
-  lava.position.set(x, y + 0.08, z);
+  lava.position.set(x, surfY, z);
   scene.add(lava);
-  world.anim.push((dt, t) => { lmat.emissiveIntensity = 1.05 + Math.sin(t * 2.6 + x) * 0.3; });
+  world.anim.push((dt, t) => {
+    lmat.emissiveIntensity = 0.55 + Math.sin(t * 2.6 + x) * 0.18;
+    if (lmat.map) { lmat.map.offset.x = t * 0.014; lmat.map.offset.y = t * 0.009; } // slow molten drift
+  });
+  // splurting blobs — little magma spits popping off the surface
+  for (let i = 0; i < 3; i++) {
+    const blob = new THREE.Mesh(new THREE.SphereGeometry(0.14 + Math.random() * 0.12, 6, 5),
+      new THREE.MeshBasicMaterial({ color: 0xffa030 }));
+    scene.add(blob);
+    const px = x + (Math.random() - 0.5) * (w - 1.2);
+    const pz = z + (Math.random() - 0.5) * (d - 1.2);
+    const phase = Math.random() * 4, period = 1.4 + Math.random() * 1.3;
+    world.anim.push((dt, t) => {
+      const k = ((t + phase) % period) / period;
+      blob.visible = k < 0.4;                         // brief spit, then gone
+      const kk = k / 0.4;
+      blob.position.set(px, surfY + 4 * kk * (1 - kk) * 1.5, pz);
+    });
+  }
   const L = new THREE.PointLight(0xff5a20, 32, 20);
-  L.position.set(x, y + 2.5, z);
+  L.position.set(x, floorY + 2.5, z);
   scene.add(L);
   (world.lavaZones ||= []).push({
     minX: x - w / 2 + 0.2, maxX: x + w / 2 - 0.2,
-    minZ: z - d / 2 + 0.2, maxZ: z + d / 2 - 0.2, maxY: y + 0.5,
+    minZ: z - d / 2 + 0.2, maxZ: z + d / 2 - 0.2, maxY: floorY + 1.0,
   });
 }
 
@@ -1831,14 +1861,22 @@ function buildSanctum(scene) {
   for (const [x, z, w, d] of [[0, -50.5, 104, 3], [0, 50.5, 104, 3], [-50.5, 0, 3, 104], [50.5, 0, 3, 104]]) {
     addBox(scene, world, x, 6, z, w, 12, d, STONE, { tex: 'rock', repeat: [12, 2] });
   }
-  addBox(scene, world, 0, -0.5, 26, 100, 1, 48, FLOOR, { tex: 'panel', repeat: [12, 6] });
-  addBox(scene, world, 0, -0.5, -26, 100, 1, 48, FLOOR, { tex: 'panel', repeat: [12, 6] });
+  // (each half is split around a 9x9 lava-pit hole in its court)
+  addBox(scene, world, -41.25, -0.5, 26, 17.5, 1, 48, FLOOR, { tex: 'panel', repeat: [2, 6] });
+  addBox(scene, world, 13.25, -0.5, 26, 73.5, 1, 48, FLOOR, { tex: 'panel', repeat: [9, 6] });
+  addBox(scene, world, -28, -0.5, 41.25, 9, 1, 17.5, FLOOR, { tex: 'panel', repeat: [1, 2] });
+  addBox(scene, world, -28, -0.5, 12.75, 9, 1, 21.5, FLOOR, { tex: 'panel', repeat: [1, 3] });
+  addBox(scene, world, 41.25, -0.5, -26, 17.5, 1, 48, FLOOR, { tex: 'panel', repeat: [2, 6] });
+  addBox(scene, world, -13.25, -0.5, -26, 73.5, 1, 48, FLOOR, { tex: 'panel', repeat: [9, 6] });
+  addBox(scene, world, 28, -0.5, -41.25, 9, 1, 17.5, FLOOR, { tex: 'panel', repeat: [1, 2] });
+  addBox(scene, world, 28, -0.5, -12.75, 9, 1, 21.5, FLOOR, { tex: 'panel', repeat: [1, 3] });
   addBox(scene, world, -45, -0.5, 0, 10, 1, 4, FLOOR, { tex: 'panel' });
   addBox(scene, world, 0, -0.5, 0, 60, 1, 4, FLOOR, { tex: 'panel', repeat: [8, 1] });
   addBox(scene, world, 45, -0.5, 0, 10, 1, 4, FLOOR, { tex: 'panel' });
 
   // CRYPT (x −40..40, z −6..6, floor −6) + stair ramps down from the E/W rooms
-  addBox(scene, world, 0, -6.5, 0, 80, 1, 12, DARK, { tex: 'panel', repeat: [10, 2] });
+  addBox(scene, world, -33, -6.5, 0, 14, 1, 12, DARK, { tex: 'panel', repeat: [2, 2] });
+  addBox(scene, world, 12, -6.5, 0, 56, 1, 12, DARK, { tex: 'panel', repeat: [7, 2] });
   addBox(scene, world, 0, -3.5, 6.35, 80.7, 5.1, 0.7, STONE, { tex: 'rock' });
   addBox(scene, world, 0, -3.5, -6.35, 80.7, 5.1, 0.7, STONE, { tex: 'rock' });
   addBox(scene, world, 40.35, -3.5, 0, 0.7, 5.1, 13.4, STONE, { tex: 'rock' });
@@ -1925,10 +1963,10 @@ function buildSanctum(scene) {
   addDoor(scene, world, 13.4, 0, -37.5, 1.4, 5.9, 5.2);
 
   // lava pools in the NW and SE courts — the temple demands sacrifice
-  addLava(scene, world, -28, 28, 9, 9);
-  addLava(scene, world, 28, -28, 9, 9);
+  addLava(scene, world, -28, 28, 9, 9, -1.1);
+  addLava(scene, world, 28, -28, 9, 9, -1.1);
   // and a molten stretch of the crypt, crossed by a narrow plank
-  addLava(scene, world, -21, 0, 10, 11.3, -6);
+  addLava(scene, world, -21, 0, 10, 11.3, -7.1);
   addBox(scene, world, -21, -5.65, 0, 10.5, 0.7, 3, 0x1a1428, { tex: 'rock', repeat: [3, 1] });
   addRamp(scene, world, { axis: 'x', minX: -28.2, maxX: -26.2, minZ: -1.5, maxZ: 1.5, h0: -6, h1: -5.28, color: 0x1a1428 });
   addRamp(scene, world, { axis: 'x', minX: -15.8, maxX: -13.8, minZ: -1.5, maxZ: 1.5, h0: -5.28, h1: -6, color: 0x1a1428 });

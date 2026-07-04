@@ -627,6 +627,9 @@ function step(dt) {
         if (burning) {
           ch._lavaT = (ch._lavaT || 0) + dt;
           if (ch._lavaT > 0.33) { ch._lavaT = 0; applyDamage(ch, 11.3, LAVA); }
+          const wade = Math.max(0, 1 - 3 * dt);  // molten sludge — wading is slow
+          ch.vel.x *= wade;
+          ch.vel.z *= wade;
         } else ch._lavaT = 0;
       }
     }
