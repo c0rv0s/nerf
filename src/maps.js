@@ -1107,11 +1107,13 @@ function buildCanopy(scene) {
   scene.add(shaftLight);
 
   // center tree: hollow base room (door south, stairs up through the deck)
-  addBox(scene, world, -7.25, 4, 0, 1.5, 8, 16, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, 7.25, 4, 0, 1.5, 8, 16, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, 0, 4, -7.25, 13, 8, 1.5, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, -4.75, 4, 7.25, 5.5, 8, 1.5, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, 4.75, 4, 7.25, 5.5, 8, 1.5, 0x5e3f26, { tex: 'crate' });
+  // walls stop at 7.9 — tops tucked inside the deck slab (7..8); flush tops
+  // at exactly 8 z-fight with the deck surface wherever they underlap it
+  addBox(scene, world, -7.25, 3.95, 0, 1.5, 7.9, 16, 0x5e3f26, { tex: 'crate' });
+  addBox(scene, world, 7.25, 3.95, 0, 1.5, 7.9, 16, 0x5e3f26, { tex: 'crate' });
+  addBox(scene, world, 0, 3.95, -7.25, 13, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
+  addBox(scene, world, -4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
+  addBox(scene, world, 4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
   addRamp(scene, world, { axis: 'z', minX: -6, maxX: -3, minZ: -5, maxZ: 5, h0: 4, h1: 0, color: 0x8a6a40 });
   addBox(scene, world, -3, 3.7, -5.75, 6, 0.6, 1.5, 0x8a6a40, { tex: 'crate' }); // landing abuts the flight-1 top (overlap shoves climbers off)
   addRamp(scene, world, { axis: 'x', minX: 0, maxX: 6.5, minZ: -6.5, maxZ: -3.5, h0: 4, h1: 8, color: 0x8a6a40 });
