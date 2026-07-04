@@ -44,9 +44,12 @@ export class HUD {
       });
     }
     WEAPON_ORDER.forEach((id, i) => {
-      const owned = id === 'blaster' || (player.weapons[id] && player.ammo[id] > 0);
-      this._slotEls[i].className =
-        'wslot' + (owned ? ' owned' : '') + (player.weapon === id ? ' active' : '');
+      // a dry gun stays in your inventory (dashed slot) — find ammo to reload it
+      const has = id === 'blaster' || player.weapons[id];
+      const loaded = id === 'blaster' || player.ammo[id] > 0;
+      this._slotEls[i].className = 'wslot' +
+        (has ? (loaded ? ' owned' : ' empty') : '') +
+        (player.weapon === id ? ' active' : '');
     });
 
     // score bar + FFA top-3 leaderboard

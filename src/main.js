@@ -254,28 +254,42 @@ function spawnDmgMarker(target, amount) {
     return;
   }
   const c = document.createElement('canvas');
-  c.width = 128; c.height = 64;
+  c.width = 128; c.height = 128;
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: tex, transparent: true, depthWrite: false, depthTest: false }));
-  sprite.scale.set(1.5, 0.75, 1);
-  sprite.position.set(target.pos.x, target.pos.y + 2.3, target.pos.z);
+  sprite.scale.set(1.7, 1.7, 1);
+  sprite.position.set(target.pos.x, target.pos.y + 2.5, target.pos.z);
   G.scene.add(sprite);
   const m = { target, amount, age: 0, sprite, tex, canvas: c };
   drawDmg(m);
   dmgMarkers.push(m);
 }
+// NAB-style blast marker: purple number on a white-and-gold starburst
 function drawDmg(m) {
   const g = m.canvas.getContext('2d');
-  g.clearRect(0, 0, 128, 64);
-  g.font = 'bold 40px "Arial Black", Arial';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.lineWidth = 7; g.strokeStyle = '#301800';
+  g.clearRect(0, 0, 128, 128);
+  const star = (rot, scale, fill, stroke) => {
+    g.beginPath();
+    for (let i = 0; i < 20; i++) {
+      const a = i * Math.PI / 10 - Math.PI / 2 + rot;
+      const rad = (i % 2 ? 30 : 61) * scale;
+      g[i ? 'lineTo' : 'moveTo'](64 + Math.cos(a) * rad, 64 + Math.sin(a) * rad);
+    }
+    g.closePath();
+    g.fillStyle = fill; g.fill();
+    if (stroke) { g.lineWidth = 3; g.strokeStyle = stroke; g.stroke(); }
+  };
+  star(0, 1, '#ffd23c', '#e8b020');
+  star(0.16, 0.74, '#fffbe8', null);
   const txt = String(Math.round(m.amount));
-  g.strokeText(txt, 64, 34);
-  g.fillStyle = m.amount >= 60 ? '#ff5c2e' : '#ffd23c';
-  g.fillText(txt, 64, 34);
+  g.font = `bold ${txt.length > 2 ? 40 : 48}px "Arial Black", Arial`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 8; g.strokeStyle = '#3d1070';
+  g.strokeText(txt, 64, 66);
+  g.fillStyle = m.amount >= 60 ? '#c02fd8' : '#8a2fc8';
+  g.fillText(txt, 64, 66);
   m.tex.needsUpdate = true;
 }
 function updateDmgMarkers(dt) {

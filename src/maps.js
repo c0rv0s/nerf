@@ -1085,8 +1085,8 @@ function buildCanopy(scene) {
   addBox(scene, world, -70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
   addBox(scene, world, 16, -0.5, 0, 132, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [13, 16] });
   addBox(scene, world, -54, -3.1, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });   // riverbed
-  addBox(scene, world, -58.35, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);   // channel sides (tops tucked
-  addBox(scene, world, -49.65, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);   //  below the banks)
+  addBox(scene, world, -57.6, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);    // channel sides — inset 5cm
+  addBox(scene, world, -50.4, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);    //  from the bank faces
   addWater(scene, world, -54, -0.55, 0, 7.8, 162);
   addBox(scene, world, -54, -0.1, 4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });   // flooded tunnel covers
   addBox(scene, world, -54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
@@ -1874,14 +1874,16 @@ export function buildAtrium(scene) {
   addBox(scene, world, 33.5, 8.5, 42, 3, 7, 4, 0x6a5f88, { tex: 'neonwall' });     // lintel
   addBox(scene, world, 30.2, 2.5, 40, 0.6, 5, 5.6, 0x6a5f88, { tex: 'neonwall' }); // concealer slab
   // the passage: east hallway, then a leg north to the gate chamber
-  addBox(scene, world, 40, -0.5, 42, 16, 1, 8, 0x3a3452, { tex: 'panel' });
+  // hall pieces start at x 33, buried inside the wall box (32..35) — ending
+  // exactly on the wall's inner face plane (x 32) z-fought with it
+  addBox(scene, world, 40.5, -0.5, 42, 15, 1, 8, 0x3a3452, { tex: 'panel' });
   addBox(scene, world, 44, -0.5, 24, 8, 1, 28, 0x3a3452, { tex: 'panel' });
-  addBox(scene, world, 36, 3, 38.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
-  addBox(scene, world, 40, 3, 45.7, 16, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 36.5, 3, 38.3, 7, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 40.5, 3, 45.7, 15, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
   addBox(scene, world, 47.7, 3, 28, 0.6, 6, 36, 0x4a4266, { tex: 'neonwall' });
   addBox(scene, world, 40.3, 3, 24, 0.6, 6, 28, 0x4a4266, { tex: 'neonwall' });
   addBox(scene, world, 44, 3, 10.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });     // gate wall
-  addBox(scene, world, 40, 6.1, 42, 16, 0.6, 8, 0x3a3452, { tex: 'panel' });       // roofs
+  addBox(scene, world, 40.5, 6.1, 42, 15, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
   addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
   addBox(scene, world, 44, 2.6, 10.9, 5, 4.4, 0.4, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.9 });
   makeSign(scene, 44, 5.1, 11.2, 7, '#8a5fff', 'THE SANCTUM');
@@ -1938,6 +1940,35 @@ export function buildAtrium(scene) {
     world.portals.push({ x: n ? px : px + sgn * 0.5, z: n ? pz - 0.5 : pz, map: id, name });
   }
   world.portals.push({ x: 44, z: 11.5, map: 'sanctum', name: 'THE SANCTUM' });
+
+  // controls board to the left of spawn (replaces the old overlay text)
+  {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(8,10,28,.92)';
+    g.beginPath(); g.roundRect(8, 8, 496, 496, 22); g.fill();
+    g.lineWidth = 6; g.strokeStyle = '#ffd23c'; g.stroke();
+    g.textAlign = 'center';
+    g.fillStyle = '#ffd23c';
+    g.font = 'bold 44px "Arial Black", Arial';
+    g.fillText('CONTROLS', 256, 72);
+    g.font = 'bold 27px Arial';
+    g.fillStyle = '#dde2ff';
+    const lines = ['WASD — move', 'Mouse — aim + shoot', 'Space — jump',
+      '1–7 / wheel — weapons', 'Tab — scoreboard', 'Esc — pause', 'G — toggle glow',
+      '', 'Walk into a gate to play!'];
+    lines.forEach((t, i) => g.fillText(t, 256, 128 + i * 42));
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(7, 7),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+    board.position.set(-12, 4.4, 39);
+    board.rotation.y = Math.PI / 2.6; // angled toward the spawn
+    scene.add(board);
+    addBox(scene, world, -12, 0.45, 39, 0.35, 0.9, 0.35, 0x3a3452);
+  }
 
   // mode pad beside the spawn
   addBox(scene, world, 11, 0.3, 38, 3.4, 0.6, 3.4, 0x2a6a8a, { tex: 'panel' });

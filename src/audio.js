@@ -1,9 +1,27 @@
 // Tiny procedural sound effects — no assets needed.
 let ctx = null;
+let masterBus = null;
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
+}
+// All sfx route through a limiter — a busy firefight used to sum a dozen raw
+// oscillators past 0dB and clip into a horrible buzz.
+function bus(a) {
+  if (!masterBus) {
+    const comp = a.createDynamicsCompressor();
+    comp.threshold.value = -16;
+    comp.knee.value = 20;
+    comp.ratio.value = 10;
+    comp.attack.value = 0.002;
+    comp.release.value = 0.12;
+    masterBus = a.createGain();
+    masterBus.gain.value = 0.8;
+    masterBus.connect(comp);
+    comp.connect(a.destination);
+  }
+  return masterBus;
 }
 
 // Distance attenuation: sfx(name, at) scales volume by how far `at` is from
@@ -25,7 +43,7 @@ function blip({ freq = 440, end = freq, type = 'square', dur = 0.1, vol = 0.15, 
     o.frequency.exponentialRampToValueAtTime(Math.max(end, 1), t + dur);
     g.gain.setValueAtTime(vol * _mult, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(a.destination);
+    o.connect(g).connect(bus(a));
     o.start(t); o.stop(t + dur + 0.02);
   } catch { /* audio blocked — fine */ }
 }
