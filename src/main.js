@@ -604,6 +604,8 @@ function step(dt) {
       if (!ch.isPlayer) ch.update(dt, G.characters, fire);
     }
 
+    G.world.updateDoors?.(G.characters, dt); // proximity doors (Labyrinth)
+
     // lava burns ~34 hp/s in three pulses per second
     if (G.world.lavaZones) {
       for (const ch of G.characters) {

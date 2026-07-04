@@ -1733,6 +1733,46 @@ function buildCity(scene) {
   return world;
 }
 
+/* ---------------- automatic doors ---------------- */
+// Sliding pocket doors: closed until someone steps close, so you can't see
+// or shoot through a doorway without committing to it. Colliders join the
+// world on the first update tick — AFTER the waypoint graph is built — so
+// bot paths still link through the openings.
+function addDoor(scene, world, x, y, z, w, h, d) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color: 0x241c38, roughness: 0.55, metalness: 0.35,
+      emissive: 0x8a5fff, emissiveIntensity: 0.22 }));
+  mesh.position.set(x, y + h / 2, z);
+  mesh.castShadow = mesh.receiveShadow = true;
+  scene.add(mesh);
+  const collider = { type: 'box', min: V(x - w / 2, y, z - d / 2), max: V(x + w / 2, y + h, z + d / 2) };
+  (world.doors ||= []).push({ mesh, collider, x, y, z, w, h, d, along: w >= d, off: 0 });
+  if (!world.updateDoors) {
+    world._doorsArmed = false;
+    world.updateDoors = (chars, dt) => {
+      if (!world._doorsArmed) {
+        for (const dr of world.doors) world.colliders.push(dr.collider);
+        world._doorsArmed = true;
+      }
+      for (const dr of world.doors) {
+        let open = false;
+        for (const ch of chars) {
+          if (!ch.alive) continue;
+          const dx = ch.pos.x - dr.x, dz = ch.pos.z - dr.z;
+          if (dx * dx + dz * dz < 22 && Math.abs(ch.pos.y - dr.y) < 4) { open = true; break; }
+        }
+        const target = open ? (dr.along ? dr.w : dr.d) + 0.1 : 0;   // pocket fully into the wall
+        const step = 9 * dt;
+        dr.off += Math.max(-step, Math.min(step, target - dr.off));
+        const ox = dr.along ? dr.off : 0, oz = dr.along ? 0 : dr.off;
+        dr.mesh.position.set(dr.x + ox, dr.y + dr.h / 2, dr.z + oz);
+        dr.collider.min.set(dr.x - dr.w / 2 + ox, dr.y, dr.z - dr.d / 2 + oz);
+        dr.collider.max.set(dr.x + dr.w / 2 + ox, dr.y + dr.h, dr.z + dr.d / 2 + oz);
+      }
+    };
+  }
+}
+
 /* ---------------- lava pools ---------------- */
 // A rimmed basin of glowing lava. Standing in it burns ~34 hp/s (handled in
 // main.js via world.lavaZones) — about three seconds to scramble out.
@@ -1845,6 +1885,25 @@ function buildSanctum(scene) {
   }
   addJumpPad(scene, world, 20, 0, 40, 20, -7, 0, 0x8a5fff);
   addJumpPad(scene, world, -20, 0, -40, 20, 7, 0, 0x8a5fff);
+
+  // cavern ceiling: no open sky — discs ricochet back down (no shadow cast,
+  // or the sun would flat-black the whole temple; faint glow sells the rock)
+  addBox(scene, world, 0, 12.45, 0, 104, 0.9, 104, 0x241c38,
+    { tex: 'rock', repeat: [12, 12], emissive: 0x2a1a4a, emissiveIntensity: 0.35, shadow: false });
+
+  // automatic doors on every doorway — no peeking, no doorway sniping
+  addDoor(scene, world, 0, 0, 18, 4.2, 5.9, 1.4);      // chamber
+  addDoor(scene, world, 0, 0, -18, 4.2, 5.9, 1.4);
+  addDoor(scene, world, 18, 0, 0, 1.4, 5.9, 4.2);
+  addDoor(scene, world, -18, 0, 0, 1.4, 5.9, 4.2);
+  addDoor(scene, world, 26.6, 0, 0, 1.4, 5.9, 4.2);    // E/W rooms
+  addDoor(scene, world, 43.4, 0, 0, 1.4, 5.9, 4.2);
+  addDoor(scene, world, -26.6, 0, 0, 1.4, 5.9, 4.2);
+  addDoor(scene, world, -43.4, 0, 0, 1.4, 5.9, 4.2);
+  addDoor(scene, world, 0, 0, 26.6, 4.2, 5.9, 1.4);    // N/S rooms + ring doors
+  addDoor(scene, world, 0, 0, -26.6, 4.2, 5.9, 1.4);
+  addDoor(scene, world, 13.4, 0, 37.5, 1.4, 5.9, 5.2);
+  addDoor(scene, world, 13.4, 0, -37.5, 1.4, 5.9, 5.2);
 
   // lava pools in the NW and SE courts — the temple demands sacrifice
   addLava(scene, world, -28, 28, 9, 9);
