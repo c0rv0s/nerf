@@ -148,6 +148,13 @@ function startMatch(mapDef, mode = 'ffa') {
         const bot = new Bot(scene, world, team, BOT_NAMES[ni++],
           team === 'blue' ? 0x2e7fd8 : 0xd83a3a);
         bot.color = team === 'blue' ? '#5cb3ff' : '#ff5c5c';
+        if (team === 'blue') { // teammate marker — they won't shoot you, don't shoot them
+          const m = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.42, 6),
+            new THREE.MeshBasicMaterial({ color: 0x5cb3ff }));
+          m.position.y = 2.4;
+          m.rotation.x = Math.PI;
+          bot.mesh.add(m);
+        }
         characters.push(bot);
       }
     }

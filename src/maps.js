@@ -1356,7 +1356,9 @@ function buildCity(scene) {
   // ramps + decks: south ramp up, west mezzanine, north ramp up, east gallery
   addRamp(scene, world, { axis: 'x', minX: -18, maxX: -2, minZ: 23.5, maxZ: 27, h0: 8, h1: 0, color: galIn });
   addBox(scene, world, -21.25, 7.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
-  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -2, minZ: 45, maxZ: 48.5, h0: 8, h1: 16, color: galIn });
+  // crests 0.5 above the gallery deck and overlaps its edge — a flush joint
+  // at this slope wedges the capsule against the deck's side face instead
+  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -5.4, minZ: 45, maxZ: 48.5, h0: 8, h1: 16.5, color: galIn });
   addBox(scene, world, -2.75, 15.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
   // bare catwalks across the void at 16 — the z=30 one ends at the window
   addBox(scene, world, -15.25, 15.6, 30, 18.5, 0.8, 2.5, 0x8a80a8, { tex: 'arcade', repeat: [5, 1] });
@@ -1536,7 +1538,7 @@ function buildCity(scene) {
     [-18, 0, 24], [-6, 0, 24], [-12, 0, 47], [-1, 0, 32], [-24, 0, 40],
     [-12, 0, 36], [-20, 0, 32],
     [-10, 4, 25.25], [-21, 8, 30], [-21, 8, 44],
-    [-10, 12, 46.75], [-3, 16, 28], [-3, 16, 44],
+    [-12, 12, 46.75], [-3, 16, 28], [-3, 16, 44],
     [-15, 16, 30], [-15, 16, 42],
     [-11, 19.3, 25.25], [-21, 24, 44], [-14, 24, 27], [-22, 24, 36],
     // arcade: doorways, rooms, stair, floor 2
@@ -1550,7 +1552,7 @@ function buildCity(scene) {
   world.manualLinks.push(
     // interior ramp → upper deck transitions (deck slabs block the LOS ray)
     [-10, 4, 25.25, -21, 8, 30, false],
-    [-10, 12, 46.75, -3, 16, 44, false],
+    [-12, 12, 46.75, -3, 16, 44, false],
     [-11, 19.3, 25.25, -14, 24, 27, false],
     [-20.75, 3, -43, -19, 6.5, -30, false],
     [-22, 24, 36, -12, 34, 36, true],     // chamber hatch pad → roof
@@ -1658,7 +1660,7 @@ export function buildAtrium(scene) {
   scene.add(fLight);
 
   // rooftop billboard above the north wall
-  makeSign(scene, 0, 15.5, -48.5, 26, '#ff4d2e', 'NERF ARENA BLAST');
+  makeSign(scene, 0, 15.5, -48.5, 26, '#ff4d2e', 'NERF ARENA BLAST REVIVAL');
   addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
   addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
 
