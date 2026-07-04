@@ -1575,37 +1575,68 @@ function buildCity(scene) {
    A dusk courtyard: grass strip, fountain, and five glowing gates. Walk into
    a gate to enter that arena; step on the mode pad to toggle FFA/TDM. */
 
-// Floating text sign (canvas sprite). Returns a redraw(text) function.
-function makeSign(scene, x, y, z, w, color, text) {
+// Flat text sign mounted on a wall (canvas-textured plane, fixed yaw —
+// sprites clipped through the walls). Returns a redraw(text) function.
+function makeSign(scene, x, y, z, w, color, text, yaw = 0) {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
   const draw = (t) => {
     const g = c.getContext('2d');
     g.clearRect(0, 0, 512, 128);
-    g.fillStyle = 'rgba(8,10,28,.88)';
+    g.fillStyle = 'rgba(8,10,28,.92)';
     g.beginPath(); g.roundRect(6, 10, 500, 108, 18); g.fill();
     g.lineWidth = 6; g.strokeStyle = color; g.stroke();
-    g.font = 'bold 52px "Arial Black", Arial';
+    let size = 52;
+    g.font = `bold ${size}px "Arial Black", Arial`;
+    const tw = g.measureText(t).width;
+    if (tw > 460) {
+      size = Math.floor(size * 460 / tw);
+      g.font = `bold ${size}px "Arial Black", Arial`;
+    }
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillStyle = color;
     g.fillText(t, 256, 68);
     tex.needsUpdate = true;
   };
   draw(text);
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  spr.position.set(x, y, z);
-  spr.scale.set(w, w / 4, 1);
-  scene.add(spr);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  m.position.set(x, y, z);
+  m.rotation.y = yaw;
+  scene.add(m);
   return draw;
 }
 
 export function buildAtrium(scene) {
   const world = newWorld({ killY: -30 });
-  scene.background = new THREE.Color(0x2a2244);
-  scene.fog = new THREE.Fog(0x2a2244, 90, 240);
-  baseLighting(scene, 0xbfa8ff, 0x332244, [-40, 80, 30], 90);
+  scene.background = new THREE.Color(0xd99cb0);
+  scene.fog = new THREE.Fog(0xd99cb0, 120, 340);
+  baseLighting(scene, 0xffe0c8, 0x8a6a90, [-40, 80, 30], 90);
+
+  // warm dusk sky dome: gradient + a sprinkle of early stars up top
+  const skyC = document.createElement('canvas');
+  skyC.width = 512; skyC.height = 512;
+  const sg = skyC.getContext('2d');
+  const grad = sg.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, '#4a3a8e');
+  grad.addColorStop(0.42, '#9a63b8');
+  grad.addColorStop(0.62, '#e88aa0');
+  grad.addColorStop(0.8, '#ffc978');
+  grad.addColorStop(1, '#ffc978');
+  sg.fillStyle = grad;
+  sg.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 90; i++) {
+    sg.fillStyle = `rgba(255,255,255,${0.25 + Math.random() * 0.55})`;
+    const s = Math.random() < 0.15 ? 2 : 1;
+    sg.fillRect(Math.random() * 512, Math.random() * 190, s, s);
+  }
+  const skyTex = new THREE.CanvasTexture(skyC);
+  skyTex.colorSpace = THREE.SRGBColorSpace;
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(380, 24, 12),
+    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false })));
 
   // courtyard floor + perimeter (inner faces at x ±32, z ±48)
   addBox(scene, world, 0, -0.5, 0, 64, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [8, 12] });
@@ -1626,8 +1657,10 @@ export function buildAtrium(scene) {
   fLight.position.set(0, 3, -28);
   scene.add(fLight);
 
-  // big marquee over the north gate
-  makeSign(scene, 0, 11.5, -46, 30, '#ff4d2e', 'NERF ARENA BLAST');
+  // rooftop billboard above the north wall
+  makeSign(scene, 0, 15.5, -48.5, 26, '#ff4d2e', 'NERF ARENA BLAST');
+  addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
+  addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
 
   // gate bays: [map, name, color, wall(n/w/e), offset]
   world.portals = [];
@@ -1652,7 +1685,9 @@ export function buildAtrium(scene) {
       addBox(scene, world, px, 7.6, pz, 1.6, 1.4, 9.6, 0x4a4266, { tex: 'neonwall' });
       addBox(scene, world, px + sgn * 0.9, 3.2, pz, 0.5, 6, 7, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
     }
-    makeSign(scene, n ? px : px - sgn * 1.6, 9.7, n ? pz + 1.6 : pz, 10, '#' + color.toString(16).padStart(6, '0'), name);
+    // sign panel flat on the wall above the gate (walls' inner faces: z −48, x ±32)
+    makeSign(scene, n ? px : sgn * 31.9, 9.6, n ? -47.95 : pz, 10,
+      '#' + color.toString(16).padStart(6, '0'), name, n ? 0 : -sgn * Math.PI / 2);
     const L = new THREE.PointLight(color, 26, 20);
     L.position.set(n ? px : px - sgn * 2.5, 4.5, n ? pz + 2.5 : pz);
     scene.add(L);
@@ -1663,7 +1698,8 @@ export function buildAtrium(scene) {
   addBox(scene, world, 11, 0.3, 38, 3.4, 0.6, 3.4, 0x2a6a8a, { tex: 'panel' });
   addBox(scene, world, 11, 0.66, 38, 2.6, 0.1, 2.6, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 0.9 });
   world.modePad = { x: 11, z: 38 };
-  world.setModeSign = makeSign(scene, 11, 3.4, 38, 9, '#30e0ff', 'MODE: FREE FOR ALL');
+  addBox(scene, world, 11, 1.6, 36.6, 0.3, 3.2, 0.3, 0x3a3452); // sign post at the pad's back edge
+  world.setModeSign = makeSign(scene, 11, 3.6, 36.8, 9, '#30e0ff', 'MODE: FREE FOR ALL');
 
   // a little clutter so it feels lived-in
   addBox(scene, world, -14, 1.2, 30, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
