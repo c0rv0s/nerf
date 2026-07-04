@@ -14,9 +14,7 @@ import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
 import { sfx } from './audio.js';
 
-const TDM_LIMIT = 8000;   // points — kills drop collectible orbs now
-const FFA_LIMIT = 5000;
-const MATCH_TIME = 8 * 60;
+const MATCH_TIME = 7 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
 
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
@@ -66,7 +64,7 @@ for (const btn of document.querySelectorAll('.modebtn')) {
     selectedMode = btn.dataset.mode;
     for (const b of document.querySelectorAll('.modebtn')) b.classList.toggle('active', b === btn);
     document.getElementById('menusub').textContent = selectedMode === 'ffa'
-      ? `FREE FOR ALL · FIRST TO ${FFA_LIMIT} PTS` : `TEAM DEATHMATCH · FIRST TO ${TDM_LIMIT} PTS`;
+      ? 'FREE FOR ALL · 7 MINUTES' : 'TEAM DEATHMATCH · 7 MINUTES';
   });
 }
 for (const map of MAPS) {
@@ -251,18 +249,17 @@ function dropWeapon(ch) {
 
 function checkEnd() {
   if (G.over) return;
+  if (G.timeLeft > 0) return; // matches run the full clock
   let title, color, stats;
   const playerStats = `You: ${G.player.kills} kills / ${G.player.deaths} deaths`;
   if (G.mode === 'tdm') {
     const { blue, red } = G.scores;
-    if (blue < TDM_LIMIT && red < TDM_LIMIT && G.timeLeft > 0) return;
     title = blue === red ? 'DRAW!' : (blue > red ? 'BLUE TEAM WINS!' : 'RED TEAM WINS!');
     color = blue === red ? '#ffd23c' : (blue > red ? '#5cb3ff' : '#ff5c5c');
     stats = `BLUE ${blue} — ${red} RED · ${playerStats}`;
   } else {
     const ranked = [...G.characters].sort((a, b) => b.score - a.score);
     const leader = ranked[0];
-    if (leader.score < FFA_LIMIT && G.timeLeft > 0) return;
     title = leader.isPlayer ? 'YOU WIN!' : `${leader.name.toUpperCase()} WINS!`;
     color = leader.color;
     const rank = ranked.indexOf(G.player) + 1;

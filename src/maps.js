@@ -268,6 +268,54 @@ function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72) {
   return m;
 }
 
+// Animated water: two overlapping planes with counter-scrolling wave normal
+// maps, glassy roughness for sun glints, env reflections for the sky sheen.
+let _waterNormal = null;
+function waterNormalTex() {
+  if (!_waterNormal) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, 128, 128);
+    for (let i = 0; i < 60; i++) {
+      const x = Math.random() * 128, y = Math.random() * 128, r = 6 + Math.random() * 16;
+      const grad = g.createRadialGradient(x, y, 1, x, y, r);
+      const v = Math.random() > 0.5 ? 200 : 60;
+      grad.addColorStop(0, `rgba(${v},${v},${v},0.5)`);
+      grad.addColorStop(1, 'rgba(128,128,128,0)');
+      g.fillStyle = grad;
+      g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    }
+    _waterNormal = makeNormalMap(c);
+  }
+  return _waterNormal;
+}
+
+function addWater(scene, world, x, y, z, w, d) {
+  const layers = [];
+  for (const [dy, opacity, scale] of [[0, 0.55, 8], [-0.12, 0.3, 13]]) {
+    const n = waterNormalTex().clone();
+    n.needsUpdate = true;
+    n.repeat.set(w / scale, d / scale);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+      new THREE.MeshStandardMaterial({
+        color: 0x11557f, transparent: true, opacity, roughness: 0.06, metalness: 0.1,
+        normalMap: n, normalScale: new THREE.Vector2(0.9, 0.9),
+        envMapIntensity: 1.6, emissive: 0x06283f, emissiveIntensity: 0.15,
+        depthWrite: false,
+      }));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, y + dy, z);
+    scene.add(mesh);
+    layers.push(n);
+  }
+  world.anim.push((dt, t) => {
+    layers[0].offset.set(t * 0.018, t * 0.03);
+    layers[1].offset.set(-t * 0.026, t * 0.012);
+  });
+}
+
 function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff, playersOnly = false) {
   world.jumpPads.push({ x, y, z, r: 1.7, vy, vx, vz, playersOnly });
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.1, 0.3, 20),
@@ -557,11 +605,7 @@ function buildFortress(scene) {
   addRamp(scene, world, { axis: 'x', minX: 55, maxX: 73, minZ: -8, maxZ: 8, h0: -4, h1: 0, color: 0x9a8050 });
 
   // Canal water + tunnel ceilings between the bridges (walkable on top)
-  const water = new THREE.Mesh(new THREE.BoxGeometry(146, 0.5, 12.6),
-    new THREE.MeshStandardMaterial({ color: 0x2b8fc4, transparent: true, opacity: 0.55,
-      roughness: 0.15, metalness: 0.1, emissive: 0x0f4c70, emissiveIntensity: 0.25 }));
-  water.position.set(0, -3.3, 0);
-  scene.add(water);
+  addWater(scene, world, 0, -3.15, 0, 146, 12.6);
   addBox(scene, world, -24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
   addBox(scene, world, 24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
 
