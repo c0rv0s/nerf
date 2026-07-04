@@ -34,6 +34,7 @@ export class Bot {
     this.height = 1.8;
 
     this.hp = 100;
+    this.shield = 0;
     this.alive = true;
     this.kills = 0; this.deaths = 0;
     this.damageMult = 1;
@@ -81,6 +82,7 @@ export class Bot {
     this.pos.copy(pos);
     this.vel.set(0, 0, 0);
     this.hp = 100;
+    this.shield = 0;
     this.alive = true;
     this.damageMult = 1;
     this.powerup = null;
@@ -165,7 +167,8 @@ export class Bot {
       const k = it.def.kind;
       const want = k === 'points' || k === 'gold' || k === 'silver' || k === 'drop' ||
         (k === 'weapon' && !(this.weapons[it.def.weapon] && this.ammo[it.def.weapon] > 0)) ||
-        (k === 'health' && this.hp < 60);
+        (k === 'health' && this.hp < 60) ||
+        (k === 'shield' && !(this.shield > 0));
       if (!want) continue;
       const d = it.def.pos.distanceTo(this.pos);
       if (d > 80) continue;
@@ -186,6 +189,11 @@ export class Bot {
       to = nearestWaypoint(this.world, this.target.pos); // push toward the fight
     } else if (loot && Math.random() < 0.8) {
       to = nearestWaypoint(this.world, loot.def.pos);    // go shopping
+      // already standing at the item's waypoint but can't actually grab it
+      // (wrong floor, ledge above, …) — stop staring at the wall and move on
+      if (to === from && this.pos.distanceTo(loot.def.pos) > 3) {
+        to = Math.floor(Math.random() * this.world.waypoints.length);
+      }
     } else {
       to = Math.floor(Math.random() * this.world.waypoints.length);
     }

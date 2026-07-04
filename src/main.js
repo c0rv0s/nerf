@@ -199,6 +199,11 @@ function respawnCharacter(ch, initial = false) {
 /* ---------------- damage & kills ---------------- */
 function applyDamage(target, dmg, attacker) {
   if (!target.alive || G.over) return;
+  if (target.shield > 0) { // shield soaks damage first
+    const absorbed = Math.min(target.shield, dmg);
+    target.shield -= absorbed;
+    dmg -= absorbed;
+  }
   target.hp -= dmg;
   target.lastAttacker = attacker;  // getting shot reveals the shooter to bots
   target.alertTimer = 4;
@@ -300,6 +305,11 @@ function onPickup(ch, def) {
       if (ch.hp >= 100) return false;
       ch.hp = Math.min(100, ch.hp + 30);
       if (ch.isPlayer) { sfx('pickup'); announce('+30 HEALTH', '#6f6'); }
+      return true;
+    case 'shield':
+      if (ch.shield >= 75) return false;
+      ch.shield = 75;
+      if (ch.isPlayer) { sfx('shieldup'); announce('+75 SHIELD', '#7fd0ff'); }
       return true;
     case 'points':
       ch.score += def.amount;

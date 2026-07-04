@@ -20,6 +20,7 @@ export class Player {
     this.eyeHeight = 1.6;
 
     this.hp = 100;
+    this.shield = 0;
     this.alive = true;
     this.kills = 0; this.deaths = 0;
     this.damageMult = 1;
@@ -79,6 +80,7 @@ export class Player {
     this.pos.copy(pos);
     this.vel.set(0, 0, 0);
     this.hp = 100;
+    this.shield = 0;
     this.alive = true;
     this.damageMult = 1;
     this.powerup = null;

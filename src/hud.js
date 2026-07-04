@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 export class HUD {
   constructor() {
     this.els = {
-      hud: $('hud'), health: $('healthnum'), fill: $('healthfill'),
+      hud: $('hud'), health: $('healthnum'), shield: $('shieldnum'), fill: $('healthfill'),
       ammo: $('ammonum'), wname: $('weaponname'), slots: $('wslots'),
       left: $('scoreBlue'), right: $('scoreRed'), timer: $('timer'), top3: $('top3'),
       feed: $('killfeed'), msg: $('message'), power: $('powerup'),
@@ -26,6 +26,7 @@ export class HUD {
     const { player, mode, scores, characters, timeLeft, showBoard } = state;
     const e = this.els;
     e.health.textContent = Math.max(0, Math.ceil(player.hp));
+    e.shield.textContent = player.shield > 0 ? `+${Math.ceil(player.shield)} 🛡` : '';
     e.fill.style.width = Math.max(0, player.hp) + '%';
     const w = WEAPONS[player.weapon];
     e.wname.textContent = w.name;

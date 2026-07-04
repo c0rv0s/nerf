@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { WEAPONS, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
-const RESPAWN = { weapon: 18, ammo: 14, health: 16, star: 45, gold: 60, silver: 50 };
+const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50 };
 
 // Neon point-value badges (canvas sprites, cached per value)
 const POINT_COLORS = { 1000: '#ffd23c', 750: '#ff9c40', 500: '#c86aff', 250: '#4dffd2' };
@@ -61,6 +61,12 @@ function makeMesh(def) {
       map: pointBadge(def.amount), transparent: true, depthWrite: false }));
     sprite.scale.setScalar(1.7);
     g.add(sprite);
+  } else if (def.kind === 'shield') {
+    const bubble = new THREE.Mesh(new THREE.SphereGeometry(0.6, 14, 10),
+      new THREE.MeshStandardMaterial({ color: 0x7fd0ff, transparent: true, opacity: 0.35,
+        roughness: 0.1, emissive: 0x3aa0e0, emissiveIntensity: 0.5 }));
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.28), glowMat(0x7fd0ff, 1.2));
+    g.add(bubble, core);
   } else if (def.kind === 'star') {
     const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), glowMat(0xffe040, 1.4));
     g.add(star);

@@ -494,6 +494,7 @@ function buildArena(scene) {
   }
 
   // Pickups
+  pk(world, 'shield', -4, 4.2, 0);                       // atrium base tier
   pk(world, 'gold', 2, 15, -7);                          // floating top platform
   pk(world, 'silver', -62, 0.2, -28);                    // deep in the crate maze
   pk(world, 'weapon', 72, -4.8, -45, { weapon: 'zooka' });   // basement south corner
@@ -608,6 +609,10 @@ function buildFortress(scene) {
   addWater(scene, world, 0, -3.15, 0, 146, 12.6);
   addBox(scene, world, -24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
   addBox(scene, world, 24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
+  addBox(scene, world, -49, 1.2, 0, 12, 0.8, 14, 0x8a7248, { tex: 'panel' }); // covers to the end ramps
+  addBox(scene, world, 49, 1.2, 0, 12, 0.8, 14, 0x8a7248, { tex: 'panel' });
+  addBox(scene, world, -7.25, 1.2, 0, 5.5, 0.8, 14, 0x8a7248, { tex: 'panel' }); // slivers beside the bridge
+  addBox(scene, world, 7.25, 1.2, 0, 5.5, 0.8, 14, 0x8a7248, { tex: 'panel' });
 
   // Bridges: grand center bridge + two side bridges
   addBox(scene, world, 0, -0.4, 0, 9, 0.8, 20, 0xc8461e, { tex: 'panel' });
@@ -715,6 +720,7 @@ function buildFortress(scene) {
   pk(world, 'health', 0, -3.8, -4);
   pk(world, 'health', -64, 0.2, 30);
   pk(world, 'health', 64, 0.2, -30);
+  pk(world, 'shield', 0, 0.6, 0);                        // on the center bridge
   pk(world, 'gold', 0, 0.2, 26);                       // inside the keep
   pk(world, 'silver', 0, -3.8, 4);                     // under the center bridge
   pk(world, 'star', 8, 8.2, 36, { hidden: true });     // keep roof corner
@@ -816,7 +822,7 @@ function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
 
 function buildAsteroids(scene) {
   const world = newWorld({
-    gravity: 5, jumpVel: 7.5, killY: -60, playerSpeed: 11,
+    gravity: 5, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
     waypointLinkDist: 45, waypointLinkDy: 16,
   });
   scene.background = new THREE.Color(0x05060f);
@@ -892,6 +898,7 @@ function buildAsteroids(scene) {
   addRockPlatform(scene, world, 64, 11, -20, 9, 7);
   addRockPlatform(scene, world, -26, -2, 42, 9, 7);
   addRockPlatform(scene, world, 26, 10, -42, 9, 7);
+  addRockPlatform(scene, world, 8, -4, 58, 8, 7);   // stepping stone on the whomper route
   // gold perch + far star rocks
   addRockPlatform(scene, world, 0, 22, 0, 6, 6, 0xffd8a0);
   addRockPlatform(scene, world, 72, 4, -62, 8, 8);
@@ -975,6 +982,7 @@ function buildAsteroids(scene) {
   pk(world, 'health', -52, -5.8, 38);
   pk(world, 'health', 52, 8.2, -38);
   pk(world, 'health', 16, -7.8, 72);
+  pk(world, 'shield', -18, 9, 0);                        // station west wing
   pk(world, 'gold', 0, 22.2, 0);                          // the perch above the station
   pk(world, 'silver', 0, 14.4, -8);                       // station core roof
   pk(world, 'star', 72, 4.2, -62, { hidden: true });      // far rocks
@@ -988,7 +996,7 @@ function buildAsteroids(scene) {
     [75, 14, -5], [75, 14, 5], [68, 14, 0],
     [0, 9, 4], [8, 9, -2], [-8, 9, -2], [-18, 8.8, 0], [18, 8.8, 0],  // station
     [-58, 12, -8], [-64, 4, 20], [58, 11, 8], [64, 11, -20],          // base stones
-    [-26, -2, 42], [26, 10, -42],                                     // mid stones
+    [-26, -2, 42], [26, 10, -42], [8, -4, 58],                        // mid stones
     [-40, 8, -18], [40, 8, 18], [-48, 4, -10], [48, 4, 10],           // mids + balconies
     [-44, 13, -46], [44, 0, 46], [-52, -6, 38], [52, 8, -38],
     [-14, 14, -68], [16, -8, 72], [-72, 8, -56], [72, -4, 56],
@@ -1131,6 +1139,7 @@ function buildCanopy(scene) {
   }
 
   // Pickups
+  pk(world, 'shield', 40, 10.4, 40);                     // NE 10-deck
   pk(world, 'gold', 4, 30.2, 0);                          // the crown
   pk(world, 'silver', 0, 0.2, 0);                         // hidden in the tree-base room
   pk(world, 'health', 0, 16.2, 4);
@@ -1302,6 +1311,7 @@ function buildCity(scene) {
   }
 
   // Pickups
+  pk(world, 'shield', -12, 20.2, -32);                   // A2 rooftop
   pk(world, 'gold', -12, 34.2, 36);                        // tallest roof
   pk(world, 'silver', 32, 28.2, -35);
   pk(world, 'weapon', 0, -5.8, -7, { weapon: 'whomper' }); // deep in the subway

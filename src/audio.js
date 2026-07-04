@@ -37,6 +37,8 @@ const SFX = {
   hurt:     () => blip({ freq: 200, end: 90, dur: 0.18, vol: 0.2, type: 'sawtooth' }),
   jump:     () => blip({ freq: 300, end: 500, dur: 0.1, vol: 0.06, type: 'triangle' }),
   boing:    () => blip({ freq: 180, end: 700, dur: 0.25, vol: 0.16, type: 'triangle' }),
+  shieldup: () => { blip({ freq: 500, end: 900, dur: 0.14, vol: 0.13, type: 'sine' });
+                    blip({ freq: 900, end: 1400, dur: 0.16, vol: 0.12, type: 'sine', delay: 0.1 }); },
   pickup:   () => { blip({ freq: 600, end: 900, dur: 0.08, vol: 0.12, type: 'triangle' });
                     blip({ freq: 900, end: 1200, dur: 0.08, vol: 0.12, type: 'triangle', delay: 0.07 }); },
   star:     () => { for (let i = 0; i < 4; i++) blip({ freq: 700 + i * 200, dur: 0.09, vol: 0.12, type: 'triangle', delay: i * 0.06 }); },
