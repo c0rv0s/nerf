@@ -609,14 +609,10 @@ function buildFortress(scene) {
   addBox(scene, world, -75, -2.5, 0, 4, 5, 14, 0x9a8050, { tex: 'panel' });
   addBox(scene, world, 75, -2.5, 0, 4, 5, 14, 0x9a8050, { tex: 'panel' });
 
-  // Canal water + tunnel ceilings between the bridges (walkable on top)
+  // Canal water — open to the sky mid-map; covered only near the end ramps
   addWater(scene, world, 0, -3.15, 0, 146, 12.6);
-  addBox(scene, world, -24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
-  addBox(scene, world, 24, 1.2, 0, 28, 0.8, 14, 0x8a7248, { tex: 'panel' });
   addBox(scene, world, -49, 1.2, 0, 12, 0.8, 14, 0x8a7248, { tex: 'panel' }); // covers to the end ramps
   addBox(scene, world, 49, 1.2, 0, 12, 0.8, 14, 0x8a7248, { tex: 'panel' });
-  addBox(scene, world, -7.25, 1.2, 0, 5.5, 0.8, 14, 0x8a7248, { tex: 'panel' }); // slivers beside the bridge
-  addBox(scene, world, 7.25, 1.2, 0, 5.5, 0.8, 14, 0x8a7248, { tex: 'panel' });
   // raised bunker roofs over the end ramps (tall enough inside for the ramp
   // exit; walk out the sides) + ramplets so the roof-walkway runs end to end
   addBox(scene, world, -64, 2.8, 0, 18, 0.8, 14, 0x8a7248, { tex: 'panel' });
@@ -677,6 +673,29 @@ function buildFortress(scene) {
   addRamp(scene, world, { axis: 'z', minX: 30, maxX: 36, minZ: 30, maxZ: 41.75, h0: 0, h1: 5, color: 0x8a5fd0 });
   addRamp(scene, world, { axis: 'z', minX: -36, maxX: -30, minZ: -41.75, maxZ: -30, h0: 5, h1: 0, color: 0x8a5fd0 });
   addRamp(scene, world, { axis: 'z', minX: 40, maxX: 46, minZ: -41.75, maxZ: -30, h0: 5, h1: 0, color: 0x8a5fd0 });
+
+  // Sky catwalk (north-south): keep roof → under the gatehouse arch → across
+  // the trench → ramp down onto the south battlement. Top y=7.8, flush with
+  // the keep roof (edge abut at z=13 — no overlap, no z-fight).
+  addBox(scene, world, 0, 7.4, -12.5, 4, 0.8, 51, 0x9a6fe0, { tex: 'panel' });
+  addBox(scene, world, -1.85, 8.3, -12.5, 0.3, 1.0, 51, 0xffd23c);          // rails
+  addBox(scene, world, 1.85, 8.3, -12.5, 0.3, 1.0, 51, 0xffd23c);
+  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -41.75, maxZ: -38, h0: 5.0, h1: 7.8, color: 0x8a5fd0 });
+  // Sniper perch two levels up (top y=12.6), reached by a half-width ramp on
+  // the catwalk's east lane; the west lane stays walkable underneath it.
+  addRamp(scene, world, { axis: 'z', minX: 0, maxX: 2, minZ: -30, maxZ: -19, h0: 7.8, h1: 12.6, color: 0x8a5fd0 });
+  addBox(scene, world, 0, 3.25, -15.5, 3.6, 7.5, 5, 0x7a4fc0, { tex: 'panel' }); // ground column to catwalk underside
+  addBox(scene, world, 1.6, 9.8, -18.6, 0.5, 4, 0.5, 0x7a4fc0);               // slim posts catwalk → perch
+  addBox(scene, world, 1.6, 9.8, -12.6, 0.5, 4, 0.5, 0x7a4fc0);
+  addBox(scene, world, 0, 12.2, -15.5, 6, 0.8, 7, 0x9a6fe0, { tex: 'panel' }); // perch deck
+  addBox(scene, world, 0, 13.05, -12.35, 6, 0.9, 0.3, 0xffd23c);              // perch rails (gap at ramp)
+  addBox(scene, world, 2.85, 13.05, -15.5, 0.3, 0.9, 6.4, 0xffd23c);
+  addBox(scene, world, -2.85, 13.05, -15.5, 0.3, 0.9, 6.4, 0xffd23c);
+  addBox(scene, world, -1.5, 13.05, -18.8, 3, 0.9, 0.3, 0xffd23c);
+  // Sky catwalk (east-west): keep roof → NE tower top (0.15 step down onto the cap)
+  addBox(scene, world, 35.75, 7.35, 32, 47.5, 0.8, 4, 0x9a6fe0, { tex: 'panel' });
+  addBox(scene, world, 24, 3.2, 32, 2.5, 7.4, 2.5, 0x7a4fc0, { tex: 'panel' }); // support columns
+  addBox(scene, world, 50, 3.2, 32, 2.5, 7.4, 2.5, 0x7a4fc0, { tex: 'panel' });
 
   // Arcade walls just inside the battlements: the walkway above becomes the
   // roof of a covered perimeter corridor (gaps = doorways; also gaps at ramps)
@@ -744,6 +763,8 @@ function buildFortress(scene) {
   pk(world, 'star', -68, 5.4, 43.5, { hidden: true }); // north battlement dead end
   pk(world, 'health', 30, 5.4, 43.5);
   pk(world, 'ammo', 0, 5.4, -43.5, { weapon: 'scatter' });
+  pk(world, 'star', 0, 13, -17, { hidden: true });      // sniper perch
+  pk(world, 'ammo', 0, 13, -14, { weapon: 'hyper' });
 
   // Waypoints
   const wps = [
@@ -779,6 +800,12 @@ function buildFortress(scene) {
     [-46, 0, -39.5], [-16, 0, -39.5], [16, 0, -39.5], [54, 0, -39.5],
     // courtyard cross-wall doorways
     [-45, 0, 31], [45, 0, 31], [-45, 0, -31], [45, 0, -31],
+    // north-south catwalk (west lane hugs x −1 beside the perch ramp)
+    [0, 7.8, 8], [-1, 7.8, -6], [-1, 7.8, -20], [-1, 7.8, -33], [0, 6.4, -40],
+    // sniper perch ramp + deck
+    [1, 10.2, -24.5], [0, 12.6, -15.5],
+    // east-west catwalk to the NE tower
+    [16, 7.75, 32], [30, 7.75, 32], [44, 7.75, 32], [57, 7.75, 33],
   ];
   for (const [x, y, z] of wps) wp(world, x, y, z);
   mergeStatic(scene, world);

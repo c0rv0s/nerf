@@ -60,6 +60,11 @@ export class Bot {
     this.alertTimer = 0;                // "just got shot" — may turn on the attacker
     this.shopping = null;               // pickup we're heading for (refreshed each think)
     this.lootLock = 0;                  // seconds of shopping focus after a kill drop
+    this.stuckT = 0;                    // seconds of no progress while wanting to move
+    this._stuckCheck = 1.5;
+    this._lastPos = new THREE.Vector3();
+    this.avoid = null;                  // pickup we gave up on (proved unreachable)
+    this.avoidT = 0;
 
     const { group } = buildBotMesh(color);
     this.mesh = group;
@@ -95,13 +100,33 @@ export class Bot {
     this.target = null;
     this.shopping = null;
     this.lootLock = 0;
+    this.stuckT = 0;
+    this._lastPos.copy(pos);
+    this.avoid = null;
+    this.avoidT = 0;
     this.mesh.visible = true;
+  }
+
+  // Nearest waypoint the bot can actually reach: same floor and clear line of
+  // sight. The plain nearest one is often through a wall or directly above —
+  // pathing from it left bots grinding into walls until the match ended.
+  reachableNearest() {
+    const wps = this.world.waypoints;
+    const ranked = wps.map((w, i) =>
+      [w.pos.distanceTo(this.pos) + (Math.abs(w.pos.y - this.pos.y) > 2.6 ? 60 : 0), i])
+      .sort((a, b) => a[0] - b[0]);
+    const eye = this.eye();
+    for (let k = 0; k < Math.min(8, ranked.length); k++) {
+      const w = wps[ranked[k][1]].pos;
+      if (hasLOS(eye, new THREE.Vector3(w.x, w.y + 1.5, w.z), this.world)) return ranked[k][1];
+    }
+    return ranked[0][1];
   }
 
   // A kill just dropped point orbs — beeline for them before someone steals them.
   noticeDrop(pos) {
     if (this.pos.distanceTo(pos) > 45) return;
-    const from = nearestWaypoint(this.world, this.pos);
+    const from = this.reachableNearest();
     const to = nearestWaypoint(this.world, pos);
     this.path = findPath(this.world, from, to) || [from];
     this.pathIdx = 0;
@@ -178,7 +203,7 @@ export class Bot {
     const items = this.world.getPickups ? this.world.getPickups() : [];
     let best = null, bs = Infinity;
     for (const it of items) {
-      if (!it.active) continue;
+      if (!it.active || it === this.avoid) continue;
       const k = it.def.kind;
       const want = k === 'points' || k === 'gold' || k === 'silver' || k === 'drop' ||
         (k === 'weapon' && !(this.weapons[it.def.weapon] && this.ammo[it.def.weapon] > 0)) ||
@@ -198,7 +223,7 @@ export class Bot {
     // committed to a fresh kill drop — don't let combat rolls redirect us
     if (!force && this.lootLock > 0 && this.path && this.pathIdx < this.path.length) return;
     if (!force && this.path && this.pathIdx < this.path.length && Math.random() >= 0.06) return;
-    const from = nearestWaypoint(this.world, this.pos);
+    const from = this.reachableNearest();
     const aggression = this.world.gravity < 12 ? 0.35 : 0.7;
     let to;
     const loot = this.bestLoot();
@@ -229,6 +254,31 @@ export class Bot {
     this.reactionTimer -= dt;
     this.alertTimer -= dt;
     this.lootLock -= dt;
+    this.avoidT -= dt;
+    if (this.avoidT <= 0) this.avoid = null;
+
+    // Stuck detection: no progress while wanting to move → hop (clears ledge
+    // lips), and if that doesn't free us, abandon the plan entirely. Without
+    // this, bots collect in dead-end grind states as the match goes on.
+    this._stuckCheck -= dt;
+    if (this._stuckCheck <= 0) {
+      this._stuckCheck = 1.5;
+      const wantsMove = this.target || (this.path && this.pathIdx < this.path.length);
+      if (wantsMove && this.pos.distanceTo(this._lastPos) < 0.6) this.stuckT += 1.5;
+      else this.stuckT = 0;
+      this._lastPos.copy(this.pos);
+      if (this.stuckT >= 4.5) {
+        if (this.shopping) { this.avoid = this.shopping; this.avoidT = 12; }
+        this.shopping = null;
+        this.lootLock = 0;
+        this.path = findPath(this.world, this.reachableNearest(),
+          Math.floor(Math.random() * this.world.waypoints.length)) || null;
+        this.pathIdx = 0;
+        this.stuckT = 0;
+      } else if (this.stuckT >= 1.5 && this.grounded) {
+        this.vel.y = this.world.jumpVel;
+      }
+    }
 
     const speed = this.world.playerSpeed * 0.82;
     const lowGrav = this.world.gravity < 12;

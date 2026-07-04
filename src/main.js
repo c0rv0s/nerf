@@ -14,7 +14,7 @@ import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
 import { sfx, setListener } from './audio.js';
 
-const MATCH_TIME = 7 * 60; // no score limit — most points when time expires wins
+const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
 
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
@@ -64,7 +64,7 @@ for (const btn of document.querySelectorAll('.modebtn')) {
     selectedMode = btn.dataset.mode;
     for (const b of document.querySelectorAll('.modebtn')) b.classList.toggle('active', b === btn);
     document.getElementById('menusub').textContent = selectedMode === 'ffa'
-      ? 'FREE FOR ALL · 7 MINUTES' : 'TEAM DEATHMATCH · 7 MINUTES';
+      ? 'FREE FOR ALL · 5 MINUTES' : 'TEAM DEATHMATCH · 5 MINUTES';
   });
 }
 for (const map of MAPS) {
