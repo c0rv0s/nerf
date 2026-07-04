@@ -619,6 +619,9 @@ function buildFortress(scene) {
   addBox(scene, world, 64, 2.8, 0, 18, 0.8, 14, 0x8a7248, { tex: 'panel' });
   addRamp(scene, world, { axis: 'x', minX: -55, maxX: -51, minZ: -7, maxZ: 7, h0: 3.2, h1: 1.6, color: 0x9a8050 });
   addRamp(scene, world, { axis: 'x', minX: 51, maxX: 55, minZ: -7, maxZ: 7, h0: 1.6, h1: 3.2, color: 0x9a8050 });
+  // full-height collars where hump meets cover — no slit, nothing gets underneath
+  addBox(scene, world, -56.5, 2.2, 0, 3, 2, 14, 0x8a7248, { tex: 'panel' });
+  addBox(scene, world, 56.5, 2.2, 0, 3, 2, 14, 0x8a7248, { tex: 'panel' });
 
   // Bridges: grand center bridge + two side bridges
   addBox(scene, world, 0, -0.4, 0, 9, 0.8, 20, 0xc8461e, { tex: 'panel' });
