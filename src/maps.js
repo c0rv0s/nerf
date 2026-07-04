@@ -624,11 +624,12 @@ function buildFortress(scene) {
   addBox(scene, world, 56.5, 2.2, 0, 3, 2, 14, 0x8a7248, { tex: 'panel' });
 
   // Bridges: grand center bridge + two side bridges
-  addBox(scene, world, 0, -0.4, 0, 9, 0.8, 20, 0xc8461e, { tex: 'panel' });
+  // decks sit 2cm below bank level — flush tops z-fight where they overlap
+  addBox(scene, world, 0, -0.42, 0, 9, 0.8, 20, 0xc8461e, { tex: 'panel' });
   addBox(scene, world, -4.2, 0.7, 0, 0.6, 1.4, 20, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.35 });
   addBox(scene, world, 4.2, 0.7, 0, 0.6, 1.4, 20, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.35 });
-  addBox(scene, world, -40, -0.4, 0, 6, 0.8, 18, 0x8a7248);
-  addBox(scene, world, 40, -0.4, 0, 6, 0.8, 18, 0x8a7248);
+  addBox(scene, world, -40, -0.42, 0, 6, 0.8, 18, 0x8a7248);
+  addBox(scene, world, 40, -0.42, 0, 6, 0.8, 18, 0x8a7248);
   // Gatehouse towers flanking the center bridge (decor + cover)
   addBox(scene, world, -9, 5, 0, 6, 10, 6, 0x7a4fc0, { tex: 'panel' });
   addBox(scene, world, 9, 5, 0, 6, 10, 6, 0x7a4fc0, { tex: 'panel' });
