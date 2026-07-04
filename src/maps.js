@@ -1122,11 +1122,34 @@ function buildCanopy(scene) {
   scene.add(roomLight);
   addBox(scene, world, 0, 18.5, 0, 5, 21, 5, 0x5e3f26, { tex: 'crate', repeat: [2, 6] });
 
-  // hedge lanes — break up the open lawn into corridors
+  // hedge lanes — break up the open lawn into corridors, plus a small maze
+  // pocket in the SE quadrant (the pulsar sits inside it)
   for (const [hx, hz, hw, hd] of [[-15, 60, 50, 2], [15, -60, 50, 2], [60, 15, 2, 50], [-60, -15, 2, 50],
-                                  [-30, 14, 2, 26], [30, -14, 2, 26]]) {
+                                  [-30, 14, 2, 26], [30, -14, 2, 26],
+                                  [18, -33, 24, 2], [10, -22, 2, 20], [24, -40, 2, 12]]) {
     addBox(scene, world, hx, 1.75, hz, hw, 3.5, hd, 0x3a6b30, { tex: 'rock' });
   }
+  // hedge-top balance beam: side ramp near the hedge's north end, then walk
+  // the 2-wide top south (the south end abuts the big west ramp's corridor)
+  addRamp(scene, world, { axis: 'x', minX: -29, maxX: -22.5, minZ: 21, maxZ: 23.5, h0: 3.8, h1: 0, color: 0x4a7a3a });
+
+  // RANGER HUT (NE lawn): room with a west door, walkable roof, roof ramp
+  const HUT = 0x8a6a40;
+  addBox(scene, world, 26, 1.85, 12.3, 10, 3.7, 0.6, HUT, { tex: 'crate' });   // south wall
+  addBox(scene, world, 26, 1.85, 19.7, 10, 3.7, 0.6, HUT, { tex: 'crate' });   // north wall
+  addBox(scene, world, 30.7, 1.85, 16, 0.6, 3.7, 8, HUT, { tex: 'crate' });    // east wall
+  addBox(scene, world, 21.3, 1.85, 13.4, 0.6, 3.7, 2.8, HUT, { tex: 'crate' }); // west wall + door gap
+  addBox(scene, world, 21.3, 1.85, 18.6, 0.6, 3.7, 2.8, HUT, { tex: 'crate' });
+  addBox(scene, world, 26, 4, 16, 10.6, 0.6, 8.6, HUT, { tex: 'crate' });      // roof (top 4.3)
+  addRamp(scene, world, { axis: 'x', minX: 12.5, maxX: 21.2, minZ: 13, maxZ: 16.5, h0: 0, h1: 4.6, color: HUT });
+
+  // FALLEN LOG (SW lawn): crawl-through tunnel, walkable on top via stumps
+  const LOG = 0x5e3f26;
+  addBox(scene, world, -27, 1.4, -25.6, 14, 2.8, 0.5, LOG, { tex: 'crate' });
+  addBox(scene, world, -27, 1.4, -22.4, 14, 2.8, 0.5, LOG, { tex: 'crate' });
+  addBox(scene, world, -27, 3, -24, 14, 0.6, 3.7, LOG, { tex: 'crate', repeat: [4, 1] }); // top 3.3
+  addBox(scene, world, -37, 0.8, -20, 3, 1.6, 3, 0x6b4a2e, { tex: 'crate' });  // stump steps up
+  addBox(scene, world, -33, 1.3, -19.5, 3, 2.6, 3, 0x6b4a2e, { tex: 'crate' });
 
   // Corner branch decks (tops at 10 and 20, trunk pierces through).
   // The SW tree's decks are donuts — its trunk is a hollow shaft inside.
@@ -1216,6 +1239,9 @@ function buildCanopy(scene) {
   pk(world, 'star', 0, 0.2, 8, { hidden: true });         // beneath the center deck
   pk(world, 'star', 45, 20.2, 0, { hidden: true });       // east bridge mid
   pk(world, 'star', -45, 20.4, -44, { hidden: true });    // the SW tree's secret attic
+  pk(world, 'health', 26, 0.2, 16);                       // inside the ranger hut
+  pk(world, 'ammo', -27, 0.2, -24, { weapon: 'scatter' }); // in the fallen log
+  pk(world, 'star', -30, 3.9, 25, { hidden: true });      // hedge-top balance beam
 
   // Waypoints: auto grid on the ground, hand-placed for the canopy levels
   const blocked = (x, z) => {
@@ -1235,6 +1261,11 @@ function buildCanopy(scene) {
   }
   const wps = [
     [27, 4, 0], [-27, 4, 0],                                // ground ramps
+    // ranger hut: door, interior, ramp, roof
+    [19, 0, 16], [26, 0, 16], [16.5, 2.2, 14.75], [26, 4.3, 16],
+    // fallen log tunnel + SE hedge maze pocket
+    [-27, 0, -24], [-20, 0, -24], [-34, 0, -24],
+    [16, 0, -18], [16, 0, -29], [4, 0, -29], [28, 0, -37],
     // center tree-base room + interior stairs
     [0, 0, 2], [0, 0, 12], [-4.5, 2, 0], [-1.5, 4, -5], [3, 6, -5],
     // SW hollow tree: door, shaft, ledge, attic, top exit

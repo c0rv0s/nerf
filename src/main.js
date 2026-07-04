@@ -398,6 +398,7 @@ function requestPointerLock() {
   canvas.requestPointerLock?.();
 }
 
+const quitBtn = document.getElementById('quitbtn');
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   if (G && !G.over) {
@@ -405,11 +406,27 @@ document.addEventListener('pointerlockchange', () => {
     clickcatch.style.display = locked ? 'none' : 'flex';
     document.getElementById('catchtitle').textContent =
       locked ? '' : '⏸ PAUSED — CLICK TO RESUME';
+    // pause menu extras (matches only): live scoreboard + quit
+    const showPause = !locked && !G.atrium;
+    quitBtn.style.display = showPause ? '' : 'none';
+    const board = hud.els.board;
+    board.style.display = showPause ? 'block' : 'none';
+    board.style.top = showPause ? '74%' : '';    // below the PAUSED text
+    board.style.zIndex = showPause ? 3 : '';     // above the pause overlay
+    if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
   } else {
     clickcatch.style.display = 'none';
+    quitBtn.style.display = 'none';
   }
 });
 clickcatch.addEventListener('click', requestPointerLock);
+quitBtn.addEventListener('click', (e) => {
+  e.stopPropagation();               // don't let the overlay re-lock the pointer
+  quitBtn.style.display = 'none';
+  hud.els.board.style.display = 'none';
+  document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
+  endMatch(true);                    // back to the lobby
+});
 
 document.addEventListener('mousemove', (e) => {
   if (G && document.pointerLockElement === canvas) {
