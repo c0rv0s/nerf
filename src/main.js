@@ -5,7 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MAPS } from './maps.js';
+import { MAPS, buildAtrium, texturesReady } from './maps.js';
 import { buildWaypointGraph, pick, rand } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES } from './bots.js';
@@ -53,29 +53,9 @@ addEventListener('resize', resize);
 resize();
 
 const hud = new HUD();
-let G = null; // current match state
-
-/* ---------------- menu ---------------- */
-const menuEl = document.getElementById('menu');
-const mapsEl = document.getElementById('maps');
+let G = null; // current match state (or the lobby)
+let rafId = 0;
 let selectedMode = 'ffa';
-for (const btn of document.querySelectorAll('.modebtn')) {
-  btn.addEventListener('click', () => {
-    selectedMode = btn.dataset.mode;
-    for (const b of document.querySelectorAll('.modebtn')) b.classList.toggle('active', b === btn);
-    document.getElementById('menusub').textContent = selectedMode === 'ffa'
-      ? 'FREE FOR ALL · 5 MINUTES' : 'TEAM DEATHMATCH · 5 MINUTES';
-  });
-}
-for (const map of MAPS) {
-  const card = document.createElement('div');
-  card.className = 'mapcard';
-  card.innerHTML = `
-    <div class="mapthumb" style="background:${map.thumb}">${map.emoji}</div>
-    <h2>${map.name}</h2><p>${map.desc}</p>`;
-  card.addEventListener('click', () => startMatch(map, selectedMode));
-  mapsEl.appendChild(card);
-}
 
 document.getElementById('againbtn').addEventListener('click', () => {
   document.getElementById('endscreen').style.display = 'none';
@@ -83,7 +63,70 @@ document.getElementById('againbtn').addEventListener('click', () => {
 });
 
 /* ---------------- match setup ---------------- */
+function teardown() {
+  if (!G) return;
+  G.over = true;
+  G.projectiles.clear();
+  G.pickups.clear();
+  G.fxPool.clear();
+  camera.remove(G.player.viewmodel);
+  G.scene.clear();
+  G = null;
+}
+
+// THE LOBBY: a walkable atrium — stroll into a glowing gate to start a match.
+function startAtrium() {
+  teardown();
+  const scene = new THREE.Scene();
+  scene.environment = envTexture;
+  const world = buildAtrium(scene);
+  world.spawnsAll = [...world.spawns.ffa];
+  buildWaypointGraph(world);
+  scene.add(camera);
+  renderPass.scene = scene;
+
+  const fxPool = new FXPool(scene);
+  const player = new Player(camera, world);
+  player.color = '#ffd23c';
+  player.team = 'ffa-you';
+  player.score = 0;
+  const characters = [player];
+  const projectiles = new ProjectileSystem(scene, world, {
+    spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
+    characters: () => characters,
+    onDamage: () => {},
+  });
+  const pickups = new PickupManager(scene, [], { onPickup });
+  world.onPad = () => {};
+  world.getPickups = () => pickups.items;
+
+  G = {
+    atrium: true, mapDef: null, mode: selectedMode, scene, world, player, characters,
+    projectiles, pickups, fxPool,
+    scores: { blue: 0, red: 0 },
+    timeLeft: MATCH_TIME,
+    respawnTimers: new Map(),
+    over: false,
+    paused: document.pointerLockElement !== canvas,
+    showBoard: false,
+    padCooldown: 0,
+    lastT: performance.now(),
+  };
+  player.spawn(world.spawns.ffa[0].clone());
+  player.yaw = 0; // face the courtyard
+  renderer.compile(scene, camera);
+
+  hud.show(true);
+  document.getElementById('scores').style.display = 'none';
+  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
+  requestPointerLock();
+  hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(tick);
+}
+
 function startMatch(mapDef, mode = 'ffa') {
+  teardown();
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
@@ -131,12 +174,12 @@ function startMatch(mapDef, mode = 'ffa') {
   world.getPickups = () => pickups.items; // bots window-shop the pickups
 
   G = {
-    mapDef, mode, scene, world, player, characters, projectiles, pickups, fxPool,
+    atrium: false, mapDef, mode, scene, world, player, characters, projectiles, pickups, fxPool,
     scores: { blue: 0, red: 0 },
     timeLeft: MATCH_TIME,
     respawnTimers: new Map(),
     over: false,
-    paused: true, // unpauses when the pointer locks
+    paused: document.pointerLockElement !== canvas, // unpauses when the pointer locks
     showBoard: false,
     lastT: performance.now(),
   };
@@ -156,25 +199,19 @@ function startMatch(mapDef, mode = 'ffa') {
   scene.add(probes);
   renderer.compile(scene, camera);
 
-  menuEl.style.display = 'none';
   hud.show(true);
-  document.getElementById('clickcatch').style.display = 'flex';
+  document.getElementById('scores').style.display = '';
+  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
   requestPointerLock();
-  requestAnimationFrame(tick);
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(tick);
 }
 
-function endMatch(toMenu) {
-  if (!G) return;
-  G.over = true;
-  G.projectiles.clear();
-  G.pickups.clear();
-  G.fxPool.clear();
-  camera.remove(G.player.viewmodel);
-  G.scene.clear();
-  G = null;
+function endMatch(toLobby) {
+  teardown();
   hud.show(false);
-  document.exitPointerLock?.();
-  if (toMenu) menuEl.style.display = 'flex';
+  if (toLobby) startAtrium();
+  else document.exitPointerLock?.();
 }
 
 function respawnCharacter(ch, initial = false) {
@@ -214,7 +251,11 @@ function applyDamage(target, dmg, attacker) {
     target.deaths++;
     attacker.kills++;
     dropPoints(target); // the points fall with the victim — go collect them
-    if (!attacker.isPlayer && attacker.noticeDrop) attacker.noticeDrop(target.pos);
+    for (const c of G.characters) {
+      if (c.isPlayer || !c.noticeDrop || !c.alive) continue;
+      // the killer always races for it; idle bystanders contest close drops
+      if (c === attacker || (!c.target && c.pos.distanceTo(target.pos) < 18)) c.noticeDrop(target.pos);
+    }
     hud.killfeed(attacker, target);
     G.fxPool.spawnPuff(new THREE.Vector3(target.pos.x, target.pos.y + 1, target.pos.z),
       target.team === 'blue' ? 0x5cb3ff : 0xff5c5c, 2);
@@ -402,12 +443,40 @@ function tick(now) {
   G.lastT = now;
   if (!G.paused) step(dt);
   composer.render();
-  requestAnimationFrame(tick);
+  if (G.pendingMap) { // walked into a lobby gate — swap to that arena
+    const map = G.pendingMap;
+    startMatch(map, selectedMode);
+    return; // startMatch scheduled its own loop
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+// Lobby-only logic: gate triggers and the mode toggle pad
+function stepAtrium(dt) {
+  G.padCooldown -= dt;
+  for (const p of G.world.portals) {
+    if (Math.hypot(G.player.pos.x - p.x, G.player.pos.z - p.z) < 2.6) {
+      G.pendingMap = MAPS.find(m => m.id === p.map);
+      sfx('powerup');
+      break;
+    }
+  }
+  const mp = G.world.modePad;
+  if (mp && G.padCooldown <= 0 &&
+      Math.hypot(G.player.pos.x - mp.x, G.player.pos.z - mp.z) < 2.1) {
+    G.padCooldown = 1.2;
+    selectedMode = selectedMode === 'ffa' ? 'tdm' : 'ffa';
+    G.mode = selectedMode;
+    G.world.setModeSign(selectedMode === 'ffa' ? 'MODE: FREE FOR ALL' : 'MODE: TEAM DEATHMATCH');
+    hud.message(selectedMode === 'ffa' ? 'MODE: FREE FOR ALL' : 'MODE: TEAM DEATHMATCH', '#30e0ff');
+    sfx('pickup');
+  }
 }
 
 function step(dt) {
   if (!G.over) {
-    G.timeLeft -= dt;
+    if (G.atrium) stepAtrium(dt);
+    else G.timeLeft -= dt;
     setListener(G.player.pos); // distance-based sfx volume
 
     const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
@@ -449,7 +518,7 @@ function step(dt) {
   G.world.update?.(dt);
   G.fxPool.update(dt);
   hud.update(dt, {
-    player: G.player, mode: G.mode, scores: G.scores,
+    player: G.player, mode: G.atrium ? 'atrium' : G.mode, scores: G.scores,
     characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,
   });
 }
@@ -473,3 +542,10 @@ window.__step = (seconds) => {
   for (let i = 0; i < n && G; i++) step(0.016);
   return G ? { time: G.timeLeft.toFixed(0), scores: { ...G.scores } } : 'match ended';
 };
+window.__start = (id, mode) => startMatch(MAPS.find(m => m.id === id), mode || selectedMode);
+window.__lobby = () => startAtrium();
+
+// Boot straight into the lobby — pick your arena by walking into its gate.
+// (Wait for textures so the first build isn't placeholder canvases; 3s cap.)
+document.getElementById('menu').style.display = 'none';
+Promise.race([texturesReady, new Promise(r => setTimeout(r, 3000))]).then(() => startAtrium());

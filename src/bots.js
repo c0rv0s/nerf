@@ -212,7 +212,7 @@ export class Bot {
       if (!want) continue;
       const d = it.def.pos.distanceTo(this.pos);
       if (d > 80) continue;
-      const priority = k === 'points' ? d * 0.4 : (k === 'gold' || k === 'silver') ? d * 0.6 : d;
+      const priority = k === 'points' ? d * 0.3 : (k === 'gold' || k === 'silver') ? d * 0.6 : d;
       if (priority < bs) { bs = priority; best = it; }
     }
     return best;
@@ -326,6 +326,15 @@ export class Bot {
       moveX = to.x * ca - to.z * sa;
       moveZ = to.z * ca + to.x * sa;
       this.facing = Math.atan2(to.x, to.z);
+      // snatch a nearby point orb mid-fight: steer the maneuver through it
+      // while still facing (and shooting at) the target
+      if (shop && shop.active && shop.def.kind === 'points') {
+        const fd = Math.hypot(shop.def.pos.x - this.pos.x, shop.def.pos.z - this.pos.z);
+        if (fd > 0.3 && fd < 9 && Math.abs(shop.def.pos.y - this.pos.y) < 2) {
+          moveX = (shop.def.pos.x - this.pos.x) / fd;
+          moveZ = (shop.def.pos.z - this.pos.z) / fd;
+        }
+      }
     } else if (wpTarget) {
       // On low-grav maps bots keep waypoint-hopping even in combat —
       // strafing on curved asteroid surfaces slides them into the void.

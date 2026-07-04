@@ -50,7 +50,9 @@ export class HUD {
     });
 
     // score bar + FFA top-3 leaderboard
-    if (mode === 'tdm') {
+    if (mode === 'atrium') {          // lobby: no scores, no leaderboard
+      e.top3.style.display = 'none';
+    } else if (mode === 'tdm') {
       e.left.textContent = scores.blue;
       e.left.style.color = '#5cb3ff';
       e.right.textContent = scores.red;

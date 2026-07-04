@@ -129,21 +129,26 @@ export function aiTex(name, rx = 1, ry = 1) {
   return { map, normalMap, normalScale: new THREE.Vector2(0.7, 0.7) };
 }
 
-for (const name of ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic']) {
-  const url = `./textures/${name}.jpg`;
-  fetch(url, { method: 'HEAD' }).then((r) => {
-    if (!r.ok) return;
-    new THREE.TextureLoader().load(url, (t) => {
-      // mirrored repeat hides any seams in not-quite-tileable AI images
-      t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping;
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
-      const n = makeNormalMap(t.image);
-      n.wrapS = n.wrapT = THREE.MirroredRepeatWrapping;
-      AI_TEX[name] = { map: t, normal: n };
-    });
-  }).catch(() => {});
-}
+// Resolves when every texture is loaded (or confirmed missing) — the boot
+// waits on this so the first scene isn't built with placeholder canvases.
+export const texturesReady = Promise.all(
+  ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade']
+    .map((name) => new Promise((done) => {
+      const url = `./textures/${name}.jpg`;
+      fetch(url, { method: 'HEAD' }).then((r) => {
+        if (!r.ok) return done();
+        new THREE.TextureLoader().load(url, (t) => {
+          // mirrored repeat hides any seams in not-quite-tileable AI images
+          t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping;
+          t.colorSpace = THREE.SRGBColorSpace;
+          t.anisotropy = 8;
+          const n = makeNormalMap(t.image);
+          n.wrapS = n.wrapT = THREE.MirroredRepeatWrapping;
+          AI_TEX[name] = { map: t, normal: n };
+          done();
+        }, undefined, () => done());
+      }).catch(() => done());
+    })));
 
 function mat(color, opts = {}) {
   const { tex, repeat, emissive, ...rest } = opts;
@@ -151,7 +156,7 @@ function mat(color, opts = {}) {
   if (tex) {
     const rx = repeat?.[0] ?? 1, ry = repeat?.[1] ?? 1;
     const ai = AI_TEX[tex];
-    const t = (ai ? ai.map : TEXES[tex]()).clone();
+    const t = (ai ? ai.map : (TEXES[tex] || texPanel)()).clone();
     t.needsUpdate = true;
     t.repeat.set(rx, ry);
     params.map = t;
@@ -1276,13 +1281,13 @@ function buildCity(scene) {
   baseLighting(scene, 0x7788cc, 0x101018, [-60, 110, 40], 130);
 
   // Street (split into bands leaving two subway stair openings)
-  addBox(scene, world, 0, -0.5, -39.5, 174, 1, 55, 0x3a3f4a, { tex: 'panel', repeat: [20, 7] });
-  addBox(scene, world, -60.5, -0.5, -7, 53, 1, 10, 0x3a3f4a, { tex: 'panel', repeat: [7, 2] });
-  addBox(scene, world, 30.5, -0.5, -7, 113, 1, 10, 0x3a3f4a, { tex: 'panel', repeat: [14, 2] });
-  addBox(scene, world, 0, -0.5, 0, 174, 1, 4, 0x3a3f4a, { tex: 'panel', repeat: [20, 1] });
-  addBox(scene, world, -29.5, -0.5, 7, 115, 1, 10, 0x3a3f4a, { tex: 'panel', repeat: [14, 2] });
-  addBox(scene, world, 61.5, -0.5, 7, 51, 1, 10, 0x3a3f4a, { tex: 'panel', repeat: [7, 2] });
-  addBox(scene, world, 0, -0.5, 39.5, 174, 1, 55, 0x3a3f4a, { tex: 'panel', repeat: [20, 7] });
+  addBox(scene, world, 0, -0.5, -39.5, 174, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 7] });
+  addBox(scene, world, -60.5, -0.5, -7, 53, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [7, 2] });
+  addBox(scene, world, 30.5, -0.5, -7, 113, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
+  addBox(scene, world, 0, -0.5, 0, 174, 1, 4, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 1] });
+  addBox(scene, world, -29.5, -0.5, 7, 115, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
+  addBox(scene, world, 61.5, -0.5, 7, 51, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [7, 2] });
+  addBox(scene, world, 0, -0.5, 39.5, 174, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 7] });
 
   // SUBWAY: stairs at (-30,-7) and (32,7) down into an L-shaped tunnel
   addRamp(scene, world, { axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2, h0: -6, h1: 0, color: 0x2f3542 });
@@ -1298,19 +1303,121 @@ function buildCity(scene) {
   tubeLight.position.set(0, -3, -7);
   scene.add(tubeLight);
   for (const [x, z, w, d] of [[0, -67, 182, 6], [0, 67, 182, 6], [-88, 0, 6, 140], [88, 0, 6, 140]]) {
-    addBox(scene, world, x, 14, z, w, 40, d, 0x1d2433, { tex: 'panel' });
+    addBox(scene, world, x, 14, z, w, 40, d, 0x1d2433, { tex: 'neonwall' });
   }
 
-  // Buildings [x, z, size, height, color] — roofs are the playground
+  // Buildings [x, z, size, height, color] — roofs are the playground.
+  // (The two −12 towers are hollow now — built below as interiors.)
   const buildings = [
-    [-58, -35, 26, 12, 0x51607a], [-12, -38, 24, 20, 0x5a4a78],
+    [-58, -35, 26, 12, 0x51607a],
     [32, -35, 26, 28, 0x44586e], [62, -32, 18, 16, 0x60566e],
-    [-58, 33, 22, 24, 0x4c5a6a], [-12, 36, 28, 34, 0x3f4e66],
+    [-58, 33, 22, 24, 0x4c5a6a],
     [32, 34, 22, 18, 0x5c4f62], [64, 30, 16, 10, 0x596478],
   ];
   for (const [bx, bz, s, h, c] of buildings) {
-    addBox(scene, world, bx, h / 2, bz, s, h, s, c, { tex: 'panel', repeat: [Math.round(s / 4), Math.round(h / 4)] });
+    addBox(scene, world, bx, h / 2, bz, s, h, s, c, { tex: 'neonwall', repeat: [Math.round(s / 4), Math.round(h / 4)] });
   }
+
+  /* ---- THE GALLERIA (tallest tower, hollow): ground hall → mezzanine (8)
+     → gallery + bare catwalks over the void (16) → top chamber (24) → jump
+     pad through the roof hatch (34). Shell x −26..2, z 22..50. ---- */
+  const gal = 0x3f4e66, galIn = 0x55628a;
+  const gw = { tex: 'neonwall' };
+  // south wall: doors at x −20..−16 and −8..−4
+  addBox(scene, world, -23, 16.6, 22.75, 6, 33.2, 1.5, gal, gw);
+  addBox(scene, world, -12, 16.6, 22.75, 8, 33.2, 1.5, gal, gw);
+  addBox(scene, world, -1, 16.6, 22.75, 6, 33.2, 1.5, gal, gw);
+  addBox(scene, world, -18, 18.6, 22.75, 4, 29.2, 1.5, gal, gw);   // lintels
+  addBox(scene, world, -6, 18.6, 22.75, 4, 29.2, 1.5, gal, gw);
+  // north wall: door at x −14..−10
+  addBox(scene, world, -20, 16.6, 49.25, 12, 33.2, 1.5, gal, gw);
+  addBox(scene, world, -4, 16.6, 49.25, 12, 33.2, 1.5, gal, gw);
+  addBox(scene, world, -12, 18.6, 49.25, 4, 29.2, 1.5, gal, gw);
+  // west wall: door z 38..42, gallery-level window z 28..34 (jump-out ledge)
+  addBox(scene, world, -25.25, 16.6, 25, 1.5, 33.2, 6, gal, gw);
+  addBox(scene, world, -25.25, 8.25, 31, 1.5, 16.5, 6, gal, gw);   // below window
+  addBox(scene, world, -25.25, 26.1, 31, 1.5, 14.2, 6, gal, gw);   // above window
+  addBox(scene, world, -25.25, 16.6, 36, 1.5, 33.2, 4, gal, gw);
+  addBox(scene, world, -25.25, 18.6, 40, 1.5, 29.2, 4, gal, gw);   // door lintel
+  addBox(scene, world, -25.25, 16.6, 46, 1.5, 33.2, 8, gal, gw);
+  // east wall: door z 30..34
+  addBox(scene, world, 1.25, 16.6, 26, 1.5, 33.2, 8, gal, gw);
+  addBox(scene, world, 1.25, 16.6, 42, 1.5, 33.2, 16, gal, gw);
+  addBox(scene, world, 1.25, 18.6, 32, 1.5, 29.2, 4, gal, gw);
+  // roof (top 34) with a hatch over the chamber at x −24..−20, z 34..38
+  addBox(scene, world, -25, 33.6, 36, 2, 0.8, 28, gal, gw);
+  addBox(scene, world, -9, 33.6, 36, 22, 0.8, 28, gal, gw);
+  addBox(scene, world, -22, 33.6, 44, 4, 0.8, 12, gal, gw);
+  addBox(scene, world, -22, 33.6, 28, 4, 0.8, 12, gal, gw);
+  // interior: carpet floor (6cm above street — flush would z-fight)
+  addBox(scene, world, -12, 0.03, 36, 24.9, 0.06, 24.9, 0x9088b0, { tex: 'arcade', repeat: [6, 6] });
+  // ramps + decks: south ramp up, west mezzanine, north ramp up, east gallery
+  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -2, minZ: 23.5, maxZ: 27, h0: 8, h1: 0, color: galIn });
+  addBox(scene, world, -21.25, 7.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
+  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -2, minZ: 45, maxZ: 48.5, h0: 8, h1: 16, color: galIn });
+  addBox(scene, world, -2.75, 15.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
+  // bare catwalks across the void at 16 — the z=30 one ends at the window
+  addBox(scene, world, -15.25, 15.6, 30, 18.5, 0.8, 2.5, 0x8a80a8, { tex: 'arcade', repeat: [5, 1] });
+  addBox(scene, world, -15.25, 15.6, 42, 18.5, 0.8, 2.5, 0x8a80a8, { tex: 'arcade', repeat: [5, 1] });
+  // third ramp stacked over the first: gallery (16) → chamber (24)
+  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -6, minZ: 23.5, maxZ: 27, h0: 24, h1: 16, color: galIn });
+  // L-shaped top chamber at 24 (west strip + southwest wing) with rails
+  addBox(scene, world, -21.25, 23.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
+  addBox(scene, world, -14, 23.6, 26.75, 8, 0.8, 6.5, galIn, { tex: 'arcade', repeat: [2, 2] });
+  addBox(scene, world, -18.35, 24.45, 37.75, 0.3, 0.9, 21.5, 0xffd23c);
+  addBox(scene, world, -10.35, 24.45, 26.75, 0.3, 0.9, 6.5, 0xffd23c);
+  addBox(scene, world, -14, 24.45, 29.65, 8, 0.9, 0.3, 0xffd23c);
+  // gallery + mezzanine edge rails (gaps where the ramps arrive)
+  addBox(scene, world, -5.8, 16.45, 36, 0.3, 0.9, 18, 0xffd23c);
+  addBox(scene, world, -18.35, 8.45, 36, 0.3, 0.9, 18, 0xffd23c);
+  // pad through the roof hatch — slight east drift so you clear the hole
+  // on the way down and land on the roof instead of falling back in
+  addJumpPad(scene, world, -22, 24, 36, 24.5, 2.6, 0, 0xff70c8);
+  const galLight = new THREE.PointLight(0xff70c8, 55, 42);
+  galLight.position.set(-12, 20, 36);
+  scene.add(galLight);
+  const chamberLight = new THREE.PointLight(0x30e0ff, 25, 18);
+  chamberLight.position.set(-21, 27, 36);
+  scene.add(chamberLight);
+  addBox(scene, world, -24.2, 12, 36, 0.4, 0.8, 20, 0xff40a0, { collide: false, shadow: false, emissive: 0xff40a0, emissiveIntensity: 1.4 });
+  addBox(scene, world, 0.25, 12, 36, 0.4, 0.8, 20, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.4 });
+
+  /* ---- THE ARCADE (A2, hollow): two ground rooms with a connecting door,
+     a west stair to floor 2 (6.5), a street-facing sniper window, and the
+     original roof (20) untouched above. Shell x −24..0, z −50..−26. ---- */
+  const arc = 0x5a4a78;
+  addBox(scene, world, -20, 9.4, -49.25, 8, 18.8, 1.5, arc, gw);   // south wall + door
+  addBox(scene, world, -6, 9.4, -49.25, 12, 18.8, 1.5, arc, gw);
+  addBox(scene, world, -14, 11.4, -49.25, 4, 14.8, 1.5, arc, gw);
+  addBox(scene, world, -22, 9.4, -26.75, 4, 18.8, 1.5, arc, gw);   // north wall: 2 doors + window
+  addBox(scene, world, -12, 3.75, -26.75, 8, 7.5, 1.5, arc, gw);   // below window x −16..−8
+  addBox(scene, world, -12, 14.15, -26.75, 8, 9.3, 1.5, arc, gw);  // above window
+  addBox(scene, world, -2, 9.4, -26.75, 4, 18.8, 1.5, arc, gw);
+  addBox(scene, world, -18, 11.4, -26.75, 4, 14.8, 1.5, arc, gw);  // door lintels
+  addBox(scene, world, -6, 11.4, -26.75, 4, 14.8, 1.5, arc, gw);
+  addBox(scene, world, -23.25, 9.4, -38, 1.5, 18.8, 24, arc, gw);  // west wall (solid)
+  addBox(scene, world, -0.75, 9.4, -47, 1.5, 18.8, 6, arc, gw);    // east wall + door z −44..−40
+  addBox(scene, world, -0.75, 9.4, -33, 1.5, 18.8, 14, arc, gw);
+  addBox(scene, world, -0.75, 11.4, -42, 1.5, 14.8, 4, arc, gw);
+  addBox(scene, world, -12, 19.4, -38, 24, 1.2, 24, arc, gw);      // roof slab (top 20)
+  addBox(scene, world, -12, 0.03, -38, 22.4, 0.06, 22.4, 0x8a80a8, { tex: 'arcade', repeat: [6, 6] });
+  addBox(scene, world, -12, 3, -48, 1.5, 6, 4, arc, gw);           // ground partition + door
+  addBox(scene, world, -12, 3, -40, 1.5, 6, 4, arc, gw);
+  addRamp(scene, world, { axis: 'z', minX: -22.5, maxX: -19, minZ: -48.5, maxZ: -38, h0: 0, h1: 6.5, color: arc });
+  addBox(scene, world, -12, 6.1, -32.75, 21, 0.8, 10.5, arc, { tex: 'arcade', repeat: [5, 3] }); // floor 2 (top 6.5)
+  addBox(scene, world, -3.75, 6.1, -41, 4.5, 0.8, 6, arc, { tex: 'arcade', repeat: [1, 2] });    // east balcony strip
+  addBox(scene, world, -12.5, 6.95, -38.2, 13, 0.9, 0.3, 0xffd23c); // deck rail (gaps at ramp + strip)
+  const arcLight = new THREE.PointLight(0x8aff30, 35, 30);
+  arcLight.position.set(-12, 9, -32);
+  scene.add(arcLight);
+
+  /* ---- BACK ALLEY: covered corridor along the south edge (three ways in:
+     both open ends + a mid door), a tight flanking route. ---- */
+  addBox(scene, world, -68, 2.3, -52, 16, 4.6, 1.2, 0x2a3040, gw);
+  addBox(scene, world, -46, 2.3, -52, 20, 4.6, 1.2, 0x2a3040, gw); // gap x −60..−56 = door
+  addBox(scene, world, -56, 2.3, -58, 40, 4.6, 1.2, 0x2a3040, gw);
+  addBox(scene, world, -56, 4.9, -55, 42, 0.6, 7.2, 0x2a3040, gw); // roof (top 5.2)
+  addBox(scene, world, -56, 4.1, -55, 30, 0.25, 0.25, 0xffd23c, { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.6 });
   // Neon strips + rooftop clutter + beacon
   for (const [x, y, z, w, h, d, c] of [
     [-58, 8, -21.6, 18, 1, 0.3, 0xff40a0], [32, 20, -21.6, 20, 1, 0.3, 0x30e0ff],
@@ -1380,6 +1487,14 @@ function buildCity(scene) {
   pk(world, 'star', 70, 10.2, 24, { hidden: true });       // B4 roof corner
   pk(world, 'star', -58, 0.2, 4, { hidden: true });        // under the west skybridge
   pk(world, 'star', 32, 23.2, 0, { hidden: true });        // east skybridge mid
+  pk(world, 'health', -12, 0.2, 36);                       // galleria ground hall
+  pk(world, 'ammo', -21, 8.2, 40, { weapon: 'pulsar' });   // galleria mezzanine
+  pk(world, 'ammo', -21, 24.2, 42, { weapon: 'whomper' }); // galleria top chamber
+  pk(world, 'star', -22, 16.2, 30, { hidden: true });      // galleria window catwalk
+  pk(world, 'health', -18, 0.2, -44);                      // arcade west room
+  pk(world, 'ammo', -6, 6.7, -32, { weapon: 'scatter' });  // arcade floor 2
+  pk(world, 'star', -21, 6.7, -29, { hidden: true });      // arcade floor-2 corner
+  pk(world, 'ammo', -66, 0.2, -55, { weapon: 'sidewinder' }); // back alley
 
   // Waypoints: auto grid at street level, hand-placed above
   const blocked = (x, z) => {
@@ -1415,9 +1530,28 @@ function buildCity(scene) {
     [32, -6, 5], [32, -4, 10], [32, -1, 3.7],
     // pads
     [-48, 12, -36], [-3, 20, -36], [55, 16, -33], [-49, 24, 34], [23, 18, 33], [58, 10, 30],
+    // galleria: doorways, hall, ramps, mezzanine, gallery, catwalks, chamber
+    [-18, 0, 24], [-6, 0, 24], [-12, 0, 47], [-1, 0, 32], [-24, 0, 40],
+    [-12, 0, 36], [-20, 0, 32],
+    [-10, 4, 25.25], [-21, 8, 30], [-21, 8, 44],
+    [-10, 12, 46.75], [-3, 16, 28], [-3, 16, 44],
+    [-15, 16, 30], [-15, 16, 42],
+    [-11, 19.3, 25.25], [-21, 24, 44], [-14, 24, 27], [-22, 24, 36],
+    // arcade: doorways, rooms, stair, floor 2
+    [-14, 0, -47], [-18, 0, -29], [-6, 0, -29], [-3, 0, -42],
+    [-18, 0, -44], [-6, 0, -44], [-20.75, 3, -43],
+    [-12, 6.5, -32], [-19, 6.5, -30], [-4, 6.5, -41],
+    // back alley
+    [-70, 0, -55], [-56, 0, -55], [-42, 0, -55], [-58, 0, -53], [-58, 0, -49],
   ];
   for (const [x, y, z] of wps) wp(world, x, y, z);
   world.manualLinks.push(
+    // interior ramp → upper deck transitions (deck slabs block the LOS ray)
+    [-10, 4, 25.25, -21, 8, 30, false],
+    [-10, 12, 46.75, -3, 16, 44, false],
+    [-11, 19.3, 25.25, -14, 24, 27, false],
+    [-20.75, 3, -43, -19, 6.5, -30, false],
+    [-22, 24, 36, -12, 34, 36, true],     // chamber hatch pad → roof
     [-48, 12, -36, -12, 20, -38, true],   // pad hops
     [-3, 20, -36, 32, 28, -35, true],
     [55, 16, -33, 32, 28, -26, true],
@@ -1431,6 +1565,116 @@ function buildCity(scene) {
     [64, 10, 30, 64, 0, 57, true],
     [62, 16, -32, 62, 0, -14, true],
   );
+  mergeStatic(scene, world);
+  return world;
+}
+
+/* ============== THE LOBBY — walk-in map select, like the original ==============
+   A dusk courtyard: grass strip, fountain, and five glowing gates. Walk into
+   a gate to enter that arena; step on the mode pad to toggle FFA/TDM. */
+
+// Floating text sign (canvas sprite). Returns a redraw(text) function.
+function makeSign(scene, x, y, z, w, color, text) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const draw = (t) => {
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 512, 128);
+    g.fillStyle = 'rgba(8,10,28,.88)';
+    g.beginPath(); g.roundRect(6, 10, 500, 108, 18); g.fill();
+    g.lineWidth = 6; g.strokeStyle = color; g.stroke();
+    g.font = 'bold 52px "Arial Black", Arial';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = color;
+    g.fillText(t, 256, 68);
+    tex.needsUpdate = true;
+  };
+  draw(text);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  spr.position.set(x, y, z);
+  spr.scale.set(w, w / 4, 1);
+  scene.add(spr);
+  return draw;
+}
+
+export function buildAtrium(scene) {
+  const world = newWorld({ killY: -30 });
+  scene.background = new THREE.Color(0x2a2244);
+  scene.fog = new THREE.Fog(0x2a2244, 90, 240);
+  baseLighting(scene, 0xbfa8ff, 0x332244, [-40, 80, 30], 90);
+
+  // courtyard floor + perimeter (inner faces at x ±32, z ±48)
+  addBox(scene, world, 0, -0.5, 0, 64, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [8, 12] });
+  addBox(scene, world, 0, 6, -49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
+  addBox(scene, world, 0, 6, 49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
+  addBox(scene, world, -33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
+  addBox(scene, world, 33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
+
+  // grass boulevard + fountain
+  addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35);
+  addBox(scene, world, 0, 0.45, -22, 16, 0.9, 2, 0x555a74, { tex: 'panel' });   // pool rim
+  addBox(scene, world, 0, 0.45, -34, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
+  addBox(scene, world, -8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });
+  addBox(scene, world, 8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });
+  addWater(scene, world, 0, 0.55, -28, 13.5, 10);
+  addBox(scene, world, 0, 1.6, -28, 0.7, 2.6, 0.7, 0x9fd8ff, { collide: false, shadow: false, emissive: 0x9fd8ff, emissiveIntensity: 1.2 }); // jet
+  const fLight = new THREE.PointLight(0x9fd8ff, 25, 24);
+  fLight.position.set(0, 3, -28);
+  scene.add(fLight);
+
+  // big marquee over the north gate
+  makeSign(scene, 0, 11.5, -46, 30, '#ff4d2e', 'NERF ARENA BLAST');
+
+  // gate bays: [map, name, color, wall(n/w/e), offset]
+  world.portals = [];
+  const bays = [
+    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'n', 0],
+    ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 14],
+    ['asteroids', 'ASTEROID BELT', 0x8fb8d8, 'w', -14],
+    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 14],
+    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -14],
+  ];
+  for (const [id, name, color, wall, off] of bays) {
+    const n = wall === 'n';
+    const sgn = wall === 'e' ? 1 : -1;
+    const px = n ? off : sgn * 30.6, pz = n ? -46.6 : off;   // pillar centerline
+    const P = (dx, dz, w, h, d) => addBox(scene, world, px + dx, h / 2, pz + dz, w, h, d, 0x4a4266, { tex: 'neonwall' });
+    if (n) {
+      P(-4, 0, 1.6, 7, 1.6); P(4, 0, 1.6, 7, 1.6);
+      addBox(scene, world, px, 7.6, pz, 9.6, 1.4, 1.6, 0x4a4266, { tex: 'neonwall' });
+      addBox(scene, world, px, 3.2, pz - 0.9, 7, 6, 0.5, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
+    } else {
+      P(0, -4, 1.6, 7, 1.6); P(0, 4, 1.6, 7, 1.6);
+      addBox(scene, world, px, 7.6, pz, 1.6, 1.4, 9.6, 0x4a4266, { tex: 'neonwall' });
+      addBox(scene, world, px + sgn * 0.9, 3.2, pz, 0.5, 6, 7, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
+    }
+    makeSign(scene, n ? px : px - sgn * 1.6, 9.7, n ? pz + 1.6 : pz, 10, '#' + color.toString(16).padStart(6, '0'), name);
+    const L = new THREE.PointLight(color, 26, 20);
+    L.position.set(n ? px : px - sgn * 2.5, 4.5, n ? pz + 2.5 : pz);
+    scene.add(L);
+    world.portals.push({ x: n ? px : px + sgn * 0.5, z: n ? pz - 0.5 : pz, map: id, name });
+  }
+
+  // mode pad beside the spawn
+  addBox(scene, world, 11, 0.3, 38, 3.4, 0.6, 3.4, 0x2a6a8a, { tex: 'panel' });
+  addBox(scene, world, 11, 0.66, 38, 2.6, 0.1, 2.6, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 0.9 });
+  world.modePad = { x: 11, z: 38 };
+  world.setModeSign = makeSign(scene, 11, 3.4, 38, 9, '#30e0ff', 'MODE: FREE FOR ALL');
+
+  // a little clutter so it feels lived-in
+  addBox(scene, world, -14, 1.2, 30, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
+  addBox(scene, world, -16.6, 1.2, 31, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
+  addBox(scene, world, -15, 3.6, 30.4, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
+  for (const [x, z, c] of [[-20, -46.9, 0xff40a0], [20, -46.9, 0x30e0ff]]) {
+    addBox(scene, world, x, 8, z, 14, 0.8, 0.3, c, { collide: false, shadow: false, emissive: c, emissiveIntensity: 1.5 });
+  }
+
+  world.spawns.ffa.push(V(0, 0.1, 43));
+  world.spawns.blue.push(V(0, 0.1, 43));
+  world.spawns.red.push(V(0, 0.1, 43));
+  wp(world, 0, 0, 20);
   mergeStatic(scene, world);
   return world;
 }
@@ -1449,6 +1693,6 @@ export const MAPS = [
     desc: 'Giant forest: branch decks at three heights, treetop bridges, pad chains to a golden crown 30m up.',
     thumb: 'linear-gradient(135deg,#14291f,#5d9c46)', build: buildCanopy },
   { id: 'city', name: 'NEON HEIGHTS', emoji: '🌃',
-    desc: 'Night rooftops over a street canyon: fire escapes, sky-bridges, pad-hops up the skyline. Gold on the tallest tower.',
+    desc: 'Night rooftops over a street canyon: a hollow neon galleria with catwalks, an arcade block, back alleys, a subway. Gold on the tallest tower.',
     thumb: 'linear-gradient(135deg,#0b1026,#5a4a78)', build: buildCity },
 ];
