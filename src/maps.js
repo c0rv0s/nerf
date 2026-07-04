@@ -133,7 +133,7 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'poster1', 'target', 'hazard', 'grass', 'dirt', 'flowers']
+   'poster1', 'target', 'hazard', 'grass', 'dirt', 'flowers', 'door', 'lava']
     .map((name) => new Promise((done) => {
       const url = `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -1098,6 +1098,8 @@ function buildAsteroids(scene) {
   pk(world, 'shield', -18, 9, 0);                        // station west wing
   pk(world, 'speed', 18, 9, 0);                          // station east wing
   pk(world, 'djump', 0, 9.2, 4);                         // station center
+  // molten patch on the NE mid rock — watch your landing
+  addLava(scene, world, 23, -41, 4, 4, 10);
   pk(world, 'gold', 0, 22.2, 0);                          // the perch above the station
   pk(world, 'silver', 0, 14.4, -8);                       // station core roof
   pk(world, 'star', 72, 4.2, -62, { hidden: true });      // far rocks
@@ -1744,9 +1746,15 @@ function buildCity(scene) {
 // world on the first update tick — AFTER the waypoint graph is built — so
 // bot paths still link through the openings.
 function addDoor(scene, world, x, y, z, w, h, d) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color: 0x241c38, roughness: 0.55, metalness: 0.35,
-      emissive: 0x8a5fff, emissiveIntensity: 0.22 }));
+  const dmat = new THREE.MeshStandardMaterial({ color: 0x8a80a8, roughness: 0.55, metalness: 0.35,
+    emissive: 0x8a5fff, emissiveIntensity: 0.12 });
+  const ai = AI_TEX.door;
+  if (ai) {
+    dmat.map = ai.map.clone();
+    dmat.map.needsUpdate = true;
+    dmat.color = new THREE.Color(0xffffff);
+  }
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), dmat);
   mesh.position.set(x, y + h / 2, z);
   mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
@@ -1764,7 +1772,7 @@ function addDoor(scene, world, x, y, z, w, h, d) {
         for (const ch of chars) {
           if (!ch.alive) continue;
           const dx = ch.pos.x - dr.x, dz = ch.pos.z - dr.z;
-          if (dx * dx + dz * dz < 22 && Math.abs(ch.pos.y - dr.y) < 4) { open = true; break; }
+          if (dx * dx + dz * dz < 46 && Math.abs(ch.pos.y - dr.y) < 4) { open = true; break; } // opens from ~6.8 out
         }
         const target = open ? (dr.along ? dr.w : dr.d) + 0.1 : 0;   // pocket fully into the wall
         const step = 9 * dt;
@@ -1781,24 +1789,30 @@ function addDoor(scene, world, x, y, z, w, h, d) {
 /* ---------------- lava pools ---------------- */
 // A rimmed basin of glowing lava. Standing in it burns ~34 hp/s (handled in
 // main.js via world.lavaZones) — about three seconds to scramble out.
-function addLava(scene, world, x, z, w, d) {
-  const rim = 0x2a2030;
-  addBox(scene, world, x, 0.3, z - d / 2 + 0.35, w, 0.6, 0.7, rim, { tex: 'rock' });
-  addBox(scene, world, x, 0.3, z + d / 2 - 0.35, w, 0.6, 0.7, rim, { tex: 'rock' });
-  addBox(scene, world, x - w / 2 + 0.35, 0.3, z, 0.7, 0.6, d - 1.4, rim, { tex: 'rock' });
-  addBox(scene, world, x + w / 2 - 0.35, 0.3, z, 0.7, 0.6, d - 1.4, rim, { tex: 'rock' });
-  const lava = new THREE.Mesh(new THREE.PlaneGeometry(w - 1.4, d - 1.4),
-    new THREE.MeshStandardMaterial({ color: 0xff5a20, emissive: 0xff4a10, emissiveIntensity: 1.1, roughness: 0.4 }));
+function addLava(scene, world, x, z, w, d, y = 0) {
+  // no rim, no railing — it reads as floor until you're in it. A trap.
+  const lmat = new THREE.MeshStandardMaterial({
+    color: 0xff8040, roughness: 0.55, emissive: 0xff5a10, emissiveIntensity: 1.1 });
+  const ai = AI_TEX.lava;
+  if (ai) {
+    lmat.map = ai.map.clone();
+    lmat.map.needsUpdate = true;
+    lmat.map.repeat.set(Math.max(1, Math.round(w / 9)), Math.max(1, Math.round(d / 9)));
+    lmat.emissiveMap = lmat.map;          // the cracks glow, the crust stays dark
+    lmat.color = new THREE.Color(0xffffff);
+    lmat.emissive = new THREE.Color(0xffa060);
+  }
+  const lava = new THREE.Mesh(new THREE.PlaneGeometry(w, d), lmat);
   lava.rotation.x = -Math.PI / 2;
-  lava.position.set(x, 0.18, z);
+  lava.position.set(x, y + 0.08, z);
   scene.add(lava);
-  world.anim.push((dt, t) => { lava.material.emissiveIntensity = 1.05 + Math.sin(t * 2.6 + x) * 0.3; });
+  world.anim.push((dt, t) => { lmat.emissiveIntensity = 1.05 + Math.sin(t * 2.6 + x) * 0.3; });
   const L = new THREE.PointLight(0xff5a20, 32, 20);
-  L.position.set(x, 2.5, z);
+  L.position.set(x, y + 2.5, z);
   scene.add(L);
   (world.lavaZones ||= []).push({
-    minX: x - w / 2 + 0.7, maxX: x + w / 2 - 0.7,
-    minZ: z - d / 2 + 0.7, maxZ: z + d / 2 - 0.7, maxY: 0.5,
+    minX: x - w / 2 + 0.2, maxX: x + w / 2 - 0.2,
+    minZ: z - d / 2 + 0.2, maxZ: z + d / 2 - 0.2, maxY: y + 0.5,
   });
 }
 
@@ -1913,6 +1927,11 @@ function buildSanctum(scene) {
   // lava pools in the NW and SE courts — the temple demands sacrifice
   addLava(scene, world, -28, 28, 9, 9);
   addLava(scene, world, 28, -28, 9, 9);
+  // and a molten stretch of the crypt, crossed by a narrow plank
+  addLava(scene, world, -21, 0, 10, 11.3, -6);
+  addBox(scene, world, -21, -5.65, 0, 10.5, 0.7, 3, 0x1a1428, { tex: 'rock', repeat: [3, 1] });
+  addRamp(scene, world, { axis: 'x', minX: -28.2, maxX: -26.2, minZ: -1.5, maxZ: 1.5, h0: -6, h1: -5.28, color: 0x1a1428 });
+  addRamp(scene, world, { axis: 'x', minX: -15.8, maxX: -13.8, minZ: -1.5, maxZ: 1.5, h0: -5.28, h1: -6, color: 0x1a1428 });
 
   // ambulatory braziers
   for (const [x, z] of [[47, 47], [-47, 47], [47, -47], [-47, -47]]) {

@@ -69,7 +69,7 @@ export class HUD {
       e.right.textContent = `#${rank}`;
       e.right.style.color = rank === 1 ? '#ffd23c' : '#ccd';
       e.top3.style.display = 'block';
-      e.top3.innerHTML = ranked.slice(0, 3).map((c, i) => `
+      e.top3.innerHTML = ranked.map((c, i) => `
         <div class="t3row"><span><span class="t3rank">${i + 1}.</span>
         <span style="color:${c.color}">${c.isPlayer ? 'YOU' : c.name}</span></span>
         <span>${c.score}</span></div>`).join('');
