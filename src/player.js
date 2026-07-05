@@ -37,6 +37,8 @@ export class Player {
     // up = which way is "down" (negated); fwd = look/run direction in that plane.
     this.up = new THREE.Vector3(0, 1, 0);
     this.bodyFwd = new THREE.Vector3(0, 0, -1);
+    this.camQuat = new THREE.Quaternion();   // eased camera orientation (Escher)
+    this._camSnap = true;
     this._nrm = new THREE.Vector3();
     this.djumpTime = 0;        // double-jump powerup timer
     this._airJumped = false;
@@ -100,6 +102,7 @@ export class Player {
     this.pitch = 0;
     this.up.set(0, 1, 0);
     this.bodyFwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    this._camSnap = true;   // don't slerp from a stale orientation on respawn
     this.djumpTime = 0;
     this._airJumped = false;
   }
@@ -261,18 +264,57 @@ export class Player {
       this._airJumped = true; this.jumpBuffer = 0; sfx('boing');
     }
 
+    // Airborne: gravity always pulls toward the NEAREST inner face of the cube,
+    // so you curve down onto some surface — you can never fall out into space.
+    // (Skip briefly after a climb so it doesn't fight the corner transition.)
+    this._climbLock = Math.max(0, (this._climbLock || 0) - dt);
+    if (!this.grounded && this._climbLock <= 0) {
+      const nf = this._nearestFace();
+      if (nf && nf.dot(this.up) < 0.99) this._reorient(nf);
+    }
+
     this.grounded = moveCharacterUp(this, this.world, dt, this._nrm);
     if (this.grounded) { this._airJumped = false; this._climb(); }
-    else this._capture();
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
-    // camera from the tilted body basis (eye offset along up, pitch about right)
+    this._escherCamera(dt);
+  }
+
+  // Smooth first-person camera for the tilted frame. Physics `up` snaps at a
+  // transition (robust), but the camera SLERPS to the new orientation over a
+  // beat — so the view rolls over instead of flipping instantly.
+  _escherCamera(dt) {
     const eye = this.pos.clone().addScaledVector(this.up, this.eyeHeight);
     const rgt = new THREE.Vector3().crossVectors(this.bodyFwd, this.up).normalize();
     const look = this.bodyFwd.clone().applyAxisAngle(rgt, this.pitch);
+    const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(look), this.up);
+    const targetQ = new THREE.Quaternion().setFromRotationMatrix(m);
+    if (this._camSnap) { this.camQuat.copy(targetQ); this._camSnap = false; }
+    else this.camQuat.slerp(targetQ, 1 - Math.exp(-16 * dt));
     this.camera.up.copy(this.up);
     this.camera.position.copy(eye);
-    this.camera.lookAt(eye.clone().add(look));
+    this.camera.quaternion.copy(this.camQuat);
+  }
+
+  // Inward normal of the cube face the player is closest to (the way "down"
+  // points at any moment — toward the nearest surface, i.e. toward center).
+  _nearestFace() {
+    const c = this.world.cube; if (!c) return null;
+    const p = this.pos, h = c.h;
+    const d = [
+      [p.y - (c.cy - h), 0, 1, 0], [(c.cy + h) - p.y, 0, -1, 0],
+      [p.x - (c.cx - h), 1, 0, 0], [(c.cx + h) - p.x, -1, 0, 0],
+      [p.z - (c.cz - h), 0, 0, 1], [(c.cz + h) - p.z, 0, 0, -1],
+    ].sort((a, b) => a[0] - b[0])[0];
+    return new THREE.Vector3(d[1], d[2], d[3]);
+  }
+
+  // Rotate the whole body frame so up becomes newUp (heading preserved).
+  _reorient(newUp) {
+    const q = new THREE.Quaternion().setFromUnitVectors(this.up, newUp);
+    this.bodyFwd.applyQuaternion(q);
+    this.up.copy(newUp);
+    this.bodyFwd.addScaledVector(this.up, -this.bodyFwd.dot(this.up)).normalize();
   }
 
   _solidAt(p) {
@@ -284,7 +326,7 @@ export class Player {
     return false;
   }
 
-  // Concave corner: a wall rises directly ahead → rotate onto it and climb.
+  // Concave corner: a wall rises directly ahead → rotate onto it and climb up.
   _climb() {
     if (this.vel.dot(this.bodyFwd) < 1) return;   // only when actually running forward
     const probe = this.pos.clone()
@@ -292,33 +334,11 @@ export class Player {
       .addScaledVector(this.up, 0.6);
     if (!this._solidAt(probe)) return;
     const oldUp = this.up.clone();
-    this.up = cardinal(this.bodyFwd.clone().negate());  // wall face becomes the floor
-    this.bodyFwd.copy(oldUp);                            // old up = new "up the wall" heading
+    this.up.copy(cardinal(this.bodyFwd.clone().negate()));  // wall face becomes the floor
+    this.bodyFwd.copy(oldUp);                                // old up = new "up the wall" heading
     this.pos.addScaledVector(this.up, 0.06);
-    this.vel.multiplyScalar(0.85);
-    sfx('boing');
-  }
-
-  // Airborne: leaping at another surface snaps your gravity onto it.
-  _capture() {
-    const c0 = this.pos.clone().addScaledVector(this.up, this.height * 0.5);
-    let best = null, bd = 1.2;
-    for (const c of this.world.colliders) {
-      if (c.type !== 'box') continue;
-      const cx = clamp(c0.x, c.min.x, c.max.x), cy = clamp(c0.y, c.min.y, c.max.y), cz = clamp(c0.z, c.min.z, c.max.z);
-      const dx = c0.x - cx, dy = c0.y - cy, dz = c0.z - cz;
-      const d = Math.hypot(dx, dy, dz);
-      if (d < 1e-3 || d > bd) continue;
-      const n = new THREE.Vector3(dx / d, dy / d, dz / d);
-      if (this.vel.dot(n) < -2 && n.dot(this.up) < 0.7) { best = n; bd = d; }
-    }
-    if (!best) return;
-    const newUp = cardinal(best);
-    if (newUp.dot(this.up) > 0.9) return;
-    const f = this.bodyFwd.clone().addScaledVector(newUp, -this.bodyFwd.dot(newUp));
-    this.bodyFwd.copy(f.lengthSq() < 0.02 ? this.up : f).normalize();
-    this.up = newUp;
-    this.vel.multiplyScalar(0.4);
+    this.vel.multiplyScalar(0.9);
+    this._climbLock = 0.25;                                  // let the new face settle
     sfx('boing');
   }
 }

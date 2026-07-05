@@ -2053,23 +2053,24 @@ function buildSanctum(scene) {
   return world;
 }
 
-/* ============== SECRET MAP — PRISM RUN (Escher wall-walking) ==============
-   A neon arena floating in space with a chunky vertical LOOP you run around:
-   floor → up the right wall → across the ceiling (upside down) → down the
-   left wall → back. Gravity is -up (any cardinal), so at each inner corner
-   your "down" rotates onto the next face and the camera rolls all the way
-   over with it. Jump at another surface and your gravity snaps onto it.
-   Bots roam the arena floor below — you fight them from the walls/ceiling.
-   Drift off any edge and the void takes you. */
+/* ============== SECRET MAP — PRISM RUN (inside-out tesseract) ==============
+   You play INSIDE a neon cube. All six inner faces are walkable and gravity
+   always pulls toward the NEAREST one — so wherever you jump or fall, you
+   land on a surface and can never drop into the void. Walk into a wall and
+   you climb it; run over the top and you're on the ceiling; jump straight up
+   hard and you land on the ceiling. The camera SLERPS to each new orientation
+   (a smooth roll, not a snap). Half gravity for a floaty, space-y feel.
+   Bots keep their feet on the floor — the walls and ceiling are yours. */
 function buildPrism(scene) {
+  const H = 32, CY = 32;   // inner half-extent, floor at y=0, ceiling at y=64
   const world = newWorld({
-    escher: true, gravity: 17, jumpVel: 8, playerSpeed: 11,
-    killY: -50, killYTop: 130,
-    killCenter: V(0, 20, 25), killRadius: 95,   // drift off any edge = the void
+    escher: true, cube: { cx: 0, cy: CY, cz: 0, h: H },
+    gravity: 12, jumpVel: 8, playerSpeed: 11,       // half gravity — space-y float
+    killY: -120, killYTop: 200, killCenter: V(0, CY, 0), killRadius: 200,
     waypointLinkDist: 18, waypointLinkDy: 3,
   });
-  scene.background = new THREE.Color(0x0b0518);
-  baseLighting(scene, 0xc8a8ff, 0x1a0f2e, [40, 90, -30], 130);
+  scene.background = new THREE.Color(0x05030f);
+  baseLighting(scene, 0xc8a8ff, 0x1a0f2e, [40, 90, -30], 110);
 
   // starfield dome + drifting nebula veils
   const sc = document.createElement('canvas');
@@ -2102,90 +2103,97 @@ function buildPrism(scene) {
     scene.add(spr);
   }
 
-  // A neon edge stripe just off a surface face (visual only). Kept modest —
-  // four full-length stripes plus lights in a small box overload the bloom.
-  const stripe = (x, y, z, w, h, d, glow) =>
-    addBox(scene, world, x, y, z, w, h, d, glow, { collide: false, shadow: false, emissive: glow, emissiveIntensity: 0.75 });
+  const bar = (x, y, z, w, h, d, glow) =>
+    addBox(scene, world, x, y, z, w, h, d, glow, { collide: false, shadow: false, emissive: glow, emissiveIntensity: 0.9 });
 
-  // ---- ARENA FLOOR (bots roam here, normal +Y gravity) ----
-  addBox(scene, world, 0, -0.5, 35, 56, 1, 56, 0x241848, { tex: 'neonfloor', repeat: [7, 7] });
-  stripe(0, 0.05, 8, 56, 0.2, 0.5, 0x30e0ff);            // front lip glow
-  // low perimeter lip on the three open edges so combat strafing doesn't
-  // walk bots off into space (front edge stays open — it meets the loop)
-  addBox(scene, world, -28, 0.75, 35, 0.6, 2.5, 56, 0x3a2860, { tex: 'neonwall' });
-  addBox(scene, world, 28, 0.75, 35, 0.6, 2.5, 56, 0x3a2860, { tex: 'neonwall' });
-  addBox(scene, world, 0, 0.75, 63, 56, 2.5, 0.6, 0x3a2860, { tex: 'neonwall' });
-
-  /* ---- THE LOOP: a chunky vertical square ring in the XY plane (z −7..7).
-     You run its INNER faces — bottom (floor) → right wall (climb) → top
-     (ceiling, upside down over the arena) → left wall → back. Bars 6 thick,
-     inner opening x[−22,22] y[0,44]. Each inner face wears a rainbow stripe. */
-  const RING = 0x2a1a4a, rw = { tex: 'neonwall' };
-  addBox(scene, world, 0, -3, 0, 56, 6, 14, RING, rw);   // bottom bar (top y=0)
-  addBox(scene, world, 0, 47, 0, 56, 6, 14, RING, rw);   // top bar (bottom y=44 = ceiling)
-  addBox(scene, world, 25, 22, 0, 6, 44, 14, RING, rw);  // right bar (inner face x=22)
-  addBox(scene, world, -25, 22, 0, 6, 44, 14, RING, rw); // left bar  (inner face x=−22)
-  stripe(0, 0.15, 0, 44, 0.28, 13, 0xff3050);            // floor face — red
-  stripe(21.7, 22, 0, 0.28, 44, 13, 0x40ff60);           // right wall — green
-  stripe(-21.7, 22, 0, 0.28, 44, 13, 0xffe030);          // left wall — yellow
-  stripe(0, 43.85, 0, 44, 0.28, 13, 0x30e0ff);           // ceiling — cyan
-  for (const [x, y, z, c] of [[18, 8, 0, 0xff6080], [18, 36, 0, 0x80ff90],
-                              [-18, 8, 0, 0xffe030], [-18, 36, 0, 0x80e0ff]]) {
-    const L = new THREE.PointLight(c, 13, 34); L.position.set(x, y, z); scene.add(L);
+  /* ---- THE CUBE: you play INSIDE it. All six inner faces are walkable and
+     gravity always pulls toward the nearest one, so you fall onto a surface
+     no matter what — you can't drop into the void. Faces are translucent
+     neon grid (stars glow through); the 12 edges are bright bars. ---- */
+  const faces = [
+    [0, -1.5, 0, 70, 3, 70, 'neonfloor'],   // floor  (top y=0)
+    [0, 65.5, 0, 70, 3, 70, 'neonfloor'],   // ceiling(bottom y=64)
+    [-33.5, CY, 0, 3, 70, 70, 'neonwall'],  // -X wall (inner x=-32)
+    [33.5, CY, 0, 3, 70, 70, 'neonwall'],   // +X wall (inner x=32)
+    [0, CY, -33.5, 70, 70, 3, 'neonwall'],  // -Z wall
+    [0, CY, 33.5, 70, 70, 3, 'neonwall'],   // +Z wall
+  ];
+  for (const [x, y, z, w, h, d, tex] of faces) {
+    world.colliders.push({ type: 'box', min: V(x - w / 2, y - h / 2, z - d / 2), max: V(x + w / 2, y + h / 2, z + d / 2) });
+    const rep = Math.round(Math.max(w, h, d) / 7);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshStandardMaterial({ ...aiTex(tex, rep, rep), color: 0x3a3470,
+        transparent: true, opacity: 0.7, side: THREE.DoubleSide, roughness: 0.55,
+        emissive: 0x1a1440, emissiveIntensity: 0.5 }));
+    m.position.set(x, y, z);
+    scene.add(m);
   }
-  const keyL = new THREE.PointLight(0xffffff, 10, 90); keyL.position.set(0, 22, 30); scene.add(keyL);
+  // 12 neon edge bars (the tesseract wireframe)
+  const EC = [0xff3050, 0x40ff60, 0x30e0ff, 0xffe030, 0xff40e0, 0xb060ff];
+  let ei = 0;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1])            // 4 verticals
+    bar(sx * 31.7, CY, sz * 31.7, 0.6, 64, 0.6, EC[ei++ % 6]);
+  for (const y of [0.4, 63.6]) for (const s of [-1, 1]) {        // 8 horizontals
+    bar(0, y, s * 31.7, 64, 0.6, 0.6, EC[ei++ % 6]);
+    bar(s * 31.7, y, 0, 0.6, 0.6, 64, EC[ei++ % 6]);
+  }
+  for (const [x, y, z, c] of [[0, 12, 0, 0xff70c8], [0, 52, 0, 0x30e0ff],
+                              [-20, 32, -20, 0xffe030], [20, 32, 20, 0x60ff80]]) {
+    const L = new THREE.PointLight(c, 16, 60); L.position.set(x, y, z); scene.add(L);
+  }
 
-  // a lone catwalk bar floating in the opening — jump to it off a wall and
-  // your gravity snaps onto it (the capture mechanic, made obvious)
-  addBox(scene, world, 0, 22, 0, 20, 3, 5, RING, rw);
-  stripe(0, 23.6, 0, 20, 0.24, 5, 0xff40e0);
-  stripe(0, 20.4, 0, 20, 0.24, 5, 0xff40e0);
+  /* ---- interior: cover + climbable routes between faces ----
+     Three floor-to-ceiling pillars: run into one and you climb it up to the
+     ceiling. Crates for cover on several faces (each in its own gravity zone). */
+  const IC = 0x2a2352, iw = { tex: 'neonwall' };
+  for (const [px, pz] of [[-16, -12], [17, 14], [-14, 18]])
+    addBox(scene, world, px, CY, pz, 5, 64, 5, IC, iw);
+  const crate = (x, y, z, s = 3) => addBox(scene, world, x, y, z, s, s, s, 0xb0763a, { tex: 'crate' });
+  crate(-22, 1.5, 22); crate(22, 1.5, -22); crate(8, 1.5, -20); crate(-6, 1.5, 8);   // on the floor
+  addBox(scene, world, 30.5, 22, -10, 3, 3, 3, IC, iw);   // ledge on the +X wall
+  addBox(scene, world, -30.5, 40, 12, 3, 3, 3, IC, iw);   // ledge on the -X wall
+  addBox(scene, world, 0, 62.5, -14, 3, 3, 3, IC, iw);    // block on the ceiling
 
-  // two bot pads up to floating platforms above the arena (bots stay +Y)
-  addBox(scene, world, -18, 9.7, 45, 9, 0.8, 9, 0x3a2860, rw);
-  addJumpPad(scene, world, -18, 0, 45, 24, 0, 0, 0x9dff70);
-  addBox(scene, world, 18, 9.7, 25, 9, 0.8, 9, 0x3a2860, rw);
-  addJumpPad(scene, world, 18, 0, 25, 24, 0, 0, 0x9dff70);
-
-  // Spawns (all on the arena floor — you start feet-down, then find the loop)
-  for (const [x, z] of [[-16, 50], [16, 50], [0, 40], [-20, 30], [20, 30], [0, 55], [-10, 22], [10, 22]])
+  // Spawns — all feet-down on the floor; you find the walls from there
+  for (const [x, z] of [[-20, -20], [20, 20], [-20, 20], [20, -20], [0, 24], [0, -24], [24, 0], [-24, 0]])
     world.spawns.ffa.push(V(x, 0.1, z));
-  for (const z of [50, 40, 30, 22]) { world.spawns.blue.push(V(-20, 0.1, z)); world.spawns.red.push(V(20, 0.1, z)); }
+  for (const x of [-24, -12, 12, 24]) { world.spawns.blue.push(V(x, 0.1, -26)); world.spawns.red.push(V(x, 0.1, 26)); }
 
-  // Pickups — the prizes hang from the walls and the ceiling (run the loop)
-  pk(world, 'gold', 0, 42.4, 0);                          // dead center of the CEILING
-  pk(world, 'star', 22, 22, 0, { hidden: true });         // mid right wall
-  pk(world, 'star', -22, 30, 0, { hidden: true });        // high on the left wall
-  pk(world, 'star', 0, 20.5, 0, { hidden: true });        // under the floating catwalk
-  pk(world, 'silver', 0, 0.2, 0);                         // on the loop floor
-  pk(world, 'shield', 0, 9.9, 45);                        // NW platform
-  pk(world, 'speed', 18, 9.9, 25);                        // NE platform
-  pk(world, 'djump', 0, 0.2, 55);                         // arena south
-  pk(world, 'weapon', -18, 0.2, 40, { weapon: 'scatter' });
-  pk(world, 'weapon', 18, 0.2, 40, { weapon: 'pulsar' });
-  pk(world, 'weapon', 22, 40, 0, { weapon: 'hyper' });    // up the right wall
-  pk(world, 'weapon', -22, 12, 0, { weapon: 'sidewinder' });// low left wall
-  pk(world, 'weapon', 0, 0.2, 30, { weapon: 'zooka' });
-  pk(world, 'ammo', -14, 0.2, 45, { weapon: 'scatter' });
-  pk(world, 'ammo', 14, 0.2, 45, { weapon: 'pulsar' });
-  pk(world, 'ammo', 0, 44, -4, { weapon: 'hyper' });      // on the ceiling
-  pk(world, 'ammo', -22, 20, 0, { weapon: 'sidewinder' });
-  pk(world, 'ammo', 0, 0.2, 46, { weapon: 'zooka' });
-  pk(world, 'health', -20, 0.2, 22);
-  pk(world, 'health', 20, 0.2, 55);
-  pk(world, 'health', 0, 0.2, 8);                         // where floor meets the loop
+  // Pickups spread over ALL SIX faces — the prizes reward circumnavigating
+  pk(world, 'gold', 0, 62.6, 0);                          // dead center of the CEILING
+  pk(world, 'silver', -31.4, 32, 0);                      // -X wall
+  pk(world, 'shield', 31.4, 32, 0);                       // +X wall
+  pk(world, 'speed', 0, 32, -31.4);                       // -Z wall
+  pk(world, 'djump', 0, 32, 31.4);                        // +Z wall
+  pk(world, 'star', 0, 62.6, 20, { hidden: true });       // ceiling
+  pk(world, 'star', -31.4, 48, -14, { hidden: true });    // high on -X wall
+  pk(world, 'star', 31.4, 16, 14, { hidden: true });      // low on +X wall
+  pk(world, 'star', 14, 0.2, -14, { hidden: true });      // floor corner
+  pk(world, 'weapon', 0, 0.2, 0, { weapon: 'zooka' });    // floor center
+  pk(world, 'weapon', -31.4, 20, 12, { weapon: 'scatter' });
+  pk(world, 'weapon', 31.4, 44, -12, { weapon: 'pulsar' });
+  pk(world, 'weapon', 0, 62.6, -20, { weapon: 'hyper' }); // ceiling
+  pk(world, 'weapon', -12, 32, -31.4, { weapon: 'sidewinder' });
+  pk(world, 'weapon', 20, 0.2, 20, { weapon: 'whomper' });
+  pk(world, 'ammo', 0, 0.2, 22, { weapon: 'zooka' });
+  pk(world, 'ammo', -31.4, 24, 12, { weapon: 'scatter' });
+  pk(world, 'ammo', 31.4, 40, -12, { weapon: 'pulsar' });
+  pk(world, 'ammo', 6, 62.6, -20, { weapon: 'hyper' });
+  pk(world, 'ammo', -12, 32, -27, { weapon: 'sidewinder' });
+  pk(world, 'health', -20, 0.2, 0);
+  pk(world, 'health', 20, 0.2, 0);
+  pk(world, 'health', 0, 0.2, -20);
 
-  // Waypoints: bots patrol the arena floor + their two pad platforms only
-  // (wall-walking is the player's toy; bots keep their feet on the ground).
+  // Waypoints: bots patrol the floor (feet-down) — the walls are yours
   const wps = [];
-  for (let gx = -20; gx <= 20; gx += 10)
-    for (let gz = 16; gz <= 58; gz += 10.5) wps.push([gx, 0, gz]);
-  wps.push([-18, 9.8, 45], [18, 9.8, 25]);               // pad tops
+  for (let gx = -24; gx <= 24; gx += 8)
+    for (let gz = -24; gz <= 24; gz += 8) {
+      if (Math.abs(gx + 16) < 4 && Math.abs(gz + 12) < 4) continue;   // skip pillar feet
+      if (Math.abs(gx - 17) < 4 && Math.abs(gz - 14) < 4) continue;
+      if (Math.abs(gx + 14) < 4 && Math.abs(gz - 18) < 4) continue;
+      wps.push([gx, 0, gz]);
+    }
   for (const [x, y, z] of wps) wp(world, x, y, z);
-  world.manualLinks.push(
-    [-18, 0, 45, -18, 9.8, 45, true],
-    [18, 0, 25, 18, 9.8, 25, true],
-  );
   mergeStatic(scene, world);
   return world;
 }
@@ -2419,6 +2427,6 @@ export const MAPS = [
     desc: 'An obsidian temple: rune rooms off a central obelisk chamber, a crypt below, rooftops above.',
     thumb: 'linear-gradient(135deg,#14101f,#8a5fff)', build: buildSanctum },
   { id: 'prism', name: 'PRISM RUN', emoji: '🌈',
-    desc: 'A neon loop in deep space: run up the walls and across the ceiling upside down — your gravity and camera roll with the surface.',
+    desc: 'Inside a neon tesseract in deep space: walk every wall, floor and ceiling. Gravity always pulls to the nearest surface — you never fall out.',
     thumb: 'linear-gradient(135deg,#0b0518,#ff40e0)', build: buildPrism },
 ];
