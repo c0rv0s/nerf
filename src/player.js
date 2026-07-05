@@ -101,16 +101,36 @@ export class Player {
     this.yaw = Math.atan2(pos.x, pos.z); // face map center
     this.pitch = 0;
     this.up.set(0, 1, 0);
-    this.bodyFwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    this._camSnap = true;   // don't slerp from a stale orientation on respawn
+    this._camSnap = true;   // snap the roll on spawn, don't ease from stale
     this.djumpTime = 0;
     this._airJumped = false;
+    if (this.world.escher) {
+      // spawn oriented to whatever surface you land on (floor, wall or ceiling)
+      const nf = this._nearestSurfaceUp();
+      if (nf) this.up.copy(nf);
+      // a forward perpendicular to up (aim into the room)
+      const ref = Math.abs(this.up.y) > 0.7 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0);
+      const f = ref.addScaledVector(this.up, -ref.dot(this.up)).normalize();
+      this._moveFwd = f.clone();
+      this.camQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), f, this.up));
+    }
   }
 
   onMouseMove(dx, dy) {
-    // plain FPS look everywhere — PRISM RUN uses a free-look camera too
-    this.yaw -= dx * 0.0022;
-    this.pitch = clamp(this.pitch - dy * 0.0022, -1.5, 1.5);
+    const s = 0.0022;
+    if (this.world.escher) {
+      // rotate the camera quaternion directly — instant, 1:1 responsive.
+      // yaw about the surface up (turning stays level with your floor), pitch
+      // about the camera's own right axis, clamped away from straight up/down.
+      this.camQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(this.up, -dx * s));
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camQuat);
+      const test = this.camQuat.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * s));
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(test);
+      if (Math.abs(fwd.dot(this.up)) < 0.985) this.camQuat.copy(test);
+    } else {
+      this.yaw -= dx * s;
+      this.pitch = clamp(this.pitch - dy * s, -1.5, 1.5);
+    }
   }
 
   switchWeapon(id) {
@@ -229,16 +249,10 @@ export class Player {
      normal FPS camera, so aiming feels identical everywhere. ---- */
   _moveEscher(dt) {
     const up = this.up;
-    // free-look direction from yaw/pitch (world +Y up, exactly like normal maps)
-    const cp = Math.cos(this.pitch);
-    const look = new THREE.Vector3(-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp);
-    // walk relative to where you look, projected onto the surface you're on
-    let fwd = look.clone().addScaledVector(up, -look.dot(up));
-    if (fwd.lengthSq() < 0.04) {  // looking straight at/along the surface: fall back to yaw
-      fwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-      fwd.addScaledVector(up, -fwd.dot(up));
-    }
-    if (fwd.lengthSq() < 0.04 && this._moveFwd) fwd.copy(this._moveFwd);  // still degenerate: reuse
+    // walk toward where the camera looks, projected onto the surface you're on
+    let fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camQuat);
+    fwd.addScaledVector(up, -fwd.dot(up));
+    if (fwd.lengthSq() < 0.04 && this._moveFwd) fwd.copy(this._moveFwd);  // looking along up: reuse
     fwd.normalize();
     this._moveFwd = fwd.clone();
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
@@ -284,27 +298,40 @@ export class Player {
     if (this.grounded) { this._airJumped = false; this._climb(); }
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
-    // Camera: plain free-look, no roll. Eye rides above your feet along `up`.
-    this.camera.up.set(0, 1, 0);
+    // Camera: mouse look was applied 1:1 to camQuat already (responsive). Here
+    // we only smoothly ROLL it so its up eases toward the surface normal — so a
+    // wall becomes your floor visually, without ever lagging the look.
+    const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camQuat);
+    if (camUp.dot(up) < 0.99995) {
+      const qAlign = new THREE.Quaternion().setFromUnitVectors(camUp, up);
+      const t = this._camSnap ? 1 : 1 - Math.exp(-13 * dt);
+      this.camQuat.premultiply(new THREE.Quaternion().slerp(qAlign, t));
+    }
+    this._camSnap = false;
+    this.camera.up.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(this.camQuat));
     this.camera.position.copy(this.pos).addScaledVector(up, this.eyeHeight);
-    this.camera.rotation.set(0, 0, 0);
-    this.camera.rotateY(this.yaw);
-    this.camera.rotateX(this.pitch);
+    this.camera.quaternion.copy(this.camQuat);
   }
 
   // Outward normal (as a cardinal "up") of the nearest solid surface to the
   // player — the direction that is "up" while standing on it.
   _nearestSurfaceUp() {
-    const p = this.pos, mid = p.clone().addScaledVector(this.up, this.height * 0.5);
+    const mid = this.pos.clone().addScaledVector(this.up, this.height * 0.5);
     let best = null, bd = Infinity;
     for (const c of this.world.colliders) {
       if (c.type !== 'box') continue;
       const cx = clamp(mid.x, c.min.x, c.max.x), cy = clamp(mid.y, c.min.y, c.max.y), cz = clamp(mid.z, c.min.z, c.max.z);
       const dx = mid.x - cx, dy = mid.y - cy, dz = mid.z - cz;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 < bd && d2 > 1e-4) { bd = d2; best = new THREE.Vector3(dx, dy, dz); }
+      let d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 <= 1e-4) continue;
+      // Hysteresis: the surface you're already aligned to is "cheaper", so you
+      // don't flip-flop between two near-equidistant surfaces (e.g. hugging a
+      // wall next to a column). Only switch when another is clearly nearer.
+      const n = cardinal(new THREE.Vector3(dx, dy, dz));
+      if (n.dot(this.up) > 0.9) d2 -= 9;   // ~3-unit bias toward the current face
+      if (d2 < bd) { bd = d2; best = n; }
     }
-    return best ? cardinal(best) : null;
+    return best;
   }
 
   _solidAt(p) {

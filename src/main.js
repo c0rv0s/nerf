@@ -251,7 +251,9 @@ function endMatch(toLobby) {
 }
 
 function respawnCharacter(ch, initial = false) {
-  const spawns = G.mode === 'tdm' ? G.world.spawns[ch.team] : G.world.spawnsAll;
+  // the player can spawn on any surface (PRISM RUN); bots stay on the floor
+  const spawns = (ch.isPlayer && G.world.playerSpawns) ? G.world.playerSpawns
+    : G.mode === 'tdm' ? G.world.spawns[ch.team] : G.world.spawnsAll;
   // prefer spawn points away from living enemies — but pick randomly among the
   // safest few so you don't respawn in the same spot every time
   const scored = spawns.map(s => {
@@ -609,6 +611,8 @@ function step(dt) {
     else G.timeLeft -= dt;
     setListener(G.player.pos); // distance-based sfx volume
 
+    G.world.update?.(dt, G.characters);
+
     const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
     G.player.update(dt, fire);
     for (const ch of G.characters) {
@@ -667,7 +671,6 @@ function step(dt) {
     checkEnd();
   }
 
-  G.world.update?.(dt);
   G.fxPool.update(dt);
   updateDmgMarkers(dt);
   hud.update(dt, {

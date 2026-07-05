@@ -15,9 +15,9 @@ function newWorld(opts) {
     spawns: { blue: [], red: [], ffa: [] },
     gravity: 25, jumpVel: 9.2, killY: -40, playerSpeed: 10,
     waypointLinkDist: 16, waypointLinkDy: 3.5,
-    update(dt) {
+    update(dt, characters = []) {
       this._t = (this._t || 0) + dt;
-      for (const a of this.anim) a(dt, this._t);
+      for (const a of this.anim) a(dt, this._t, characters);
     },
   }, opts);
 }
@@ -348,6 +348,106 @@ function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff,
   world.anim.push((dt, t) => {
     disc.position.y = y + 0.34 + Math.abs(Math.sin(t * 3)) * 0.12;
     disc.material.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.6;
+  });
+}
+
+function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
+  const group = new THREE.Group();
+  scene.add(group);
+  const boxes = [];
+  const bodyMat = mat(0xd8e2f0, { tex: 'panel', repeat: [3, 1], roughness: 0.38, metalness: 0.28 });
+  const glassMat = mat(0x203650, { emissive: 0x30e0ff, emissiveIntensity: 0.35, transparent: true, opacity: 0.82 });
+  const trimMat = mat(0xff40a0, { emissive: 0xff40a0, emissiveIntensity: 1.5, roughness: 0.42 });
+
+  const addPart = (lx, ly, lz, w, h, d, material, collide = true) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    mesh.position.set(lx, ly, lz);
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+    if (!collide) return;
+    const collider = { type: 'box', min: V(0, 0, 0), max: V(0, 0, 0) };
+    world.colliders.push(collider);
+    boxes.push({ lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider });
+  };
+
+  // local +X is the train's forward axis. Side walls have center door gaps.
+  addPart(0, -0.22, 0, 15.5, 0.44, 4.8, bodyMat);          // floor, top at y
+  addPart(0, 3.05, 0, 15.5, 0.38, 4.8, bodyMat);           // roof
+  for (const z of [-2.25, 2.25]) {
+    addPart(-5.25, 1.42, z, 4.8, 2.55, 0.34, bodyMat);
+    addPart(5.25, 1.42, z, 4.8, 2.55, 0.34, bodyMat);
+    addPart(0, 2.25, z, 4.2, 0.35, 0.36, glassMat, false); // glowing door header
+  }
+  addPart(-7.85, 1.42, 0, 0.34, 2.55, 4.8, bodyMat);
+  addPart(7.85, 1.42, 0, 0.34, 2.55, 4.8, bodyMat);
+  addPart(0, 1.9, -2.47, 12.8, 0.22, 0.18, trimMat, false);
+  addPart(0, 1.9, 2.47, 12.8, 0.22, 0.18, trimMat, false);
+
+  const segs = [];
+  let total = 0;
+  for (let i = 0; i < route.length; i++) {
+    const a = route[i], b = route[(i + 1) % route.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    segs.push({ a, b, len, start: total, yaw: Math.atan2(a.z - b.z, b.x - a.x) });
+    total += len;
+  }
+  const sample = (dist) => {
+    dist = ((dist % total) + total) % total;
+    const seg = segs.find(s => dist >= s.start && dist <= s.start + s.len) || segs[segs.length - 1];
+    const k = seg.len ? (dist - seg.start) / seg.len : 0;
+    return {
+      x: seg.a.x + (seg.b.x - seg.a.x) * k,
+      z: seg.a.z + (seg.b.z - seg.a.z) * k,
+      yaw: seg.yaw,
+    };
+  };
+  const rotate = (x, z, yaw) => ({
+    x: Math.cos(yaw) * x + Math.sin(yaw) * z,
+    z: -Math.sin(yaw) * x + Math.cos(yaw) * z,
+  });
+  const updateColliders = (pos) => {
+    const ca = Math.abs(Math.cos(pos.yaw)), sa = Math.abs(Math.sin(pos.yaw));
+    for (const b of boxes) {
+      const rc = rotate(b.lx, b.lz, pos.yaw);
+      const cx = pos.x + rc.x, cy = y + b.ly, cz = pos.z + rc.z;
+      const hx = ca * b.hx + sa * b.hz;
+      const hz = sa * b.hx + ca * b.hz;
+      b.collider.min.set(cx - hx, cy - b.hy, cz - hz);
+      b.collider.max.set(cx + hx, cy + b.hy, cz + hz);
+    }
+  };
+  const inside = (ch, pos) => {
+    const dx = ch.pos.x - pos.x, dz = ch.pos.z - pos.z;
+    const c = Math.cos(-pos.yaw), s = Math.sin(-pos.yaw);
+    const lx = c * dx + s * dz;
+    const lz = -s * dx + c * dz;
+    const ly = ch.pos.y - y;
+    return Math.abs(lx) < 8.4 && Math.abs(lz) < 2.8 && ly > -0.45 && ly < 3.35;
+  };
+  const carry = (ch, oldPos, newPos) => {
+    const dx = ch.pos.x - oldPos.x, dz = ch.pos.z - oldPos.z;
+    const c = Math.cos(-oldPos.yaw), s = Math.sin(-oldPos.yaw);
+    const lx = c * dx + s * dz;
+    const lz = -s * dx + c * dz;
+    const rc = rotate(lx, lz, newPos.yaw);
+    ch.pos.x = newPos.x + rc.x;
+    ch.pos.z = newPos.z + rc.z;
+  };
+
+  let prev = sample(0);
+  updateColliders(prev);
+  world.anim.push((dt, t, characters) => {
+    const cycle = total / speed + dwell;
+    const phase = t % cycle;
+    const dist = phase < dwell ? 0 : (phase - dwell) * speed;
+    const next = sample(dist);
+    for (const ch of characters) {
+      if (ch.alive && inside(ch, prev)) carry(ch, prev, next);
+    }
+    group.position.set(next.x, y, next.z);
+    group.rotation.y = next.yaw;
+    updateColliders(next);
+    prev = next;
   });
 }
 
@@ -2164,10 +2264,20 @@ function buildPrism(scene) {
   const crate = (x, y, z, s = 3) => addBox(scene, world, x, y, z, s, s, s, 0xb0763a, { tex: 'crate' });
   crate(-20, 1.5, -6); crate(20, 1.5, 6); crate(6, 1.5, 20); crate(-6, 1.5, -20);
 
-  // Spawns — all feet-down on the floor; you find the walls from there
+  // Bots spawn feet-down on the floor (they can't wall-walk)
   for (const [x, z] of [[-18, -18], [18, 18], [-18, 18], [18, -18], [0, 20], [0, -20], [20, 0], [-20, 0]])
     world.spawns.ffa.push(V(x, 0.1, z));
   for (const x of [-18, -6, 6, 18]) { world.spawns.blue.push(V(x, 0.1, -20)); world.spawns.red.push(V(x, 0.1, 20)); }
+  // The PLAYER spawns anywhere — floor, any wall, or the ceiling (spawn() reads
+  // the nearest surface and orients you to it).
+  world.playerSpawns = [
+    V(-18, 0.3, -18), V(18, 0.3, 18), V(0, 0.3, 0),        // floor
+    V(23, 20, -8), V(23, 32, 10),                          // +X wall
+    V(-23, 14, 10), V(-23, 34, -8),                        // -X wall
+    V(8, 20, 23), V(-10, 32, 23),                          // +Z wall
+    V(-8, 16, -23), V(10, 30, -23),                        // -Z wall
+    V(-10, 47.7, 10), V(10, 47.7, -10),                    // ceiling
+  ];
 
   // Pickups over every surface + the interior — reward exploring it all
   pk(world, 'gold', 6, 46.6, 6);                          // on the CEILING
