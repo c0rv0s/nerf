@@ -1,7 +1,7 @@
 // NPC bots: waypoint patrol + combat (strafe, aim with error, fire).
 // On low-gravity maps they make ballistic jumps between waypoints.
 import * as THREE from 'three';
-import { moveCharacter, hasLOS, findPath, nearestWaypoint, rand, pick, clamp } from './engine.js';
+import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWaypoint, rand, pick, clamp } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
@@ -106,6 +106,14 @@ export class Bot {
     this._lastPos.copy(pos);
     this.avoid = null;
     this.avoidT = 0;
+    this._roam = null;
+    // PRISM RUN: orient to whatever surface we spawned on
+    if (this.world.escher) {
+      this.up = this.up || new THREE.Vector3(0, 1, 0);
+      this.up.set(0, 1, 0);
+      const nf = this._nearSurf();
+      if (nf) this.up.copy(nf);
+    }
     this.mesh.visible = true;
   }
 
@@ -246,8 +254,149 @@ export class Bot {
     this.pathIdx = 0;
   }
 
+  // Outward cardinal normal of the nearest surface (which way is "up" here),
+  // biased toward the current up so it doesn't flip-flop between two surfaces.
+  _nearSurf() {
+    const mid = this.pos.clone().addScaledVector(this.up, this.height * 0.5);
+    let best = null, bd = Infinity;
+    for (const c of this.world.colliders) {
+      if (c.type !== 'box') continue;
+      const cx = clamp(mid.x, c.min.x, c.max.x), cy = clamp(mid.y, c.min.y, c.max.y), cz = clamp(mid.z, c.min.z, c.max.z);
+      const dx = mid.x - cx, dy = mid.y - cy, dz = mid.z - cz;
+      let d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 <= 1e-4) continue;
+      const n = cardinal(new THREE.Vector3(dx, dy, dz));
+      if (n.dot(this.up) > 0.9) d2 -= 9;
+      if (d2 < bd) { bd = d2; best = n; }
+    }
+    return best;
+  }
+
+  /* PRISM RUN: bots wall-walk too. They head for a goal (an enemy, else a
+     random surface waypoint), run up walls they hit, hop across to other
+     faces, and shoot at anything they can see — feet on any surface. */
+  updateEscher(dt, characters, fire) {
+    if (!this.up) this.up = new THREE.Vector3(0, 1, 0);
+    if (!this._nrm) this._nrm = new THREE.Vector3();
+    const UPY = new THREE.Vector3(0, 1, 0);
+    const up = this.up;
+
+    this.thinkTimer -= dt;
+    if (this.thinkTimer <= 0) {
+      this.thinkTimer = 0.4;
+      // nearest enemy in line of sight becomes the target
+      const eye = this.pos.clone().addScaledVector(up, 1.4);
+      let best = null, bd = 1e9;
+      for (const ch of characters) {
+        if (ch === this || !ch.alive || ch.team === this.team) continue;
+        const d = ch.pos.distanceTo(this.pos);
+        if (d > 60 || d >= bd) continue;
+        const te = ch.pos.clone().addScaledVector(ch.up || UPY, 1.2);
+        if (hasLOS(eye, te, this.world)) { best = ch; bd = d; }
+      }
+      if (best && best !== this.target) this.reactionTimer = rand(0.3, 0.7);
+      this.target = best;
+      this.weapon = this.bestWeapon();
+      if (this.weapon !== 'blaster' && !(this.ammo[this.weapon] > 0)) this.weapon = 'blaster';
+    }
+    this.reactionTimer -= dt; this.alertTimer -= dt;
+    if (this.speedTime > 0) { this.speedTime -= dt; if (this.speedTime <= 0) this.speedMult = 1; }
+
+    // pick / refresh a roam goal on some face
+    const wps = this.world.faceWps || [];
+    if (!this._roam || this.pos.distanceTo(this._roam) < 4 || Math.random() < 0.02 * (dt * 60)) {
+      if (wps.length) this._roam = wps[Math.floor(Math.random() * wps.length)];
+    }
+    // Wanderlust: every so often commit to a DIFFERENT face for a few seconds,
+    // ignoring the fight, so bots spread across the walls and ceiling instead
+    // of all piling onto the floor. Bias the pick toward far-off surfaces.
+    this._faceCommitT = (this._faceCommitT || 0) - dt;
+    if (this._faceCommitT < -rand(3, 7)) {
+      this._faceCommitT = rand(2.5, 4.5);
+      let pickWp = null, tries = 0;
+      while (tries++ < 6) {
+        const w = wps[Math.floor(Math.random() * wps.length)];
+        if (w && (!this.up || Math.abs((new THREE.Vector3().subVectors(w, this.pos)).normalize().dot(this.up)) < 0.6)) { pickWp = w; break; }
+      }
+      this._faceGoal = pickWp || wps[Math.floor(Math.random() * wps.length)];
+    }
+    const committing = this._faceCommitT > 0 && this._faceGoal;
+    const goal = committing ? this._faceGoal
+      : (this.target && this.target.alive) ? this.target.pos : (this._roam || this.pos);
+
+    // move toward the goal, flattened onto the surface we're standing on
+    const speed = this.world.playerSpeed * 0.8 * (this.speedMult || 1);
+    const toGoal = new THREE.Vector3().subVectors(goal, this.pos);
+    const goalUp = toGoal.dot(up);                         // how far the goal is "above" us
+    const mv = toGoal.clone().addScaledVector(up, -goalUp);
+    const md = mv.length();
+    if (md > 0.5) mv.multiplyScalar(1 / md); else mv.set(0, 0, 0);
+
+    const vUp = this.vel.dot(up);
+    const planar = this.vel.clone().addScaledVector(up, -vUp);
+    const accel = this.grounded ? 8 : 2;
+    planar.addScaledVector(mv.clone().multiplyScalar(speed).sub(planar), Math.min(1, accel * dt));
+    this.vel.copy(planar).addScaledVector(up, vUp);
+
+    // jump: to reach a goal on another face (goal is "above" us) or the odd hop
+    this._jumpT = (this._jumpT || 0) - dt;
+    if (this.grounded && this._jumpT <= 0 && (goalUp > 3.5 || (md > 2 && Math.random() < 0.03))) {
+      this.vel.addScaledVector(up, this.world.jumpVel);
+      this.vel.addScaledVector(mv, speed * 0.6);           // leap toward the goal
+      this._jumpT = 1.0;
+    }
+
+    // airborne → gravity toward nearest surface; grounded → climb walls ahead
+    if (!this.grounded) { const nf = this._nearSurf(); if (nf && nf.dot(up) < 0.99) this.up.copy(nf); }
+    this.grounded = moveCharacterUp(this, this.world, dt, this._nrm);
+    if (this.grounded) this._climbEscher(mv);
+
+    // aim + fire at the target from any orientation
+    this.cooldown -= dt;
+    if (this.target && this.target.alive && this.cooldown <= 0 && this.reactionTimer <= 0) {
+      const w = WEAPONS[this.weapon];
+      const origin = this.pos.clone().addScaledVector(up, 1.4);
+      const aim = this.target.pos.clone().addScaledVector(this.target.up || UPY, 0.9);
+      const e = this.aimError * 9;
+      aim.x += rand(-1, 1) * e; aim.y += rand(-1, 1) * e; aim.z += rand(-1, 1) * e;
+      const dir = aim.sub(origin).normalize();
+      this._face = dir.clone();
+      fire(this, origin.addScaledVector(dir, 0.9), dir, this.weapon);
+      if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
+      this.cooldown = 1 / w.rof + rand(0.3, 0.7);
+    }
+
+    // orient the mesh upright on its surface, facing its heading/target
+    let face = (this.target ? new THREE.Vector3().subVectors(this.target.pos, this.pos) : mv.clone());
+    face.addScaledVector(up, -face.dot(up));
+    if (face.lengthSq() < 0.01) { face.set(1, 0, 0).addScaledVector(up, -up.x); }
+    face.normalize();
+    this.mesh.position.copy(this.pos).addScaledVector(up, 0);
+    this.mesh.quaternion.setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(new THREE.Vector3(), face.clone().negate(), up));
+    this.syncGunModel();
+    if (this.powerup) { this.powerup.timeLeft -= dt; if (this.powerup.timeLeft <= 0) { this.powerup = null; this.damageMult = 1; } }
+  }
+
+  _climbEscher(mv) {
+    if (mv.lengthSq() < 0.25) return;
+    const probe = this.pos.clone().addScaledVector(mv, this.radius + 0.5).addScaledVector(this.up, 0.7);
+    let solid = false;
+    for (const c of this.world.colliders) {
+      if (c.type !== 'box') continue;
+      if (probe.x > c.min.x && probe.x < c.max.x && probe.y > c.min.y && probe.y < c.max.y &&
+          probe.z > c.min.z && probe.z < c.max.z) { solid = true; break; }
+    }
+    if (!solid) return;
+    const oldUp = this.up.clone();
+    this.up.copy(cardinal(mv.clone().negate()));
+    this.pos.addScaledVector(this.up, 0.06);
+    this.vel.copy(oldUp).multiplyScalar(Math.max(this.vel.length(), 6));
+  }
+
   update(dt, characters, fire) {
     if (!this.alive) return;
+    if (this.world.escher) return this.updateEscher(dt, characters, fire);
 
     this.thinkTimer -= dt;
     if (this.thinkTimer <= 0) {
