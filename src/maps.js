@@ -2324,7 +2324,7 @@ function buildPrism(scene) {
     [0, CY, 25.5, 52, 52, 3, 'neonwall'],   // +Z wall
   ];
   for (const [x, y, z, w, h, d, tex] of faces) {
-    world.colliders.push({ type: 'box', min: V(x - w / 2, y - h / 2, z - d / 2), max: V(x + w / 2, y + h / 2, z + d / 2) });
+    world.colliders.push({ type: 'box', shell: true, min: V(x - w / 2, y - h / 2, z - d / 2), max: V(x + w / 2, y + h / 2, z + d / 2) });
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
       new THREE.MeshStandardMaterial({ ...aiTex(tex, 7, 7), color: 0x3a3470,
         transparent: true, opacity: 0.72, side: THREE.DoubleSide, roughness: 0.55,
@@ -2368,16 +2368,29 @@ function buildPrism(scene) {
   const crate = (x, y, z, s = 3) => addBox(scene, world, x, y, z, s, s, s, 0xb0763a, { tex: 'crate' });
   crate(-20, 1.5, -8); crate(20, 1.5, 8); crate(8, 1.5, 20); crate(-8, 1.5, -20);
 
-  // SPAWNS all over — both the player AND bots drop onto floor, walls or ceiling.
-  const S = [
-    [-16, 0.3, -16], [16, 0.3, 16], [-16, 0.3, 16], [16, 0.3, -16],   // floor
-    [23.4, 14, -8], [23.4, 34, 8], [-23.4, 20, 8], [-23.4, 30, -8],   // ±X walls
-    [8, 16, 23.4], [-8, 30, 23.4], [8, 32, -23.4], [-8, 14, -23.4],   // ±Z walls
-    [-12, 47.6, 12], [12, 47.6, -12], [0, 47.6, 0],                   // ceiling
-  ];
-  for (const [x, y, z] of S) world.spawns.ffa.push(V(x, y, z));
-  world.spawns.blue = S.filter((_, i) => i % 2 === 0).map(([x, y, z]) => V(x, y, z));
-  world.spawns.red = S.filter((_, i) => i % 2 === 1).map(([x, y, z]) => V(x, y, z));
+  // SPAWNS anywhere — a grid across ALL SIX faces (every "wall" is just a floor
+  // at another angle), skipping any point that would land inside a beam. Both
+  // the player and the bots use the whole set.
+  const clearAt = (x, y, z) => {
+    for (const c of world.colliders) {
+      if (c.type !== 'box' || c.shell) continue;   // near the shell is fine — that's the floor
+      if (x > c.min.x - 0.7 && x < c.max.x + 0.7 && y > c.min.y - 0.7 && y < c.max.y + 0.7 &&
+          z > c.min.z - 0.7 && z < c.max.z + 0.7) return false;
+    }
+    return true;
+  };
+  const spawns = [];
+  const push = (x, y, z) => { if (clearAt(x, y, z)) spawns.push(V(x, y, z)); };
+  const AX = [-18, -9, 0, 9, 18];
+  for (const a of AX) for (const b of AX) {
+    push(a, 0.3, b); push(a, 47.7, b);                          // floor + ceiling
+    push(23.4, CY + a, b); push(-23.4, CY + a, b);              // ±X walls
+    push(b, CY + a, 23.4); push(b, CY + a, -23.4);              // ±Z walls
+  }
+  world.spawns.ffa = spawns;
+  world.playerSpawns = spawns;
+  world.spawns.blue = spawns.filter((_, i) => i % 2 === 0);
+  world.spawns.red = spawns.filter((_, i) => i % 2 === 1);
 
   // Pickups over every surface + the lattice — reward exploring all of it
   pk(world, 'gold', 6, 46.6, 6);                          // ceiling
