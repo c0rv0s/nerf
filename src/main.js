@@ -9,7 +9,7 @@ import { MAPS, buildAtrium, texturesReady } from './maps.js';
 import { buildWaypointGraph, pick, rand } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES } from './bots.js';
-import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER } from './weapons.js';
+import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
 import { sfx, setListener } from './audio.js';
@@ -100,6 +100,10 @@ function teardown() {
 function startAtrium() {
   teardown();
   musicStop();
+  camera.fov = 75;
+  camera.near = 0.1;
+  camera.far = 900;
+  camera.updateProjectionMatrix();
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildAtrium(scene);
@@ -154,6 +158,10 @@ function startAtrium() {
 
 function startMatch(mapDef, mode = 'ffa') {
   teardown();
+  camera.fov = 75;
+  camera.near = 0.1;
+  camera.far = 900;
+  camera.updateProjectionMatrix();
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
@@ -269,6 +277,361 @@ function respawnCharacter(ch, initial = false) {
   p.x += rand(-1, 1); p.z += rand(-1, 1);
   ch.spawn(p);
   if (ch.isPlayer && !initial) hud.showRespawn(false);
+}
+
+/* ---------------- victory podium ---------------- */
+function rankedCharacters() {
+  return [...G.characters].sort((a, b) =>
+    b.score - a.score || b.kills - a.kills || a.deaths - b.deaths ||
+    a.name.localeCompare(b.name));
+}
+
+function colorHex(ch, fallback = 0xffd23c) {
+  if (!ch?.color) return fallback;
+  return parseInt(String(ch.color).replace('#', ''), 16) || fallback;
+}
+
+function podiumMaterial(color, opts = {}) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.58,
+    metalness: 0.08,
+    envMapIntensity: 0.45,
+    ...opts,
+  });
+}
+
+function podiumBox(scene, x, y, z, w, h, d, material) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+function makeEndTextSprite(text, {
+  color = '#7dff7d',
+  stroke = 'rgba(0,0,0,.78)',
+  bg = 'rgba(8,12,20,.55)',
+  width = 768,
+  height = 192,
+  font = 'bold 46px "Arial Black", Arial',
+  sub = '',
+  subColor = '#dbe8ff',
+  scale = [4.8, 1.2],
+} = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const g = canvas.getContext('2d');
+  g.clearRect(0, 0, width, height);
+  if (bg) {
+    g.fillStyle = bg;
+    g.beginPath();
+    g.roundRect(12, 12, width - 24, height - 24, 20);
+    g.fill();
+  }
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = font;
+  g.lineWidth = 9;
+  g.strokeStyle = stroke;
+  g.strokeText(text, width / 2, sub ? height * 0.42 : height / 2);
+  g.fillStyle = color;
+  g.fillText(text, width / 2, sub ? height * 0.42 : height / 2);
+  if (sub) {
+    g.font = 'bold 28px Arial';
+    g.lineWidth = 5;
+    g.strokeStyle = stroke;
+    g.strokeText(sub, width / 2, height * 0.72);
+    g.fillStyle = subColor;
+    g.fillText(sub, width / 2, height * 0.72);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+  }));
+  sprite.scale.set(scale[0], scale[1], 1);
+  sprite.userData.tex = tex;
+  return sprite;
+}
+
+function buildPodiumAvatar(ch, place) {
+  const group = new THREE.Group();
+  const suit = colorHex(ch);
+  const suitMat = podiumMaterial(suit, { roughness: 0.7 });
+  const trimMat = podiumMaterial(0xf4f7ff, { roughness: 0.45 });
+  const skinMat = podiumMaterial(0xf0c090, { roughness: 0.62 });
+  const darkMat = podiumMaterial(0x162030, {
+    emissive: new THREE.Color(suit),
+    emissiveIntensity: 0.55,
+    roughness: 0.5,
+  });
+
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.44, 0.82, 5, 12), suitMat);
+  body.position.y = 1.02;
+  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.16, 0.16), trimMat);
+  chest.position.set(0, 1.22, 0.33);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.31, 16, 12), skinMat);
+  head.position.y = 1.76;
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.14, 0.16), darkMat);
+  visor.position.set(0, 1.78, 0.27);
+
+  for (const mesh of [body, chest, head, visor]) {
+    mesh.castShadow = true;
+    group.add(mesh);
+  }
+
+  const limb = (x, y, z, rz, mat = suitMat) => {
+    const m = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.52, 4, 8), mat);
+    m.position.set(x, y, z);
+    m.rotation.z = rz;
+    m.castShadow = true;
+    group.add(m);
+    return m;
+  };
+  limb(-0.2, 0.35, 0, 0.08);
+  limb(0.2, 0.35, 0, -0.08);
+  if (place === 0) {
+    limb(-0.55, 1.55, 0.02, -0.75);
+    limb(0.55, 1.55, 0.02, 0.75);
+  } else {
+    limb(-0.48, 1.12, 0.08, -1.04);
+    limb(0.48, 1.12, 0.08, 1.04);
+  }
+
+  const gun = buildBlaster(ch.weapon || 'blaster');
+  gun.scale.setScalar(place === 0 ? 0.58 : 0.48);
+  gun.position.set(0.36, place === 0 ? 1.48 : 1.08, 0.43);
+  gun.rotation.set(place === 0 ? -0.25 : 0.18, Math.PI, place === 0 ? -0.55 : -0.1);
+  group.add(gun);
+
+  group.scale.setScalar(place === 0 ? 1.13 : 1.0);
+  return group;
+}
+
+function buildLeaderboardPanel(ranked) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 768;
+  canvas.height = 512;
+  const g = canvas.getContext('2d');
+  g.fillStyle = 'rgba(8, 13, 18, .62)';
+  g.beginPath();
+  g.roundRect(16, 16, 736, 480, 24);
+  g.fill();
+  g.lineWidth = 5;
+  g.strokeStyle = 'rgba(125,255,125,.55)';
+  g.stroke();
+  g.font = 'bold 34px "Arial Black", Arial';
+  g.fillStyle = '#7dff7d';
+  g.fillText('FINAL STANDINGS', 44, 64);
+  g.font = 'bold 28px Arial';
+  ranked.slice(0, 8).forEach((ch, i) => {
+    const y = 120 + i * 44;
+    g.fillStyle = i < 3 ? ['#ffd23c', '#dfe5f2', '#d98c45'][i] : '#8cff8c';
+    g.fillText(`${i + 1}.`, 48, y);
+    g.fillStyle = ch.color || '#dbe8ff';
+    g.fillText(ch.isPlayer ? 'YOU' : ch.name.toUpperCase(), 104, y);
+    g.textAlign = 'right';
+    g.fillStyle = '#dfffdf';
+    g.fillText(String(ch.score), 704, y);
+    g.textAlign = 'left';
+  });
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 3.45),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  panel.userData.tex = tex;
+  return panel;
+}
+
+function buildVictoryScene({ ranked, title, color, stats }) {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x130f20);
+  scene.fog = new THREE.Fog(0x130f20, 12, 28);
+  scene.environment = envTexture;
+  scene.add(camera);
+
+  camera.fov = 58;
+  camera.near = 0.1;
+  camera.far = 120;
+  camera.updateProjectionMatrix();
+  camera.position.set(0, 4.2, 10.2);
+  camera.lookAt(0, 2.1, 0);
+
+  const hemi = new THREE.HemisphereLight(0xffe2a8, 0x223040, 2.4);
+  scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xfff2d0, 3.2);
+  key.position.set(-5, 9, 7);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  scene.add(key);
+  for (const [x, z, c] of [[-5.8, -1.8, 0x30e0ff], [5.8, -1.8, 0xff40a0], [0, 4, 0x8aff30]]) {
+    const l = new THREE.PointLight(c, 2.2, 13);
+    l.position.set(x, 2.8, z);
+    scene.add(l);
+  }
+
+  const wood = podiumMaterial(0xb76b2c, { roughness: 0.78 });
+  const darkWood = podiumMaterial(0x5a2f1e, { roughness: 0.84 });
+  const green = podiumMaterial(0x15b15b, { emissive: 0x063d23, emissiveIntensity: 0.24 });
+  const brass = podiumMaterial(0xffb02e, { metalness: 0.35, roughness: 0.36 });
+  const bronze = podiumMaterial(0xb96d35, { metalness: 0.22, roughness: 0.5 });
+  const silver = podiumMaterial(0xdfe5f2, { metalness: 0.48, roughness: 0.31 });
+
+  podiumBox(scene, 0, -0.08, 0, 12.5, 0.16, 8.2, darkWood);
+  podiumBox(scene, 0, -0.22, 0, 13.4, 0.22, 9.0, green);
+  podiumBox(scene, 0, 2.2, -4.25, 13.6, 4.8, 0.42, wood);
+  podiumBox(scene, -6.55, 2.2, 0, 0.42, 4.8, 8.2, wood);
+  podiumBox(scene, 6.55, 2.2, 0, 0.42, 4.8, 8.2, wood);
+  podiumBox(scene, 0, 4.65, -0.2, 13.8, 0.35, 8.6, green);
+  for (const x of [-5, -2.5, 0, 2.5, 5]) {
+    podiumBox(scene, x, 2.4, -4.02, 0.18, 4.1, 0.22, green);
+  }
+
+  const pedestalSpecs = [
+    { x: 0, h: 2.5, w: 2.5, d: 2.25, mat: brass, medal: '#ffd23c' },
+    { x: -3.0, h: 1.55, w: 2.3, d: 2.0, mat: silver, medal: '#e5edf8' },
+    { x: 3.0, h: 1.15, w: 2.3, d: 2.0, mat: bronze, medal: '#d98c45' },
+  ];
+  const avatars = [];
+  pedestalSpecs.forEach((spec, i) => {
+    podiumBox(scene, spec.x, spec.h / 2, 0, spec.w, spec.h, spec.d, spec.mat);
+    podiumBox(scene, spec.x, spec.h + 0.05, 0, spec.w + 0.36, 0.1, spec.d + 0.36, green);
+    const face = makeEndTextSprite(String(i + 1), {
+      color: spec.medal,
+      bg: null,
+      width: 256,
+      height: 256,
+      font: 'bold 142px "Arial Black", Arial',
+      scale: [1.05, 1.05],
+    });
+    face.position.set(spec.x, spec.h * 0.52, 1.04);
+    scene.add(face);
+
+    const ch = ranked[i];
+    if (!ch) return;
+    const avatar = buildPodiumAvatar(ch, i);
+    avatar.position.set(spec.x, spec.h + 0.02, -0.08);
+    avatar.rotation.y = i === 1 ? -0.34 : i === 2 ? 0.34 : 0;
+    scene.add(avatar);
+    avatars.push({ group: avatar, baseY: avatar.position.y, phase: i * 1.7 });
+
+    const name = makeEndTextSprite(ch.isPlayer ? 'YOU' : ch.name.toUpperCase(), {
+      color: ch.color || '#ffffff',
+      sub: `${ch.score} PTS`,
+      bg: 'rgba(4,10,12,.46)',
+      scale: [2.8, 0.7],
+      font: 'bold 34px "Arial Black", Arial',
+    });
+    name.position.set(spec.x, spec.h + 3.0, 0.05);
+    scene.add(name);
+  });
+
+  const titleSign = makeEndTextSprite(title, {
+    color,
+    sub: G.mapDef ? `${G.mapDef.name} - ${stats}` : stats,
+    bg: 'rgba(5,8,18,.42)',
+    width: 1024,
+    height: 210,
+    font: 'bold 56px "Arial Black", Arial',
+    scale: [7.1, 1.45],
+  });
+  titleSign.position.set(0, 5.25, -2.2);
+  scene.add(titleSign);
+
+  const panel = buildLeaderboardPanel(ranked);
+  panel.position.set(-5.35, 2.85, 1.65);
+  panel.rotation.y = Math.PI / 3.35;
+  scene.add(panel);
+
+  const pos = [];
+  const cols = [];
+  const palette = [0xffd23c, 0x30e0ff, 0xff40a0, 0x8aff30, 0xff6a30, 0xffffff];
+  for (let i = 0; i < 180; i++) {
+    pos.push(rand(-5.8, 5.8), rand(2.2, 7.2), rand(-3.4, 2.5));
+    const c = new THREE.Color(pick(palette));
+    cols.push(c.r, c.g, c.b);
+  }
+  const confettiGeo = new THREE.BufferGeometry();
+  confettiGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  confettiGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  const confetti = new THREE.Points(confettiGeo, new THREE.PointsMaterial({
+    size: 0.075,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.9,
+  }));
+  scene.add(confetti);
+
+  scene.userData.end = {
+    t: 0,
+    avatars,
+    confetti,
+    lookAt: new THREE.Vector3(0, 2.25, 0),
+  };
+  return scene;
+}
+
+function showVictoryPodium(result) {
+  const oldScene = G.scene;
+  G.over = true;
+  G.showBoard = false;
+  hud.show(false);
+  hud.showRespawn(false);
+  clickcatch.style.display = 'none';
+  quitBtn.style.display = 'none';
+  document.getElementById('scores').style.display = 'none';
+
+  for (const marker of dmgMarkers) {
+    oldScene.remove(marker.sprite);
+    marker.tex.dispose();
+  }
+  dmgMarkers = [];
+  G.projectiles.clear();
+  G.pickups.clear();
+  G.fxPool.clear();
+  camera.remove(G.player.viewmodel);
+  oldScene.clear();
+
+  const podiumScene = buildVictoryScene(result);
+  G.scene = podiumScene;
+  renderPass.scene = podiumScene;
+
+  const end = document.getElementById('endscreen');
+  document.getElementById('endtitle').textContent = result.title;
+  document.getElementById('endtitle').style.color = result.color;
+  document.getElementById('endstats').textContent = result.stats;
+  end.style.display = 'flex';
+  document.exitPointerLock?.();
+  sfx('powerup');
+}
+
+function updateVictoryPodium(dt) {
+  const end = G.scene?.userData?.end;
+  if (!end) return;
+  end.t += dt;
+  const t = end.t;
+  camera.position.set(Math.sin(t * 0.28) * 0.65, 4.15 + Math.sin(t * 0.7) * 0.08, 10.1 + Math.cos(t * 0.22) * 0.35);
+  camera.lookAt(end.lookAt);
+  for (const avatar of end.avatars) {
+    avatar.group.position.y = avatar.baseY + Math.sin(t * 2.1 + avatar.phase) * 0.035;
+    avatar.group.rotation.y += Math.sin(t * 1.2 + avatar.phase) * 0.0009;
+  }
+  end.confetti.rotation.y += dt * 0.12;
+  const positions = end.confetti.geometry.attributes.position;
+  for (let i = 0; i < positions.count; i++) {
+    let y = positions.getY(i) - dt * (0.42 + (i % 5) * 0.035);
+    if (y < 1.4) y = 7.1 + (i % 19) * 0.035;
+    positions.setY(i, y);
+  }
+  positions.needsUpdate = true;
 }
 
 /* ---------------- damage & kills ---------------- */
@@ -403,27 +766,21 @@ function checkEnd() {
   if (G.timeLeft > 0) return; // matches run the full clock
   let title, color, stats;
   const playerStats = `You: ${G.player.kills} kills / ${G.player.deaths} deaths`;
+  const ranked = rankedCharacters();
   if (G.mode === 'tdm') {
     const { blue, red } = G.scores;
     title = blue === red ? 'DRAW!' : (blue > red ? 'BLUE TEAM WINS!' : 'RED TEAM WINS!');
     color = blue === red ? '#ffd23c' : (blue > red ? '#5cb3ff' : '#ff5c5c');
-    stats = `BLUE ${blue} — ${red} RED · ${playerStats}`;
+    const top = ranked[0];
+    stats = `BLUE ${blue} - ${red} RED · MVP: ${top.name} ${top.score} · ${playerStats}`;
   } else {
-    const ranked = [...G.characters].sort((a, b) => b.score - a.score);
     const leader = ranked[0];
     title = leader.isPlayer ? 'YOU WIN!' : `${leader.name.toUpperCase()} WINS!`;
     color = leader.color;
     const rank = ranked.indexOf(G.player) + 1;
     stats = `Winner: ${leader.name} with ${leader.score} · You placed #${rank} with ${G.player.score} · ${playerStats}`;
   }
-  const end = document.getElementById('endscreen');
-  document.getElementById('endtitle').textContent = title;
-  document.getElementById('endtitle').style.color = color;
-  document.getElementById('endstats').textContent = stats;
-  end.style.display = 'flex';
-  document.exitPointerLock?.();
-  G.over = true;
-  sfx('powerup');
+  showVictoryPodium({ ranked, title, color, stats });
 }
 
 /* ---------------- pickups ---------------- */
@@ -606,71 +963,73 @@ function stepAtrium(dt) {
 }
 
 function step(dt) {
-  if (!G.over) {
-    if (G.atrium) stepAtrium(dt);
-    else G.timeLeft -= dt;
-    setListener(G.player.pos); // distance-based sfx volume
-
-    G.world.update?.(dt, G.characters);
-
-    const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
-    G.player.update(dt, fire);
-    for (const ch of G.characters) {
-      if (!ch.isPlayer) ch.update(dt, G.characters, fire);
-    }
-
-    G.world.updateDoors?.(G.characters, dt); // proximity doors (Labyrinth)
-
-    // lava burns ~34 hp/s in three pulses per second
-    if (G.world.lavaZones) {
-      for (const ch of G.characters) {
-        if (!ch.alive) continue;
-        const burning = G.world.lavaZones.some(zn =>
-          ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
-          ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ && ch.pos.y < zn.maxY);
-        if (burning) {
-          ch._lavaT = (ch._lavaT || 0) + dt;
-          if (ch._lavaT > 0.33) { ch._lavaT = 0; applyDamage(ch, 11.3, LAVA); }
-          const wade = Math.max(0, 1 - 3 * dt);  // molten sludge — wading is slow
-          ch.vel.x *= wade;
-          ch.vel.z *= wade;
-        } else ch._lavaT = 0;
-      }
-    }
-
-    // fell into the void? (Escher maps: drifting off any edge counts, so a
-    // radius from the play center catches sideways/upward falls too)
-    const kc = G.world.killCenter, kr = G.world.killRadius;
-    for (const ch of G.characters) {
-      const drifted = kc && ch.pos.distanceToSquared(kc) > kr * kr;
-      if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity) || drifted)) {
-        ch.hp = 0;
-        ch.deaths++;
-        if (ch.isPlayer) {
-          ch.alive = false; sfx('death'); hud.damageFlash(); hud.showRespawn(true, RESPAWN_TIME);
-        } else ch.die();
-        hud.killfeed({ name: 'The Void', color: '#8899aa' }, ch);
-        G.respawnTimers.set(ch, RESPAWN_TIME);
-      }
-    }
-
-    // respawns
-    for (const [ch, t] of G.respawnTimers) {
-      const left = t - dt;
-      if (left <= 0) {
-        G.respawnTimers.delete(ch);
-        respawnCharacter(ch);
-      } else {
-        G.respawnTimers.set(ch, left);
-        if (ch.isPlayer) hud.showRespawn(true, left);
-      }
-    }
-
-    G.projectiles.update(dt, G.characters);
-    G.pickups.update(dt, G.characters);
-    checkEnd();
+  if (G.over) {
+    updateVictoryPodium(dt);
+    return;
   }
 
+  if (G.atrium) stepAtrium(dt);
+  else G.timeLeft -= dt;
+  setListener(G.player.pos); // distance-based sfx volume
+
+  G.world.update?.(dt, G.characters);
+
+  const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
+  G.player.update(dt, fire);
+  for (const ch of G.characters) {
+    if (!ch.isPlayer) ch.update(dt, G.characters, fire);
+  }
+
+  G.world.updateDoors?.(G.characters, dt); // proximity doors (Labyrinth)
+
+  // lava burns ~34 hp/s in three pulses per second
+  if (G.world.lavaZones) {
+    for (const ch of G.characters) {
+      if (!ch.alive) continue;
+      const burning = G.world.lavaZones.some(zn =>
+        ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
+        ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ && ch.pos.y < zn.maxY);
+      if (burning) {
+        ch._lavaT = (ch._lavaT || 0) + dt;
+        if (ch._lavaT > 0.33) { ch._lavaT = 0; applyDamage(ch, 11.3, LAVA); }
+        const wade = Math.max(0, 1 - 3 * dt);  // molten sludge — wading is slow
+        ch.vel.x *= wade;
+        ch.vel.z *= wade;
+      } else ch._lavaT = 0;
+    }
+  }
+
+  // fell into the void? (Escher maps: drifting off any edge counts, so a
+  // radius from the play center catches sideways/upward falls too)
+  const kc = G.world.killCenter, kr = G.world.killRadius;
+  for (const ch of G.characters) {
+    const drifted = kc && ch.pos.distanceToSquared(kc) > kr * kr;
+    if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity) || drifted)) {
+      ch.hp = 0;
+      ch.deaths++;
+      if (ch.isPlayer) {
+        ch.alive = false; sfx('death'); hud.damageFlash(); hud.showRespawn(true, RESPAWN_TIME);
+      } else ch.die();
+      hud.killfeed({ name: 'The Void', color: '#8899aa' }, ch);
+      G.respawnTimers.set(ch, RESPAWN_TIME);
+    }
+  }
+
+  // respawns
+  for (const [ch, t] of G.respawnTimers) {
+    const left = t - dt;
+    if (left <= 0) {
+      G.respawnTimers.delete(ch);
+      respawnCharacter(ch);
+    } else {
+      G.respawnTimers.set(ch, left);
+      if (ch.isPlayer) hud.showRespawn(true, left);
+    }
+  }
+
+  G.projectiles.update(dt, G.characters);
+  G.pickups.update(dt, G.characters);
+  checkEnd();
   G.fxPool.update(dt);
   updateDmgMarkers(dt);
   hud.update(dt, {
