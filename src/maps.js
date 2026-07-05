@@ -2054,20 +2054,21 @@ function buildSanctum(scene) {
 }
 
 /* ============== SECRET MAP — PRISM RUN (inside-out tesseract) ==============
-   You play INSIDE a neon cube. All six inner faces are walkable and gravity
-   always pulls toward the NEAREST one — so wherever you jump or fall, you
-   land on a surface and can never drop into the void. Walk into a wall and
-   you climb it; run over the top and you're on the ceiling; jump straight up
-   hard and you land on the ceiling. The camera SLERPS to each new orientation
-   (a smooth roll, not a snap). Half gravity for a floaty, space-y feel.
-   Bots keep their feet on the floor — the walls and ceiling are yours. */
+   You play INSIDE a small neon cube packed with pillars and cross-walls.
+   Gravity always pulls toward the NEAREST surface (a shell face OR any
+   interior structure) so you fall onto something no matter what — you can't
+   drop into the void. Walk into any wall or column and you run straight up
+   it. The camera is a plain free-look FPS camera that NEVER rolls — your feet
+   stick to walls and ceilings but aiming feels identical everywhere. Very
+   low gravity for a floaty deep-space feel. Bots keep their feet on the
+   floor and weave the doorways — the walls and ceiling are yours. */
 function buildPrism(scene) {
-  const H = 32, CY = 32;   // inner half-extent, floor at y=0, ceiling at y=64
+  const H = 24, CY = 24;   // 25% smaller cube; floor y=0, ceiling y=48
   const world = newWorld({
     escher: true, cube: { cx: 0, cy: CY, cz: 0, h: H },
-    gravity: 12, jumpVel: 8, playerSpeed: 11,       // half gravity — space-y float
-    killY: -120, killYTop: 200, killCenter: V(0, CY, 0), killRadius: 200,
-    waypointLinkDist: 18, waypointLinkDy: 3,
+    gravity: 8, jumpVel: 7, playerSpeed: 11,        // very floaty — deep-space feel
+    killY: -160, killYTop: 240, killCenter: V(0, CY, 0), killRadius: 240,
+    waypointLinkDist: 16, waypointLinkDy: 3,
   });
   scene.background = new THREE.Color(0x05030f);
   baseLighting(scene, 0xc8a8ff, 0x1a0f2e, [40, 90, -30], 110);
@@ -2111,19 +2112,18 @@ function buildPrism(scene) {
      no matter what — you can't drop into the void. Faces are translucent
      neon grid (stars glow through); the 12 edges are bright bars. ---- */
   const faces = [
-    [0, -1.5, 0, 70, 3, 70, 'neonfloor'],   // floor  (top y=0)
-    [0, 65.5, 0, 70, 3, 70, 'neonfloor'],   // ceiling(bottom y=64)
-    [-33.5, CY, 0, 3, 70, 70, 'neonwall'],  // -X wall (inner x=-32)
-    [33.5, CY, 0, 3, 70, 70, 'neonwall'],   // +X wall (inner x=32)
-    [0, CY, -33.5, 70, 70, 3, 'neonwall'],  // -Z wall
-    [0, CY, 33.5, 70, 70, 3, 'neonwall'],   // +Z wall
+    [0, -1.5, 0, 52, 3, 52, 'neonfloor'],   // floor  (top y=0)
+    [0, 49.5, 0, 52, 3, 52, 'neonfloor'],   // ceiling(bottom y=48)
+    [-25.5, CY, 0, 3, 52, 52, 'neonwall'],  // -X wall (inner x=-24)
+    [25.5, CY, 0, 3, 52, 52, 'neonwall'],   // +X wall (inner x=24)
+    [0, CY, -25.5, 52, 52, 3, 'neonwall'],  // -Z wall
+    [0, CY, 25.5, 52, 52, 3, 'neonwall'],   // +Z wall
   ];
   for (const [x, y, z, w, h, d, tex] of faces) {
     world.colliders.push({ type: 'box', min: V(x - w / 2, y - h / 2, z - d / 2), max: V(x + w / 2, y + h / 2, z + d / 2) });
-    const rep = Math.round(Math.max(w, h, d) / 7);
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
-      new THREE.MeshStandardMaterial({ ...aiTex(tex, rep, rep), color: 0x3a3470,
-        transparent: true, opacity: 0.7, side: THREE.DoubleSide, roughness: 0.55,
+      new THREE.MeshStandardMaterial({ ...aiTex(tex, 7, 7), color: 0x3a3470,
+        transparent: true, opacity: 0.72, side: THREE.DoubleSide, roughness: 0.55,
         emissive: 0x1a1440, emissiveIntensity: 0.5 }));
     m.position.set(x, y, z);
     scene.add(m);
@@ -2132,68 +2132,79 @@ function buildPrism(scene) {
   const EC = [0xff3050, 0x40ff60, 0x30e0ff, 0xffe030, 0xff40e0, 0xb060ff];
   let ei = 0;
   for (const sx of [-1, 1]) for (const sz of [-1, 1])            // 4 verticals
-    bar(sx * 31.7, CY, sz * 31.7, 0.6, 64, 0.6, EC[ei++ % 6]);
-  for (const y of [0.4, 63.6]) for (const s of [-1, 1]) {        // 8 horizontals
-    bar(0, y, s * 31.7, 64, 0.6, 0.6, EC[ei++ % 6]);
-    bar(s * 31.7, y, 0, 0.6, 0.6, 64, EC[ei++ % 6]);
+    bar(sx * 23.7, CY, sz * 23.7, 0.6, 48, 0.6, EC[ei++ % 6]);
+  for (const y of [0.4, 47.6]) for (const s of [-1, 1]) {        // 8 horizontals
+    bar(0, y, s * 23.7, 48, 0.6, 0.6, EC[ei++ % 6]);
+    bar(s * 23.7, y, 0, 0.6, 0.6, 48, EC[ei++ % 6]);
   }
-  for (const [x, y, z, c] of [[0, 12, 0, 0xff70c8], [0, 52, 0, 0x30e0ff],
-                              [-20, 32, -20, 0xffe030], [20, 32, 20, 0x60ff80]]) {
-    const L = new THREE.PointLight(c, 16, 60); L.position.set(x, y, z); scene.add(L);
+  for (const [x, y, z, c] of [[0, 24, 0, 0xff70c8], [0, 8, 0, 0x30e0ff],
+                              [-18, 36, -18, 0xffe030], [18, 12, 18, 0x60ff80]]) {
+    const L = new THREE.PointLight(c, 15, 50); L.position.set(x, y, z); scene.add(L);
   }
 
-  /* ---- interior: cover + climbable routes between faces ----
-     Three floor-to-ceiling pillars: run into one and you climb it up to the
-     ceiling. Crates for cover on several faces (each in its own gravity zone). */
+  /* ---- interior: a 3D climb-maze. Every pillar and wall runs floor-to-
+     ceiling, so you can run up ANY of them (walk into it and you climb) and
+     drop off the far side onto whatever surface is nearest. Doorway gaps let
+     you weave through at floor level; central platforms give mid-air cover. */
   const IC = 0x2a2352, iw = { tex: 'neonwall' };
-  for (const [px, pz] of [[-16, -12], [17, 14], [-14, 18]])
-    addBox(scene, world, px, CY, pz, 5, 64, 5, IC, iw);
+  for (const [px, pz] of [[-14, -14], [14, 14], [-14, 14], [14, -14]])   // 4 corner pillars
+    addBox(scene, world, px, CY, pz, 4, 48, 4, IC, iw);
+  // two cross-walls floor→ceiling, each with a doorway gap (weave / climb)
+  addBox(scene, world, 0, 12, 0, 3, 24, 20, IC, iw);      // X-wall lower (gap above, y24..36)
+  addBox(scene, world, 0, 42, 0, 3, 12, 20, IC, iw);      // X-wall upper
+  addBox(scene, world, 0, 30, -16, 3, 36, 8, IC, iw);     // X-wall side pieces
+  addBox(scene, world, 0, 30, 16, 3, 36, 8, IC, iw);
+  addBox(scene, world, -16, 24, 0, 8, 48, 3, IC, iw);     // Z-wall (doorway at center x)
+  addBox(scene, world, 16, 24, 0, 8, 48, 3, IC, iw);
+  // free-standing mid platforms you jump/climb onto (low + ceiling-hung)
+  addBox(scene, world, -19, 6, 12, 7, 1.5, 7, IC, iw);
+  addBox(scene, world, 19, 6, -12, 7, 1.5, 7, IC, iw);
+  addBox(scene, world, 12, 42, 12, 8, 1.5, 8, IC, iw);    // hangs below the ceiling
+  addBox(scene, world, -12, 42, -12, 8, 1.5, 8, IC, iw);
   const crate = (x, y, z, s = 3) => addBox(scene, world, x, y, z, s, s, s, 0xb0763a, { tex: 'crate' });
-  crate(-22, 1.5, 22); crate(22, 1.5, -22); crate(8, 1.5, -20); crate(-6, 1.5, 8);   // on the floor
-  addBox(scene, world, 30.5, 22, -10, 3, 3, 3, IC, iw);   // ledge on the +X wall
-  addBox(scene, world, -30.5, 40, 12, 3, 3, 3, IC, iw);   // ledge on the -X wall
-  addBox(scene, world, 0, 62.5, -14, 3, 3, 3, IC, iw);    // block on the ceiling
+  crate(-20, 1.5, -6); crate(20, 1.5, 6); crate(6, 1.5, 20); crate(-6, 1.5, -20);
 
   // Spawns — all feet-down on the floor; you find the walls from there
-  for (const [x, z] of [[-20, -20], [20, 20], [-20, 20], [20, -20], [0, 24], [0, -24], [24, 0], [-24, 0]])
+  for (const [x, z] of [[-18, -18], [18, 18], [-18, 18], [18, -18], [0, 20], [0, -20], [20, 0], [-20, 0]])
     world.spawns.ffa.push(V(x, 0.1, z));
-  for (const x of [-24, -12, 12, 24]) { world.spawns.blue.push(V(x, 0.1, -26)); world.spawns.red.push(V(x, 0.1, 26)); }
+  for (const x of [-18, -6, 6, 18]) { world.spawns.blue.push(V(x, 0.1, -20)); world.spawns.red.push(V(x, 0.1, 20)); }
 
-  // Pickups spread over ALL SIX faces — the prizes reward circumnavigating
-  pk(world, 'gold', 0, 62.6, 0);                          // dead center of the CEILING
-  pk(world, 'silver', -31.4, 32, 0);                      // -X wall
-  pk(world, 'shield', 31.4, 32, 0);                       // +X wall
-  pk(world, 'speed', 0, 32, -31.4);                       // -Z wall
-  pk(world, 'djump', 0, 32, 31.4);                        // +Z wall
-  pk(world, 'star', 0, 62.6, 20, { hidden: true });       // ceiling
-  pk(world, 'star', -31.4, 48, -14, { hidden: true });    // high on -X wall
-  pk(world, 'star', 31.4, 16, 14, { hidden: true });      // low on +X wall
-  pk(world, 'star', 14, 0.2, -14, { hidden: true });      // floor corner
-  pk(world, 'weapon', 0, 0.2, 0, { weapon: 'zooka' });    // floor center
-  pk(world, 'weapon', -31.4, 20, 12, { weapon: 'scatter' });
-  pk(world, 'weapon', 31.4, 44, -12, { weapon: 'pulsar' });
-  pk(world, 'weapon', 0, 62.6, -20, { weapon: 'hyper' }); // ceiling
-  pk(world, 'weapon', -12, 32, -31.4, { weapon: 'sidewinder' });
-  pk(world, 'weapon', 20, 0.2, 20, { weapon: 'whomper' });
-  pk(world, 'ammo', 0, 0.2, 22, { weapon: 'zooka' });
-  pk(world, 'ammo', -31.4, 24, 12, { weapon: 'scatter' });
-  pk(world, 'ammo', 31.4, 40, -12, { weapon: 'pulsar' });
-  pk(world, 'ammo', 6, 62.6, -20, { weapon: 'hyper' });
-  pk(world, 'ammo', -12, 32, -27, { weapon: 'sidewinder' });
-  pk(world, 'health', -20, 0.2, 0);
-  pk(world, 'health', 20, 0.2, 0);
-  pk(world, 'health', 0, 0.2, -20);
+  // Pickups over every surface + the interior — reward exploring it all
+  pk(world, 'gold', 6, 46.6, 6);                          // on the CEILING
+  pk(world, 'silver', -19, 7, 12);                        // low platform
+  pk(world, 'shield', 23.4, CY, 8);                       // +X wall
+  pk(world, 'speed', 8, CY, -23.4);                       // -Z wall
+  pk(world, 'djump', 19, 7, -12);                         // low platform
+  pk(world, 'star', -6, 46.6, -6, { hidden: true });      // ceiling
+  pk(world, 'star', -23.4, 36, -8, { hidden: true });     // high on -X wall
+  pk(world, 'star', 12, 42.9, 12, { hidden: true });      // ceiling-hung platform
+  pk(world, 'star', 14, 0.2, -14, { hidden: true });      // pillar foot
+  pk(world, 'weapon', 0, 0.2, 0, { weapon: 'zooka' });    // floor center (through the doorways)
+  pk(world, 'weapon', -19, 7.8, 12, { weapon: 'scatter' });
+  pk(world, 'weapon', 19, 7.8, -12, { weapon: 'pulsar' });
+  pk(world, 'weapon', -6, 46.6, 12, { weapon: 'hyper' }); // ceiling
+  pk(world, 'weapon', 23.4, 32, -8, { weapon: 'sidewinder' });
+  pk(world, 'weapon', -12, 42.9, -12, { weapon: 'whomper' }); // ceiling-hung platform
+  pk(world, 'ammo', 0, 0.2, 18, { weapon: 'zooka' });
+  pk(world, 'ammo', -12, 7.8, 12, { weapon: 'scatter' });
+  pk(world, 'ammo', 12, 7.8, -12, { weapon: 'pulsar' });
+  pk(world, 'ammo', 0, 46.6, 12, { weapon: 'hyper' });
+  pk(world, 'ammo', 23.4, 26, -8, { weapon: 'sidewinder' });
+  pk(world, 'health', -20, 0.2, 6);
+  pk(world, 'health', 20, 0.2, -6);
+  pk(world, 'health', 0, 0.2, -18);
 
-  // Waypoints: bots patrol the floor (feet-down) — the walls are yours
-  const wps = [];
-  for (let gx = -24; gx <= 24; gx += 8)
-    for (let gz = -24; gz <= 24; gz += 8) {
-      if (Math.abs(gx + 16) < 4 && Math.abs(gz + 12) < 4) continue;   // skip pillar feet
-      if (Math.abs(gx - 17) < 4 && Math.abs(gz - 14) < 4) continue;
-      if (Math.abs(gx + 14) < 4 && Math.abs(gz - 18) < 4) continue;
-      wps.push([gx, 0, gz]);
-    }
-  for (const [x, y, z] of wps) wp(world, x, y, z);
+  // Waypoints: bots patrol the floor through the doorways (feet-down)
+  const blocked = (x, z) => {
+    const p = V(x, 1, z);
+    for (const c of world.colliders)
+      if (p.x > c.min.x - 1.2 && p.x < c.max.x + 1.2 && p.y > c.min.y && p.y < c.max.y &&
+          p.z > c.min.z - 1.2 && p.z < c.max.z + 1.2) return true;
+    return false;
+  };
+  for (let gx = -21; gx <= 21; gx += 7)
+    for (let gz = -21; gz <= 21; gz += 7)
+      if (!blocked(gx, gz)) wp(world, gx, 0, gz);
   mergeStatic(scene, world);
   return world;
 }

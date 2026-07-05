@@ -108,15 +108,9 @@ export class Player {
   }
 
   onMouseMove(dx, dy) {
-    const s = 0.0022;
-    if (this.world.escher) {
-      // yaw = swing forward around your current up; works on any wall
-      this.bodyFwd.applyAxisAngle(this.up, -dx * s).normalize();
-      this.pitch = clamp(this.pitch - dy * s, -1.4, 1.4);
-    } else {
-      this.yaw -= dx * s;
-      this.pitch = clamp(this.pitch - dy * s, -1.5, 1.5);
-    }
+    // plain FPS look everywhere — PRISM RUN uses a free-look camera too
+    this.yaw -= dx * 0.0022;
+    this.pitch = clamp(this.pitch - dy * 0.0022, -1.5, 1.5);
   }
 
   switchWeapon(id) {
@@ -229,9 +223,24 @@ export class Player {
     this.camera.rotateX(this.pitch);
   }
 
-  // ---- PRISM RUN: gravity is -up; run up walls, across ceilings, camera rolls ----
+  /* ---- PRISM RUN: walk on any surface. Gravity pulls toward the nearest
+     surface (you can't fall out); movement is relative to a FREE-LOOK camera
+     that never rolls — your feet stick to walls/ceilings but the view stays a
+     normal FPS camera, so aiming feels identical everywhere. ---- */
   _moveEscher(dt) {
-    const up = this.up, fwd = this.bodyFwd;
+    const up = this.up;
+    // free-look direction from yaw/pitch (world +Y up, exactly like normal maps)
+    const cp = Math.cos(this.pitch);
+    const look = new THREE.Vector3(-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp);
+    // walk relative to where you look, projected onto the surface you're on
+    let fwd = look.clone().addScaledVector(up, -look.dot(up));
+    if (fwd.lengthSq() < 0.04) {  // looking straight at/along the surface: fall back to yaw
+      fwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+      fwd.addScaledVector(up, -fwd.dot(up));
+    }
+    if (fwd.lengthSq() < 0.04 && this._moveFwd) fwd.copy(this._moveFwd);  // still degenerate: reuse
+    fwd.normalize();
+    this._moveFwd = fwd.clone();
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
     const speed = this.world.playerSpeed * (this.speedMult || 1);
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
@@ -240,7 +249,6 @@ export class Player {
     const wl = want.length();
     if (wl > 1) want.multiplyScalar(1 / wl);
 
-    // split velocity: along-up (gravity/jump) stays, planar gets input
     const vUp = this.vel.dot(up);
     const planar = this.vel.clone().addScaledVector(up, -vUp);
     const prevHs = planar.length();
@@ -264,57 +272,39 @@ export class Player {
       this._airJumped = true; this.jumpBuffer = 0; sfx('boing');
     }
 
-    // Airborne: gravity always pulls toward the NEAREST inner face of the cube,
-    // so you curve down onto some surface — you can never fall out into space.
-    // (Skip briefly after a climb so it doesn't fight the corner transition.)
+    // Airborne: gravity pulls toward the NEAREST surface (shell face OR any
+    // interior structure) so you always fall onto something — never the void.
     this._climbLock = Math.max(0, (this._climbLock || 0) - dt);
     if (!this.grounded && this._climbLock <= 0) {
-      const nf = this._nearestFace();
-      if (nf && nf.dot(this.up) < 0.99) this._reorient(nf);
+      const nf = this._nearestSurfaceUp();
+      if (nf && nf.dot(this.up) < 0.99) this.up.copy(nf);
     }
 
     this.grounded = moveCharacterUp(this, this.world, dt, this._nrm);
     if (this.grounded) { this._airJumped = false; this._climb(); }
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
-    this._escherCamera(dt);
+    // Camera: plain free-look, no roll. Eye rides above your feet along `up`.
+    this.camera.up.set(0, 1, 0);
+    this.camera.position.copy(this.pos).addScaledVector(up, this.eyeHeight);
+    this.camera.rotation.set(0, 0, 0);
+    this.camera.rotateY(this.yaw);
+    this.camera.rotateX(this.pitch);
   }
 
-  // Smooth first-person camera for the tilted frame. Physics `up` snaps at a
-  // transition (robust), but the camera SLERPS to the new orientation over a
-  // beat — so the view rolls over instead of flipping instantly.
-  _escherCamera(dt) {
-    const eye = this.pos.clone().addScaledVector(this.up, this.eyeHeight);
-    const rgt = new THREE.Vector3().crossVectors(this.bodyFwd, this.up).normalize();
-    const look = this.bodyFwd.clone().applyAxisAngle(rgt, this.pitch);
-    const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(look), this.up);
-    const targetQ = new THREE.Quaternion().setFromRotationMatrix(m);
-    if (this._camSnap) { this.camQuat.copy(targetQ); this._camSnap = false; }
-    else this.camQuat.slerp(targetQ, 1 - Math.exp(-16 * dt));
-    this.camera.up.copy(this.up);
-    this.camera.position.copy(eye);
-    this.camera.quaternion.copy(this.camQuat);
-  }
-
-  // Inward normal of the cube face the player is closest to (the way "down"
-  // points at any moment — toward the nearest surface, i.e. toward center).
-  _nearestFace() {
-    const c = this.world.cube; if (!c) return null;
-    const p = this.pos, h = c.h;
-    const d = [
-      [p.y - (c.cy - h), 0, 1, 0], [(c.cy + h) - p.y, 0, -1, 0],
-      [p.x - (c.cx - h), 1, 0, 0], [(c.cx + h) - p.x, -1, 0, 0],
-      [p.z - (c.cz - h), 0, 0, 1], [(c.cz + h) - p.z, 0, 0, -1],
-    ].sort((a, b) => a[0] - b[0])[0];
-    return new THREE.Vector3(d[1], d[2], d[3]);
-  }
-
-  // Rotate the whole body frame so up becomes newUp (heading preserved).
-  _reorient(newUp) {
-    const q = new THREE.Quaternion().setFromUnitVectors(this.up, newUp);
-    this.bodyFwd.applyQuaternion(q);
-    this.up.copy(newUp);
-    this.bodyFwd.addScaledVector(this.up, -this.bodyFwd.dot(this.up)).normalize();
+  // Outward normal (as a cardinal "up") of the nearest solid surface to the
+  // player — the direction that is "up" while standing on it.
+  _nearestSurfaceUp() {
+    const p = this.pos, mid = p.clone().addScaledVector(this.up, this.height * 0.5);
+    let best = null, bd = Infinity;
+    for (const c of this.world.colliders) {
+      if (c.type !== 'box') continue;
+      const cx = clamp(mid.x, c.min.x, c.max.x), cy = clamp(mid.y, c.min.y, c.max.y), cz = clamp(mid.z, c.min.z, c.max.z);
+      const dx = mid.x - cx, dy = mid.y - cy, dz = mid.z - cz;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bd && d2 > 1e-4) { bd = d2; best = new THREE.Vector3(dx, dy, dz); }
+    }
+    return best ? cardinal(best) : null;
   }
 
   _solidAt(p) {
@@ -326,19 +316,23 @@ export class Player {
     return false;
   }
 
-  // Concave corner: a wall rises directly ahead → rotate onto it and climb up.
+  // Walk into a wall/column while grounded → climb it. The wall ahead becomes
+  // your floor and your momentum carries you UP it (so you climb even looking
+  // straight at it); a brief lock keeps the nearest-surface gravity from
+  // yanking you back to the floor at the base.
   _climb() {
-    if (this.vel.dot(this.bodyFwd) < 1) return;   // only when actually running forward
+    const dir = this.vel.clone().addScaledVector(this.up, -this.vel.dot(this.up));
+    const sp = dir.length();
+    if (sp < 1) return;                            // only when actually moving
+    dir.multiplyScalar(1 / sp);
     const probe = this.pos.clone()
-      .addScaledVector(this.bodyFwd, this.radius + 0.4)
+      .addScaledVector(dir, this.radius + 0.4)
       .addScaledVector(this.up, 0.6);
     if (!this._solidAt(probe)) return;
     const oldUp = this.up.clone();
-    this.up.copy(cardinal(this.bodyFwd.clone().negate()));  // wall face becomes the floor
-    this.bodyFwd.copy(oldUp);                                // old up = new "up the wall" heading
+    this.up.copy(cardinal(dir.clone().negate()));  // the wall ahead becomes the floor
     this.pos.addScaledVector(this.up, 0.06);
-    this.vel.multiplyScalar(0.9);
-    this._climbLock = 0.25;                                  // let the new face settle
-    sfx('boing');
+    this.vel.copy(oldUp).multiplyScalar(Math.max(sp, 6));   // shoot up the new surface
+    this._climbLock = 0.35;
   }
 }
