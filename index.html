@@ -17,6 +17,8 @@
   /* ---------- HUD ---------- */
   #hud { position:fixed; inset:0; pointer-events:none; display:none; }
   #hud.on { display:block; }
+  #hud.endboard { display:block; }
+  #hud.endboard > :not(#scoreboard) { display:none !important; }
 
   #crosshair { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     width:22px; height:22px; }
@@ -134,6 +136,10 @@
     border:3px solid #ffd23c; background:#c8461e; color:#fff; cursor:pointer; letter-spacing:1px; }
   .bigbtn:hover { background:#e85a28; }
   #againbtn { position:absolute; left:50%; bottom:6%; transform:translateX(-50%); }
+  #endscorehint { position:absolute; left:50%; bottom:2.2%; transform:translateX(-50%);
+    width:min(92vw,760px); text-align:center; font-size:clamp(12px,1.7vw,16px);
+    color:#dfe7ff; font-family:Arial,sans-serif; font-weight:900; letter-spacing:.5px;
+    text-shadow:0 2px 8px #000; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -196,6 +202,7 @@
   <div id="endtitle"></div>
   <div id="endstats"></div>
   <button class="bigbtn" id="againbtn">BACK TO LOBBY</button>
+  <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
 <script type="module" src="./src/main.js?v=2"></script>

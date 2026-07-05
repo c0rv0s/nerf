@@ -1815,8 +1815,8 @@ function buildCity(scene) {
   addJumpPad(scene, world, 62, 0, -14, 32, 0, -7.4, 0x30e0ff);       // street → A4 roof
 
   // Spawns
-  for (const dz of [-56, -20, 0, 20, 56]) world.spawns.blue.push(V(-76, 0.1, dz));
-  for (const dz of [-56, -20, 0, 20, 56]) world.spawns.red.push(V(78, 0.1, dz));
+  for (const dz of [-56, -20, 0, 8, 56]) world.spawns.blue.push(V(-76, 0.1, dz));
+  for (const dz of [-38, -20, 0, 20, 56]) world.spawns.red.push(V(78, 0.1, dz));
   for (const [x, y, z] of [[-58, 12.2, -35], [32, 18.2, 34], [64, 10.2, 30], [0, 0.1, -56],
                            [0, 0.1, 56], [-40, 0.1, 0], [40, 0.1, 0], [-12, 20.2, -38]]) {
     world.spawns.ffa.push(V(x, y, z));

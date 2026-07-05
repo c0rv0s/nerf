@@ -5,7 +5,7 @@ import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWayp
 import { WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
-function buildBotMesh(color) {
+export function buildBotMesh(color) {
   const g = new THREE.Group();
   const skin = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.7, ...extra });
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.8, 4, 10),
