@@ -355,9 +355,16 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
   const group = new THREE.Group();
   scene.add(group);
   const boxes = [];
+  const doors = [];
+  const onboardPowerup = { kind: 'silver', pos: V(0, y + 0.25, 0) };
+  world.pickups.push(onboardPowerup);
   const bodyMat = mat(0xd8e2f0, { tex: 'panel', repeat: [3, 1], roughness: 0.38, metalness: 0.28 });
   const glassMat = mat(0x203650, { emissive: 0x30e0ff, emissiveIntensity: 0.35, transparent: true, opacity: 0.82 });
   const trimMat = mat(0xff40a0, { emissive: 0xff40a0, emissiveIntensity: 1.5, roughness: 0.42 });
+  const doorMat = mat(0x18273c, {
+    emissive: 0x30e0ff, emissiveIntensity: 0.25, roughness: 0.5, metalness: 0.2,
+    transparent: true, opacity: 0.78,
+  });
 
   const addPart = (lx, ly, lz, w, h, d, material, collide = true) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -369,13 +376,31 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
     world.colliders.push(collider);
     boxes.push({ lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider });
   };
+  const addDoor = (lx, ly, lz, w, h, d, openDir) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), doorMat);
+    mesh.position.set(lx, ly, lz);
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+    const collider = { type: 'box', min: V(0, 0, 0), max: V(0, 0, 0) };
+    world.colliders.push(collider);
+    const door = { lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider, mesh, openDir, open: 0 };
+    boxes.push(door);
+    doors.push(door);
+  };
 
   // local +X is the train's forward axis. Side walls have center door gaps.
   addPart(0, -0.22, 0, 15.5, 0.44, 4.8, bodyMat);          // floor, top at y
   addPart(0, 3.05, 0, 15.5, 0.38, 4.8, bodyMat);           // roof
   for (const z of [-2.25, 2.25]) {
-    addPart(-5.25, 1.42, z, 4.8, 2.55, 0.34, bodyMat);
-    addPart(5.25, 1.42, z, 4.8, 2.55, 0.34, bodyMat);
+    for (const x of [-5.25, 5.25]) {
+      addPart(x, 0.55, z, 4.8, 0.8, 0.34, bodyMat);        // lower sill
+      addPart(x, 2.72, z, 4.8, 0.52, 0.34, bodyMat);       // upper rail
+      addPart(x - 2.25, 1.62, z, 0.32, 1.7, 0.34, bodyMat);
+      addPart(x + 2.25, 1.62, z, 0.32, 1.7, 0.34, bodyMat);
+      addPart(x, 1.62, z, 3.8, 1.45, 0.22, glassMat);      // side window
+    }
+    addDoor(-1.25, 1.42, z, 2.5, 2.45, 0.38, -1);
+    addDoor(1.25, 1.42, z, 2.5, 2.45, 0.38, 1);
     addPart(0, 2.25, z, 4.2, 0.35, 0.36, glassMat, false); // glowing door header
   }
   addPart(-7.85, 1.42, 0, 0.34, 2.55, 4.8, bodyMat);
@@ -405,10 +430,16 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
     x: Math.cos(yaw) * x + Math.sin(yaw) * z,
     z: -Math.sin(yaw) * x + Math.cos(yaw) * z,
   });
+  const setOnboardPowerup = (pos) => {
+    const rc = rotate(0, 0, pos.yaw);
+    onboardPowerup.pos.set(pos.x + rc.x, y + 0.25, pos.z + rc.z);
+  };
   const updateColliders = (pos) => {
     const ca = Math.abs(Math.cos(pos.yaw)), sa = Math.abs(Math.sin(pos.yaw));
     for (const b of boxes) {
-      const rc = rotate(b.lx, b.lz, pos.yaw);
+      const lx = b.lx + (b.openDir || 0) * (b.open || 0) * 2.8;
+      if (b.mesh) b.mesh.position.x = lx;
+      const rc = rotate(lx, b.lz, pos.yaw);
       const cx = pos.x + rc.x, cy = y + b.ly, cz = pos.z + rc.z;
       const hx = ca * b.hx + sa * b.hz;
       const hz = sa * b.hx + ca * b.hz;
@@ -435,10 +466,13 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
   };
 
   let prev = sample(0);
+  setOnboardPowerup(prev);
   updateColliders(prev);
   world.anim.push((dt, t, characters) => {
     const cycle = total / speed + dwell;
     const phase = t % cycle;
+    const opening = Math.min(1, phase / 0.45, (dwell - phase) / 0.45);
+    for (const door of doors) door.open = Math.max(0, opening);
     const dist = phase < dwell ? 0 : (phase - dwell) * speed;
     const next = sample(dist);
     for (const ch of characters) {
@@ -446,6 +480,7 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
     }
     group.position.set(next.x, y, next.z);
     group.rotation.y = next.yaw;
+    setOnboardPowerup(next);
     updateColliders(next);
     prev = next;
   });
@@ -1553,9 +1588,45 @@ function buildCity(scene) {
   const tubeLight = new THREE.PointLight(0xffe040, 30, 34);
   tubeLight.position.set(0, -3, -7);
   scene.add(tubeLight);
-  for (const [x, z, w, d] of [[0, -67, 182, 6], [0, 67, 182, 6], [-88, 0, 6, 140], [88, 0, 6, 140]]) {
+  for (const [x, z, w, d] of [[0, -67, 182, 6], [0, 67, 182, 6]]) {
     addBox(scene, world, x, 14, z, w, 40, d, 0x1d2433, { tex: 'neonwall' });
   }
+  // East/west perimeter walls split around the second-floor monorail tunnels.
+  for (const x of [-88, 88]) {
+    addBox(scene, world, x, 14, -37, 6, 40, 60, 0x1d2433, { tex: 'neonwall' });
+    addBox(scene, world, x, 14, 37, 6, 40, 60, 0x1d2433, { tex: 'neonwall' });
+    addBox(scene, world, x, 0.55, 0, 6, 13.1, 12, 0x1d2433, { tex: 'neonwall' });
+    addBox(scene, world, x, 25.3, 0, 6, 17.4, 12, 0x1d2433, { tex: 'neonwall' });
+    addBox(scene, world, x, 7.1, -6.2, 6.4, 2.2, 0.4, 0x30e0ff,
+      { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.8 });
+    addBox(scene, world, x, 7.1, 6.2, 6.4, 2.2, 0.4, 0xff40a0,
+      { collide: false, shadow: false, emissive: 0xff40a0, emissiveIntensity: 1.8 });
+  }
+
+  // MONORAIL: second-floor station, rideable train, and an outer return loop.
+  const railY = 10;
+  addBox(scene, world, 0, railY - 0.55, 0, 178, 0.32, 0.45, 0x171b28,
+    { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 0.7 });
+  addBox(scene, world, 0, railY - 0.95, -2.7, 178, 0.28, 0.35, 0x202638, { collide: false });
+  addBox(scene, world, 0, railY - 0.95, 2.7, 178, 0.28, 0.35, 0x202638, { collide: false });
+  addBox(scene, world, 104, railY - 0.95, 39, 0.35, 0.28, 78, 0x202638, { collide: false });
+  addBox(scene, world, -104, railY - 0.95, 39, 0.35, 0.28, 78, 0x202638, { collide: false });
+  addBox(scene, world, 0, railY - 0.95, 78, 208, 0.28, 0.35, 0x202638, { collide: false });
+  addBox(scene, world, 0, railY - 0.3, 5.3, 30, 0.6, 5, 0x596478, { tex: 'arcade', repeat: [6, 1] });
+  addBox(scene, world, 0, railY - 0.3, -5.3, 30, 0.6, 5, 0x596478, { tex: 'arcade', repeat: [6, 1] });
+  addBox(scene, world, 0, railY + 1.4, 8.05, 28, 0.7, 0.3, 0xffd23c,
+    { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.5 });
+  addBox(scene, world, 0, railY + 1.4, -8.05, 28, 0.7, 0.3, 0xffd23c,
+    { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.5 });
+  addRamp(scene, world, { axis: 'z', minX: 9, maxX: 15, minZ: 8, maxZ: 30, h0: railY, h1: 0, color: 0x596478 });
+  addRamp(scene, world, { axis: 'z', minX: -15, maxX: -9, minZ: -22, maxZ: -8, h0: 0, h1: railY, color: 0x596478 });
+  addBox(scene, world, 38, railY - 0.35, 26, 46, 0.5, 3, 0x596478, { tex: 'panel', repeat: [8, 1] });
+  addBox(scene, world, -37, railY - 0.35, -18, 44, 0.5, 3, 0x51607a, { tex: 'panel', repeat: [8, 1] });
+  addRamp(scene, world, { axis: 'z', minX: -60, maxX: -56, minZ: -34, maxZ: -18, h0: 12, h1: railY, color: 0x51607a });
+  for (const x of [-72, -48, -24, 24, 48, 72]) {
+    addBox(scene, world, x, railY - 4.6, 0, 0.45, 8.8, 0.45, 0x242b3a, { tex: 'panel' });
+  }
+  addMonorailTrain(scene, world, [V(0, 0, 0), V(104, 0, 0), V(104, 0, 78), V(-104, 0, 78), V(-104, 0, 0)], railY, 27, 8);
 
   // Buildings [x, z, size, height, color] — roofs are the playground.
   // (The two −12 towers are hollow now — built below as interiors.)
@@ -1564,9 +1635,20 @@ function buildCity(scene) {
     [32, -35, 26, 28, 0x44586e], [62, -32, 18, 16, 0x60566e],
     [-58, 33, 22, 24, 0x4c5a6a],
     [32, 34, 22, 18, 0x5c4f62], [64, 30, 16, 10, 0x596478],
+    [-78, 24, 12, 16, 0x40506a], [-78, -30, 12, 18, 0x4f5a78],
+    [-38, 58, 14, 14, 0x4a6070], [10, 58, 16, 12, 0x59606f],
+    [78, 48, 12, 22, 0x4d5570], [78, -50, 12, 18, 0x5a4a70],
+    [-36, -60, 14, 10, 0x4a586a], [12, -58, 12, 14, 0x565d76],
   ];
   for (const [bx, bz, s, h, c] of buildings) {
     addBox(scene, world, bx, h / 2, bz, s, h, s, c, { tex: 'neonwall', repeat: [Math.round(s / 4), Math.round(h / 4)] });
+  }
+  // Extra ground-level pathway texture so the city reads less like open asphalt.
+  for (const [x, z, w, d] of [
+    [-78, 0, 8, 128], [78, 0, 8, 128], [-20, 58, 52, 6], [52, 58, 54, 6],
+    [-20, -58, 52, 6], [52, -58, 54, 6], [-58, 0, 5, 54], [32, 0, 5, 54],
+  ]) {
+    addBox(scene, world, x, 0.035, z, w, 0.06, d, 0x6f7888, { collide: false, tex: 'checker', repeat: [Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(d / 4))] });
   }
 
   /* ---- THE GALLERIA (tallest tower, hollow): ground hall → mezzanine (8)
@@ -1775,6 +1857,11 @@ function buildCity(scene) {
   pk(world, 'ammo', -6, 6.7, -32, { weapon: 'scatter' });  // arcade floor 2
   pk(world, 'star', -21, 6.7, -29, { hidden: true });      // arcade floor-2 corner
   pk(world, 'ammo', -66, 0.2, -55, { weapon: 'sidewinder' }); // back alley
+  pk(world, 'speed', 0, 10.2, 5.3);                        // monorail station
+  pk(world, 'health', 0, 10.2, -5.3);                      // monorail station
+  pk(world, 'ammo', 42, 10.2, 26, { weapon: 'pulsar' });   // east station skywalk
+  pk(world, 'ammo', -37, 10.2, -18, { weapon: 'hyper' });  // west station skywalk
+  pk(world, 'star', 90, 10.2, 0, { hidden: true });        // monorail tunnel lip
 
   // Waypoints: auto grid at street level, hand-placed above
   const blocked = (x, z) => {
@@ -1823,6 +1910,13 @@ function buildCity(scene) {
     [-12, 6.5, -32], [-19, 6.5, -30], [-4, 6.5, -41],
     // back alley
     [-70, 0, -55], [-56, 0, -55], [-42, 0, -55], [-58, 0, -53], [-58, 0, -49],
+    // monorail station, access ramps, and new skywalks
+    [0, 10, 0], [0, 10, 5.3], [0, 10, -5.3], [10, 10, 5.3], [-10, 10, -5.3],
+    [12, 2.5, 25], [12, 5.5, 19], [12, 8.4, 12], [12, 10, 7],
+    [-12, 2.5, -19], [-12, 5.5, -15], [-12, 8.4, -11], [-12, 10, -7],
+    [20, 10, 26], [38, 10, 26], [60, 10, 26],
+    [-18, 10, -18], [-37, 10, -18], [-56, 11.2, -22], [-58, 12, -30],
+    [88, 10, 0], [-88, 10, 0],
   ];
   for (const [x, y, z] of wps) wp(world, x, y, z);
   world.manualLinks.push(
@@ -1844,6 +1938,16 @@ function buildCity(scene) {
     [-12, 20, -38, -12, 0, -56, true],
     [64, 10, 30, 64, 0, 57, true],
     [62, 16, -32, 62, 0, -14, true],
+    [12, 0, 30, 12, 2.5, 25, false],       // station ramps
+    [12, 8.4, 12, 12, 10, 7, false],
+    [-12, 0, -22, -12, 2.5, -19, false],
+    [-12, 8.4, -11, -12, 10, -7, false],
+    [12, 10, 7, 0, 10, 5.3, false],
+    [-12, 10, -7, 0, 10, -5.3, false],
+    [0, 10, 5.3, 0, 10, 0, false],
+    [0, 10, -5.3, 0, 10, 0, false],
+    [0, 10, 5.3, 20, 10, 26, false],
+    [0, 10, -5.3, -18, 10, -18, false],
   );
   mergeStatic(scene, world);
   return world;
@@ -2542,7 +2646,7 @@ export const MAPS = [
     desc: 'Giant forest: branch decks at three heights, treetop bridges, pad chains to a golden crown 30m up.',
     thumb: 'linear-gradient(135deg,#14291f,#5d9c46)', build: buildCanopy },
   { id: 'city', name: 'NEON HEIGHTS', emoji: '🌃',
-    desc: 'Night rooftops over a street canyon: a hollow neon galleria with catwalks, an arcade block, back alleys, a subway. Gold on the tallest tower.',
+    desc: 'Night rooftops over a denser street canyon: galleria, arcade block, back alleys, subway, and a rideable second-floor monorail loop. Gold on the tallest tower.',
     thumb: 'linear-gradient(135deg,#0b1026,#5a4a78)', build: buildCity },
   { id: 'sanctum', name: 'THE LABYRINTH', emoji: '🔮',
     desc: 'An obsidian temple: rune rooms off a central obelisk chamber, a crypt below, rooftops above.',

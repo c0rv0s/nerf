@@ -35,9 +35,9 @@ export class Player {
     this.yaw = 0; this.pitch = 0;
     // Escher worlds (PRISM RUN): a full body frame that can tilt onto any wall.
     // up = which way is "down" (negated); fwd = look/run direction in that plane.
-    this.up = new THREE.Vector3(0, 1, 0);
-    this.bodyFwd = new THREE.Vector3(0, 0, -1);
-    this.camQuat = new THREE.Quaternion();   // eased camera orientation (Escher)
+    this.up = new THREE.Vector3(0, 1, 0);        // physics up (snaps at a transition)
+    this.frameUp = new THREE.Vector3(0, 1, 0);   // camera up — eases toward `up` (smooth roll)
+    this.frameFwd = new THREE.Vector3(0, 0, -1); // camera heading in that frame (mouse yaw turns it)
     this._camSnap = true;
     this._nrm = new THREE.Vector3();
     this.djumpTime = 0;        // double-jump powerup timer
@@ -108,25 +108,23 @@ export class Player {
       // spawn oriented to whatever surface you land on (floor, wall or ceiling)
       const nf = this._nearestSurfaceUp();
       if (nf) this.up.copy(nf);
-      // a forward perpendicular to up (aim into the room)
+      // a heading perpendicular to up (aim into the room)
       const ref = Math.abs(this.up.y) > 0.7 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0);
       const f = ref.addScaledVector(this.up, -ref.dot(this.up)).normalize();
       this._moveFwd = f.clone();
-      this.camQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), f, this.up));
+      this.frameUp.copy(this.up);
+      this.frameFwd.copy(f);
+      this.pitch = 0;
     }
   }
 
   onMouseMove(dx, dy) {
     const s = 0.0022;
     if (this.world.escher) {
-      // rotate the camera quaternion directly — instant, 1:1 responsive.
-      // yaw about the surface up (turning stays level with your floor), pitch
-      // about the camera's own right axis, clamped away from straight up/down.
-      this.camQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(this.up, -dx * s));
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camQuat);
-      const test = this.camQuat.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * s));
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(test);
-      if (Math.abs(fwd.dot(this.up)) < 0.985) this.camQuat.copy(test);
+      // yaw turns your heading within the surface plane; pitch is a plain
+      // scalar (can't accumulate roll, so you can always look straight up).
+      this.frameFwd.applyAxisAngle(this.frameUp, -dx * s).normalize();
+      this.pitch = clamp(this.pitch - dy * s, -1.45, 1.45);
     } else {
       this.yaw -= dx * s;
       this.pitch = clamp(this.pitch - dy * s, -1.5, 1.5);
@@ -249,10 +247,9 @@ export class Player {
      normal FPS camera, so aiming feels identical everywhere. ---- */
   _moveEscher(dt) {
     const up = this.up;
-    // walk toward where the camera looks, projected onto the surface you're on
-    let fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camQuat);
-    fwd.addScaledVector(up, -fwd.dot(up));
-    if (fwd.lengthSq() < 0.04 && this._moveFwd) fwd.copy(this._moveFwd);  // looking along up: reuse
+    // walk toward your heading, flattened onto the surface you're on
+    let fwd = this.frameFwd.clone().addScaledVector(up, -this.frameFwd.dot(up));
+    if (fwd.lengthSq() < 0.04 && this._moveFwd) fwd.copy(this._moveFwd);
     fwd.normalize();
     this._moveFwd = fwd.clone();
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
@@ -298,19 +295,23 @@ export class Player {
     if (this.grounded) { this._airJumped = false; this._climb(); }
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
-    // Camera: mouse look was applied 1:1 to camQuat already (responsive). Here
-    // we only smoothly ROLL it so its up eases toward the surface normal — so a
-    // wall becomes your floor visually, without ever lagging the look.
-    const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camQuat);
-    if (camUp.dot(up) < 0.99995) {
-      const qAlign = new THREE.Quaternion().setFromUnitVectors(camUp, up);
-      const t = this._camSnap ? 1 : 1 - Math.exp(-13 * dt);
-      this.camQuat.premultiply(new THREE.Quaternion().slerp(qAlign, t));
+    // Camera: the frame's up eases toward the physics up (smooth roll — a wall
+    // becomes your floor), carrying the heading with it; yaw/pitch sit on top
+    // and stay instant. Pitch is applied fresh each frame, so it never drifts.
+    if (this.frameUp.dot(up) < 0.99999) {
+      const q = new THREE.Quaternion().setFromUnitVectors(this.frameUp, up);
+      const partial = new THREE.Quaternion().slerp(q, this._camSnap ? 1 : 1 - Math.exp(-13 * dt));
+      this.frameUp.applyQuaternion(partial);
+      this.frameFwd.applyQuaternion(partial);
     }
     this._camSnap = false;
-    this.camera.up.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(this.camQuat));
-    this.camera.position.copy(this.pos).addScaledVector(up, this.eyeHeight);
-    this.camera.quaternion.copy(this.camQuat);
+    this.frameFwd.addScaledVector(this.frameUp, -this.frameFwd.dot(this.frameUp)).normalize();
+    const cRight = new THREE.Vector3().crossVectors(this.frameFwd, this.frameUp).normalize();
+    const look = this.frameFwd.clone().applyAxisAngle(cRight, this.pitch);
+    const eye = this.pos.clone().addScaledVector(up, this.eyeHeight);
+    this.camera.up.copy(this.frameUp);
+    this.camera.position.copy(eye);
+    this.camera.lookAt(eye.add(look));
   }
 
   // Outward normal (as a cardinal "up") of the nearest solid surface to the

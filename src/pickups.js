@@ -159,7 +159,10 @@ export class PickupManager {
         continue;
       }
       it.mesh.rotation.y += dt * 2;
+      it.mesh.position.x = it.def.pos.x;
+      it.mesh.position.z = it.def.pos.z;
       it.mesh.position.y = it.def.pos.y + 1.0 + Math.sin(this.t * 2 + it.phase) * 0.18;
+      for (const L of it.lights) L.position.copy(it.mesh.position);
 
       for (const ch of characters) {
         if (!ch.alive) continue;
