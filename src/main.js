@@ -83,6 +83,16 @@ let openingMultiplayer = false;
 let multiplayerVotingTimer = 0;
 const lastSpawnByKey = new Map();
 
+setInterval(() => {
+  if (!G?.multiplayerHost || multiplayer.phase !== 'playing' || G.over) return;
+  const now = performance.now();
+  if (now - (G.lastStepWall || 0) < 120) return;
+  const dt = Math.min(0.1, Math.max(0.016, (now - G.lastT) / 1000));
+  G.lastT = now;
+  G.lastStepWall = now;
+  step(dt);
+}, 100);
+
 document.getElementById('againbtn').addEventListener('click', () => {
   document.getElementById('endscreen').style.display = 'none';
   endMatch(true);
@@ -577,8 +587,8 @@ function applyMultiplayerSnapshot(snap) {
       } else if (state.alive && !G.player.alive) {
         G.player.spawn(new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z));
         G.mpSyncedSelf = true;
-        hud.showRespawn(false);
       }
+      if (state.alive) hud.showRespawn(false);
       if (!state.alive) hud.showRespawn(true, state.respawn || 0);
       continue;
     }
@@ -1524,7 +1534,10 @@ function tick(now) {
   if (!G) return;
   const dt = Math.min(0.05, (now - G.lastT) / 1000);
   G.lastT = now;
-  if (!G.paused) step(dt);
+  if (!G.paused) {
+    G.lastStepWall = now;
+    step(dt);
+  }
   composer.render();
   if (G.pendingMap) { // walked into a lobby gate — swap to that arena
     const map = G.pendingMap;
