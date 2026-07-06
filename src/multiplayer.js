@@ -20,6 +20,8 @@ export class MultiplayerClient extends EventTarget {
     this.name = localStorage.getItem('nerf-mp-name') || '';
     this.pendingInput = null;
     this.lastSnapshot = null;
+    this.snapshotCount = 0;
+    this.lastSnapshotAt = 0;
     this.lastPong = 0;
     this._buildUI();
     window.addEventListener('pagehide', () => this._closeForPageHide());
@@ -85,6 +87,13 @@ export class MultiplayerClient extends EventTarget {
     this.send({ type: 'leaveLobby' });
     this.slotId = null;
     this.lobbyId = null;
+    this.phase = null;
+    this.mapId = null;
+    this.phaseEndsAt = 0;
+    this.isHost = false;
+    this.hostId = null;
+    this.slots = [];
+    this.lastSnapshot = null;
   }
 
   _closeForPageHide() {
@@ -138,6 +147,8 @@ export class MultiplayerClient extends EventTarget {
       this.dispatchEvent(new CustomEvent('remoteInput', { detail: msg }));
     } else if (msg.type === 'snapshot') {
       this.lastSnapshot = msg;
+      this.snapshotCount++;
+      this.lastSnapshotAt = performance.now();
       this.phase = msg.phase;
       this.mapId = msg.mapId;
       this.phaseEndsAt = msg.phaseEndsAt;
@@ -154,8 +165,7 @@ export class MultiplayerClient extends EventTarget {
   }
 
   shouldHost() {
-    const humanSlots = (this.slots || []).filter(s => s.human);
-    return !!this.isHost || this.hostId === this.playerId || humanSlots.length <= 1;
+    return !!this.isHost || (!!this.hostId && this.hostId === this.playerId);
   }
 
   _submitName() {

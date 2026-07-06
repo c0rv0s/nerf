@@ -296,7 +296,7 @@ function startMultiplayerMatch(mapDef) {
   const projectiles = new ProjectileSystem(scene, world, {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
-    onDamage: () => {},
+    onDamage: (target, dmg, attacker) => applyPredictedMultiplayerDamage(target, dmg, attacker),
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
@@ -619,6 +619,13 @@ function applyMultiplayerSnapshot(snap) {
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
   }
+}
+
+function applyPredictedMultiplayerDamage(target, dmg, attacker) {
+  if (!G?.multiplayer || attacker !== G.player || !target || target === G.player) return;
+  hud.hitmarker();
+  spawnDmgMarker(target, dmg);
+  sfx('hit');
 }
 
 function characterNetworkId(ch) {
@@ -1426,13 +1433,24 @@ document.addEventListener('keyup', (e) => {
   if (e.code === 'Tab') G.showBoard = false;
 });
 
+function startCurrentMultiplayerMatch(mapId) {
+  clearTimeout(multiplayerVotingTimer);
+  const map = MAPS.find(m => m.id === mapId) || MAPS[0];
+  if (multiplayer.shouldHost()) {
+    if (!G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
+  } else if (!G?.multiplayer || G.mapDef?.id !== map.id) {
+    startMultiplayerMatch(map);
+  }
+}
+
+multiplayer.addEventListener('joined', (e) => {
+  if (e.detail.phase === 'playing') startCurrentMultiplayerMatch(e.detail.mapId);
+});
+
 multiplayer.addEventListener('phase', (e) => {
   const { phase, mapId, ranked } = e.detail;
   if (phase === 'playing') {
-    clearTimeout(multiplayerVotingTimer);
-    const map = MAPS.find(m => m.id === mapId) || MAPS[0];
-    if (multiplayer.shouldHost()) startMultiplayerHostMatch(map);
-    else startMultiplayerMatch(map);
+    startCurrentMultiplayerMatch(mapId);
   } else if (phase === 'podium' && (G?.multiplayer || G?.multiplayerHost)) {
     clearTimeout(multiplayerVotingTimer);
     G.mpPodiumStartedAt = performance.now();
@@ -1694,6 +1712,9 @@ window.__mp = () => ({
   playerId: multiplayer.playerId,
   slotId: multiplayer.slotId,
   phase: multiplayer.phase,
+  snapshotCount: multiplayer.snapshotCount,
+  lastSnapshotAgeMs: multiplayer.lastSnapshotAt ? Math.round(performance.now() - multiplayer.lastSnapshotAt) : null,
+  slots: multiplayer.slots,
   path: G?.multiplayerHost ? 'host-real-match' : G?.multiplayer ? 'client-renderer' : G?.atrium ? 'atrium' : 'singleplayer',
   characters: G?.characters?.map(c => ({ name: c.name, id: c.id, bot: !c.isPlayer && !c.remoteHuman, human: !!(c.isPlayer || c.remoteHuman) })) || [],
 });
