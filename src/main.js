@@ -79,6 +79,7 @@ let G = null; // current match state (or the lobby)
 let rafId = 0;
 let selectedMode = 'ffa';
 let openingMultiplayer = false;
+const lastSpawnByKey = new Map();
 
 document.getElementById('againbtn').addEventListener('click', () => {
   document.getElementById('endscreen').style.display = 'none';
@@ -92,6 +93,12 @@ function teardown() {
   G.projectiles.clear();
   G.pickups.clear();
   G.fxPool.clear();
+  if (G.mpTracers) {
+    for (const tr of G.mpTracers) {
+      tr.geo.dispose();
+      tr.mat.dispose();
+    }
+  }
   camera.remove(G.player.viewmodel);
   hud.els.hud.classList.remove('endboard');
   hud.els.board.style.display = 'none';
@@ -233,7 +240,9 @@ function startMatch(mapDef, mode = 'ffa') {
     lastT: performance.now(),
   };
 
+  G.spawnBatchUsed = new Map();
   for (const ch of characters) respawnCharacter(ch, true);
+  G.spawnBatchUsed = null;
 
   // Pre-warm every shader (incl. hidden viewmodels, powerup skins, projectile
   // and puff materials) so nothing compiles mid-match and causes a hitch.
@@ -294,6 +303,7 @@ function startMultiplayerMatch(mapDef) {
     multiplayer: true, atrium: false, mapDef, mode: 'ffa', scene, world, player, characters,
     projectiles, pickups, fxPool,
     remoteSlots: new Map(),
+    mpTracers: [],
     scores: { blue: 0, red: 0 },
     timeLeft: Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000),
     respawnTimers: new Map(),
@@ -302,6 +312,7 @@ function startMultiplayerMatch(mapDef) {
     showBoard: false,
     lastT: performance.now(),
     mpSendT: 0,
+    mpSyncedSelf: false,
   };
 
   respawnCharacter(player, true);
@@ -355,6 +366,10 @@ function applyMultiplayerSnapshot(snap) {
   for (const state of snap.players || []) {
     seen.add(state.id);
     if (state.id === multiplayer.slotId) {
+      if (state.alive && !G.mpSyncedSelf) {
+        G.player.spawn(new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z));
+        G.mpSyncedSelf = true;
+      }
       G.player.name = state.name;
       G.player.color = state.color || G.player.color;
       G.player.score = state.score || 0;
@@ -364,11 +379,13 @@ function applyMultiplayerSnapshot(snap) {
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
         G.player.alive = false;
+        G.mpSyncedSelf = false;
         hud.showRespawn(true, state.respawn || RESPAWN_TIME);
         sfx('death');
       } else if (state.alive && !G.player.alive) {
-        G.player.alive = true;
-        respawnCharacter(G.player);
+        G.player.spawn(new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z));
+        G.mpSyncedSelf = true;
+        hud.showRespawn(false);
       }
       if (!state.alive) hud.showRespawn(true, state.respawn || 0);
       continue;
@@ -396,7 +413,12 @@ function applyMultiplayerSnapshot(snap) {
     if (idx >= 0) G.characters.splice(idx, 1);
   }
   for (const ev of snap.events || []) {
-    if (ev.type === 'damage' && ev.attackerId === multiplayer.slotId) hud.hitmarker();
+    if (ev.type === 'shot') spawnMultiplayerTracer(ev);
+    if (ev.type === 'damage' && ev.attackerId === multiplayer.slotId) {
+      hud.hitmarker();
+      const target = G.characters.find(c => c.id === ev.targetId);
+      if (target) spawnDmgMarker(target, ev.amount || 0);
+    }
     if (ev.type === 'kill') {
       const killer = G.characters.find(c => c.team === ev.killerId || c.id === ev.killerId) ||
         (ev.killerId === multiplayer.slotId ? G.player : { name: 'The Void', color: '#8899aa' });
@@ -415,6 +437,40 @@ function updateRemoteSlots(dt) {
     remote.pos.lerp(remote.targetPos, a);
     remote.mesh.position.copy(remote.pos);
     remote.mesh.rotation.y = remote.yaw || 0;
+  }
+}
+
+function spawnMultiplayerTracer(ev) {
+  if (!G?.multiplayer || !ev.from || !ev.to) return;
+  const from = new THREE.Vector3(ev.from.x, ev.from.y, ev.from.z);
+  const to = new THREE.Vector3(ev.to.x, ev.to.y, ev.to.z);
+  if (from.distanceToSquared(to) < 0.01) return;
+  const color = parseInt(String(ev.color || '#ffd23c').replace('#', ''), 16) || 0xffd23c;
+  const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+  const mat = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity: ev.hit ? 0.95 : 0.55,
+  });
+  const line = new THREE.Line(geo, mat);
+  G.scene.add(line);
+  G.mpTracers.push({ line, mat, geo, t: 0, life: ev.hit ? 0.16 : 0.1 });
+  G.fxPool.spawnPuff(from, color, 0.28);
+  if (ev.hit) G.fxPool.spawnPuff(to, color, 0.5);
+}
+
+function updateMultiplayerTracers(dt) {
+  if (!G?.mpTracers) return;
+  for (let i = G.mpTracers.length - 1; i >= 0; i--) {
+    const tr = G.mpTracers[i];
+    tr.t += dt;
+    tr.mat.opacity = Math.max(0, 1 - tr.t / tr.life);
+    if (tr.t >= tr.life) {
+      G.scene.remove(tr.line);
+      tr.geo.dispose();
+      tr.mat.dispose();
+      G.mpTracers.splice(i, 1);
+    }
   }
 }
 
@@ -469,35 +525,56 @@ function spawnIsClear(pos, ch) {
 }
 
 function safeSpawnPoint(base, ch) {
+  if (spawnHasSupport(base, ch) && spawnIsClear(base, ch)) return base.clone();
   const jittered = base.clone();
-  jittered.x += rand(-1, 1);
-  jittered.z += rand(-1, 1);
+  jittered.x += rand(-0.75, 0.75);
+  jittered.z += rand(-0.75, 0.75);
   if (spawnHasSupport(jittered, ch) && spawnIsClear(jittered, ch)) return jittered;
-  return spawnHasSupport(base, ch) && spawnIsClear(base, ch) ? base.clone() : null;
+  return null;
+}
+
+function spawnKey(ch) {
+  const map = G.mapDef?.id || 'atrium';
+  const identity = ch.isPlayer ? 'human' : ch.name || ch.team || 'bot';
+  return `${map}:${G.mode}:${identity}`;
+}
+
+function pickSpawnPoint(spawns, ch, poolKey) {
+  const key = spawnKey(ch);
+  const last = ch._lastSpawnIndex ?? lastSpawnByKey.get(key);
+  const indices = spawns.map((_, i) => i);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  const used = G.spawnBatchUsed?.get(poolKey);
+  let ordered = indices.length > 1 ? indices.filter(i => i !== last).concat(indices.filter(i => i === last)) : indices;
+  if (used && used.size < spawns.length) {
+    const unused = ordered.filter(i => !used.has(i));
+    if (unused.length) ordered = unused;
+  }
+  for (const idx of ordered) {
+    const p = safeSpawnPoint(spawns[idx], ch);
+    if (!p) continue;
+    ch._lastSpawnIndex = idx;
+    lastSpawnByKey.set(key, idx);
+    used?.add(idx);
+    return p;
+  }
+  const fallbackIdx = ordered[0] ?? 0;
+  ch._lastSpawnIndex = fallbackIdx;
+  lastSpawnByKey.set(key, fallbackIdx);
+  used?.add(fallbackIdx);
+  return spawns[fallbackIdx].clone();
 }
 
 function respawnCharacter(ch, initial = false) {
   // the player can spawn on any surface (PRISM RUN); bots stay on the floor
   const spawns = (ch.isPlayer && G.world.playerSpawns) ? G.world.playerSpawns
     : G.mode === 'tdm' ? G.world.spawns[ch.team] : G.world.spawnsAll;
-  // prefer spawn points away from living enemies — but pick randomly among the
-  // safest few so you don't respawn in the same spot every time
-  const scored = spawns.map(s => {
-    let nearest = Infinity;
-    for (const e of G.characters) {
-      if (e.team === ch.team || !e.alive) continue;
-      nearest = Math.min(nearest, e.pos.distanceToSquared(s));
-    }
-    return { s, nearest };
-  }).sort((a, b) => b.nearest - a.nearest);
-  const candidates = scored.slice(0, Math.max(3, Math.floor(scored.length / 3))).map(x => x.s);
-  let p = null;
-  while (!p && candidates.length) {
-    const i = Math.floor(Math.random() * candidates.length);
-    p = safeSpawnPoint(candidates[i], ch);
-    candidates.splice(i, 1);
-  }
-  p ||= scored[0].s.clone(); // last resort: preserve old behavior if a map has exotic spawn geometry
+  const poolKey = G.mode === 'tdm' ? `team:${ch.team}` : 'all';
+  if (G.spawnBatchUsed && !G.spawnBatchUsed.has(poolKey)) G.spawnBatchUsed.set(poolKey, new Set());
+  const p = pickSpawnPoint(spawns, ch, poolKey);
   ch.spawn(p);
   if (ch.isPlayer && !initial) hud.showRespawn(false);
 }
@@ -1286,6 +1363,7 @@ function stepMultiplayer(dt) {
   G.fxPool.update(dt);
   updateDmgMarkers(dt);
   updateRemoteSlots(dt);
+  updateMultiplayerTracers(dt);
   G.mpSendT -= dt;
   if (G.mpSendT <= 0) {
     G.mpSendT = 1 / 30;

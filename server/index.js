@@ -22,7 +22,7 @@ const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
   { id: 'asteroids', name: 'ASTEROID BELT', bounds: 78, spawns: [[-45, 8, -20], [45, 8, 20], [-30, 8, 35], [30, 8, -35], [0, 8, -45], [0, 8, 45], [-55, 8, 0], [55, 8, 0]] },
-  { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-40, 10, -40], [40, 10, 40], [0, 8, -7], [0, 0.1, -62], [0, 0.1, 62], [-40, 20, 40], [40, 20, -40], [-30, 0.1, 0]] },
+  { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-48, 0.1, -48], [48, 0.1, 48], [-48, 0.1, 48], [48, 0.1, -48], [0, 0.1, -62], [0, 0.1, 62], [-62, 0.1, 0], [62, 0.1, 0]] },
   { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },
   { id: 'prism', name: 'PRISM RUN', bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
@@ -185,8 +185,6 @@ function handleMessage(conn, msg) {
       firing: !!msg.firing,
       weapon: String(msg.weapon || slot.weapon || 'blaster'),
       pos: sanitizePos(msg.pos, lobby.map),
-      hp: Number.isFinite(msg.hp) ? Math.max(0, Math.min(100, msg.hp)) : slot.hp,
-      alive: msg.alive !== false,
     };
     applyHumanInput(slot, lobby);
   } else if (msg.type === 'leaveLobby') {
@@ -249,14 +247,16 @@ function createLobby() {
   return lobby;
 }
 
-function makeBotSlot(i, map) {
+function makeBotSlot(i, map, previousSpawnIndex = null) {
+  const spawn = chooseSpawn(map, previousSpawnIndex);
   const s = {
     id: `slot-${i}`,
     human: false,
     connId: null,
     name: BOT_NAMES[i % BOT_NAMES.length],
     color: COLORS[i % COLORS.length],
-    pos: spawnFor(i, map),
+    pos: spawn.pos,
+    lastSpawnIndex: spawn.index,
     yaw: Math.random() * Math.PI * 2,
     pitch: 0,
     hp: 100,
@@ -274,11 +274,13 @@ function makeBotSlot(i, map) {
 }
 
 function resetSlotForHuman(slot, conn, lobby) {
+  const spawn = chooseSpawn(lobby.map, slot.lastSpawnIndex);
   Object.assign(slot, {
     human: true,
     connId: conn.id,
     name: conn.name,
-    pos: spawnFor(Number(slot.id.split('-')[1]) || 0, lobby.map),
+    pos: spawn.pos,
+    lastSpawnIndex: spawn.index,
     yaw: 0,
     pitch: 0,
     hp: 100,
@@ -295,7 +297,7 @@ function resetSlotForHuman(slot, conn, lobby) {
 
 function convertToBot(slot, lobby) {
   const idx = Number(slot.id.split('-')[1]) || 0;
-  Object.assign(slot, makeBotSlot(idx, lobby.map), { id: slot.id, color: slot.color });
+  Object.assign(slot, makeBotSlot(idx, lobby.map, slot.lastSpawnIndex), { id: slot.id, color: slot.color });
 }
 
 function joinLobby(conn, lobbyId) {
@@ -389,14 +391,18 @@ function setPhase(lobby, phase) {
     lobby.votes.clear();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
-      if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map), { id: s.id, color: s.color });
+      if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map, s.lastSpawnIndex), { id: s.id, color: s.color });
     }
   } else if (phase === 'playing') {
     lobby.map = chooseVotedMap(lobby);
     lobby.phaseEndsAt = now + MATCH_TIME * 1000;
+    const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
-      s.pos = spawnFor(i, lobby.map);
+      const spawn = chooseSpawn(lobby.map, s.lastSpawnIndex, usedSpawns);
+      usedSpawns.add(spawn.index);
+      s.pos = spawn.pos;
+      s.lastSpawnIndex = spawn.index;
       s.hp = 100;
       s.alive = true;
       s.respawn = 0;
@@ -412,9 +418,14 @@ function setPhase(lobby, phase) {
   broadcastLobbyMeta(lobby);
 }
 
-function spawnFor(i, map) {
-  const p = map.spawns[i % map.spawns.length];
-  return { x: p[0], y: p[1], z: p[2] };
+function chooseSpawn(map, previousIndex = null, usedIndices = null) {
+  const spawns = map.spawns;
+  let candidates = spawns.map((_, i) => i);
+  if (usedIndices && usedIndices.size < spawns.length) candidates = candidates.filter(i => !usedIndices.has(i));
+  if (spawns.length > 1 && candidates.length > 1) candidates = candidates.filter(i => i !== previousIndex);
+  const index = candidates[Math.floor(Math.random() * candidates.length)] ?? 0;
+  const p = spawns[index];
+  return { index, pos: { x: p[0], y: p[1], z: p[2] } };
 }
 
 function tickLobby(lobby) {
@@ -434,7 +445,9 @@ function tickLobby(lobby) {
       if (slot.respawn <= 0) {
         slot.alive = true;
         slot.hp = 100;
-        slot.pos = spawnFor(Number(slot.id.split('-')[1]) || 0, lobby.map);
+        const spawn = chooseSpawn(lobby.map, slot.lastSpawnIndex);
+        slot.pos = spawn.pos;
+        slot.lastSpawnIndex = spawn.index;
       }
       continue;
     }
@@ -451,7 +464,6 @@ function applyHumanInput(slot, lobby) {
   slot.yaw = slot.input.yaw;
   slot.pitch = slot.input.pitch;
   slot.weapon = slot.input.weapon;
-  if (slot.input.hp <= 0 && slot.alive) killSlot(slot, slot, lobby);
 }
 
 function updateBot(slot, lobby, dt) {
@@ -477,11 +489,29 @@ function tryFire(attacker, lobby) {
   if (attacker.cooldown > 0) return;
   attacker.cooldown = attacker.human ? 0.24 : 0.55 + Math.random() * 0.35;
   const target = bestShotTarget(attacker, lobby);
+  const shot = buildShot(attacker, target, lobby.map);
+  lobby.events.push({ type: 'shot', attackerId: attacker.id, targetId: target?.id || null, ...shot });
   if (!target) return;
   const dmg = attacker.human ? 12 : 9;
   target.hp -= dmg;
   lobby.events.push({ type: 'damage', attackerId: attacker.id, targetId: target.id, amount: dmg });
   if (target.hp <= 0) killSlot(target, attacker, lobby);
+}
+
+function buildShot(attacker, target, map) {
+  const from = { x: attacker.pos.x, y: attacker.pos.y + 1.35, z: attacker.pos.z };
+  let to;
+  if (target) {
+    to = { x: target.pos.x, y: target.pos.y + 1.1, z: target.pos.z };
+  } else {
+    const range = Math.min(52, map.bounds * 1.2);
+    to = {
+      x: from.x + Math.sin(attacker.yaw) * range,
+      y: from.y + Math.sin(attacker.pitch || 0) * range,
+      z: from.z + Math.cos(attacker.yaw) * range,
+    };
+  }
+  return { from, to, color: attacker.color || '#ffd23c', hit: !!target };
 }
 
 function bestShotTarget(attacker, lobby) {
@@ -495,7 +525,7 @@ function bestShotTarget(attacker, lobby) {
     if (d > 48) continue;
     const yaw = Math.atan2(dx, dz);
     const angle = Math.abs(angleDiff(yaw, attacker.yaw));
-    const cone = attacker.human ? 0.18 : 0.42;
+    const cone = attacker.human ? 0.28 : 0.38;
     if (angle > cone) continue;
     const score = d + angle * 120;
     if (score < bestScore) {

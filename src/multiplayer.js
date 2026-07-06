@@ -69,8 +69,6 @@ export class MultiplayerClient extends EventTarget {
       pitch: player.pitch || 0,
       firing: !!player.firing,
       weapon: player.weapon || 'blaster',
-      hp: player.hp,
-      alive: player.alive,
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
     });
   }

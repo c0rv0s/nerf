@@ -1452,7 +1452,7 @@ function buildCanopy(scene) {
   // Spawns
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.blue.push(V(-62, 0.1, dz));
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.red.push(V(62, 0.1, dz));
-  for (const [x, y, z] of [[-40, 10.2, -40], [40, 10.2, 40], [0, 8.2, -7], [0, 0.1, -62], [0, 0.1, 62],
+  for (const [x, y, z] of [[-40, 10.2, -40], [40, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25],
                            [-40, 20.2, 40], [40, 20.2, -40], [-30, 0.1, 0]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
