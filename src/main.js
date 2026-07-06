@@ -1510,6 +1510,7 @@ document.addEventListener('pointerlockchange', () => {
     // pause menu extras (matches only): live scoreboard + quit
     const showPause = !locked && !G.atrium && !multiplayerPanelOpen;
     quitBtn.style.display = showPause ? '' : 'none';
+    quitBtn.textContent = multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM';
     const board = hud.els.board;
     board.style.display = showPause ? 'block' : 'none';
     board.style.top = showPause ? '27%' : '';    // scoreboard on top, resume mid, quit bottom
@@ -1531,9 +1532,10 @@ quitBtn.addEventListener('click', (e) => {
   multiplayer.closeOverlay?.();
   hud.els.board.style.display = 'none';
   document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
-  if (G?.multiplayer || G?.multiplayerHost) multiplayer.leave();
+  const exitingMultiplayer = !!(G?.multiplayer || G?.multiplayerHost);
+  if (exitingMultiplayer) multiplayer.leave();
   document.exitPointerLock?.();
-  endMatch(true);                    // back to the lobby
+  endMatch(true);                    // back to the atrium
 });
 
 document.addEventListener('mousemove', (e) => {
