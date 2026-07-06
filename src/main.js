@@ -316,6 +316,7 @@ function startMultiplayerMatch(mapDef) {
     multiplayer: true, atrium: false, mapDef, mode: 'ffa', scene, world, player, characters,
     projectiles, pickups, fxPool,
     remoteSlots: new Map(),
+    mpDropIds: new Set(),
     mpTracers: [],
     scores: { blue: 0, red: 0 },
     timeLeft: Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000),
@@ -568,8 +569,13 @@ function applyMultiplayerSnapshot(snap) {
   for (const state of snap.players || []) {
     seen.add(state.id);
     if (state.id === multiplayer.slotId) {
+      const statePos = new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z);
       if (state.alive && !G.mpSyncedSelf) {
-        G.player.spawn(new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z));
+        if (multiplayerPositionIsVoid(statePos, G.player)) {
+          beginMultiplayerLocalRespawn();
+          continue;
+        }
+        G.player.spawn(statePos);
         G.mpSyncedSelf = true;
       }
       G.player.name = state.name;
@@ -585,7 +591,11 @@ function applyMultiplayerSnapshot(snap) {
         hud.showRespawn(true, state.respawn || RESPAWN_TIME);
         sfx('death');
       } else if (state.alive && !G.player.alive) {
-        G.player.spawn(new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z));
+        if (multiplayerPositionIsVoid(statePos, G.player)) {
+          hud.showRespawn(true, RESPAWN_TIME);
+          continue;
+        }
+        G.player.spawn(statePos);
         G.mpSyncedSelf = true;
       }
       if (state.alive) hud.showRespawn(false);
@@ -632,6 +642,7 @@ function applyMultiplayerSnapshot(snap) {
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
   }
+  reconcileMultiplayerDrops(snap.drops || []);
 }
 
 function applyPredictedMultiplayerDamage(target, dmg, attacker) {
@@ -639,6 +650,43 @@ function applyPredictedMultiplayerDamage(target, dmg, attacker) {
   hud.hitmarker();
   spawnDmgMarker(target, dmg);
   sfx('hit');
+}
+
+function dropSnapshotId(drop) {
+  if (drop.id) return String(drop.id);
+  const p = drop.pos || {};
+  return `${drop.kind}:${drop.weapon || ''}:${drop.amount || 0}:${Math.round((p.x || 0) * 10)}:${Math.round((p.y || 0) * 10)}:${Math.round((p.z || 0) * 10)}`;
+}
+
+function reconcileMultiplayerDrops(drops) {
+  if (!G?.multiplayer || !G.pickups) return;
+  G.mpDropIds ||= new Set();
+  const live = new Set();
+  for (const drop of drops) {
+    if (!drop?.pos) continue;
+    const id = dropSnapshotId(drop);
+    live.add(id);
+    const hasItem = G.pickups.items.some(item => item.mpDropId === id);
+    if (G.mpDropIds.has(id) && hasItem) continue;
+    const def = {
+      id,
+      kind: drop.kind,
+      amount: drop.amount,
+      weapon: drop.weapon,
+      pos: new THREE.Vector3(drop.pos.x, drop.pos.y, drop.pos.z),
+    };
+    G.pickups.addDrop(def);
+    const item = G.pickups.items[G.pickups.items.length - 1];
+    item.mpDropId = id;
+    G.mpDropIds.add(id);
+  }
+  for (let i = G.pickups.items.length - 1; i >= 0; i--) {
+    const item = G.pickups.items[i];
+    if (!item.mpDropId || live.has(item.mpDropId)) continue;
+    G.scene.remove(item.mesh);
+    G.pickups.items.splice(i, 1);
+    G.mpDropIds.delete(item.mpDropId);
+  }
 }
 
 function characterNetworkId(ch) {
@@ -1262,7 +1310,7 @@ function dropPoints(victim) {
   const greater = G.characters.filter(c => c.score > victim.score).length;
   const amount = victim.score === 0 ? 250
     : greater === 0 ? 1000 : greater === 1 ? 750 : greater === 2 ? 500 : 250;
-  G.pickups.addDrop({ kind: 'points', amount, pos: victim.pos.clone() });
+  G.pickups.addDrop({ id: nextDropId('points'), kind: 'points', amount, pos: victim.pos.clone() });
 }
 
 // The victim's active weapon (with its remaining ammo) falls where they died.
@@ -1270,9 +1318,14 @@ function dropWeapon(ch) {
   if (!ch.ammo || ch.weapon === 'blaster' || !(ch.ammo[ch.weapon] > 0)) return;
   if (ch.pos.y < G.world.killY + 10) return; // falling into the void takes it with you
   G.pickups.addDrop({
-    kind: 'drop', weapon: ch.weapon, amount: ch.ammo[ch.weapon],
+    id: nextDropId('drop'), kind: 'drop', weapon: ch.weapon, amount: ch.ammo[ch.weapon],
     pos: ch.pos.clone(),
   });
+}
+
+function nextDropId(kind) {
+  G.dropSeq = (G.dropSeq || 0) + 1;
+  return `${multiplayer.lobbyId || 'local'}:${kind}:${G.dropSeq}`;
 }
 
 function checkEnd() {
@@ -1407,11 +1460,16 @@ document.addEventListener('pointerlockchange', () => {
 });
 clickcatch.addEventListener('click', requestPointerLock);
 quitBtn.addEventListener('click', (e) => {
+  e.preventDefault();
   e.stopPropagation();               // don't let the overlay re-lock the pointer
+  e.stopImmediatePropagation();
   quitBtn.style.display = 'none';
+  clickcatch.style.display = 'none';
+  multiplayer.closeOverlay?.();
   hud.els.board.style.display = 'none';
   document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
   if (G?.multiplayer || G?.multiplayerHost) multiplayer.leave();
+  document.exitPointerLock?.();
   endMatch(true);                    // back to the lobby
 });
 
@@ -1692,6 +1750,19 @@ function serializeCharacter(ch, i) {
   };
 }
 
+function serializeDrops() {
+  if (!G?.pickups) return [];
+  return G.pickups.items
+    .filter(item => item.temporary && item.active && item.def?.pos)
+    .map(item => ({
+      id: item.def.id || dropSnapshotId(item.def),
+      kind: item.def.kind,
+      weapon: item.def.weapon,
+      amount: item.def.amount || 0,
+      pos: { x: item.def.pos.x, y: item.def.pos.y, z: item.def.pos.z },
+    }));
+}
+
 function sendHostSnapshot(dt) {
   if (!G?.multiplayerHost || multiplayer.phase !== 'playing') return;
   G.mpSnapshotT = (G.mpSnapshotT || 0) - dt;
@@ -1702,6 +1773,7 @@ function sendHostSnapshot(dt) {
     players,
     ranked: players.slice().sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths),
     events: G.mpEvents?.splice(0, 32) || [],
+    drops: serializeDrops(),
   });
 }
 
@@ -1711,6 +1783,7 @@ function stepMultiplayer(dt) {
   G.world.update?.(dt, G.characters);
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);
+  handleMultiplayerLocalVoid(dt);
   G.projectiles.update(dt, G.characters);
   G.pickups.update(dt, [G.player]);
   G.fxPool.update(dt);
@@ -1727,6 +1800,47 @@ function stepMultiplayer(dt) {
     player: G.player, mode: 'ffa', scores: G.scores,
     characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,
   });
+}
+
+function multiplayerPositionIsVoid(pos, ch) {
+  const kc = G.world.killCenter, kr = G.world.killRadius;
+  const drifted = kc && pos.distanceToSquared(kc) > kr * kr;
+  if (pos.y < G.world.killY || pos.y > (G.world.killYTop ?? Infinity) || drifted) return true;
+  return pos.y < G.world.killY + 50 && !spawnHasSupport(pos, ch);
+}
+
+function beginMultiplayerLocalRespawn() {
+  if (!G?.multiplayer) return;
+  const existingTimer = G.respawnTimers.get(G.player);
+  G.player.hp = 0;
+  G.player.alive = false;
+  G.mpSyncedSelf = false;
+  if (existingTimer == null) {
+    hud.damageFlash();
+    hud.showRespawn(true, RESPAWN_TIME);
+    sfx('death');
+    G.respawnTimers.set(G.player, RESPAWN_TIME);
+  } else {
+    hud.showRespawn(true, existingTimer);
+  }
+}
+
+function handleMultiplayerLocalVoid(dt) {
+  if (G.player.alive && multiplayerPositionIsVoid(G.player.pos, G.player)) {
+    beginMultiplayerLocalRespawn();
+  }
+  const timer = G.respawnTimers.get(G.player);
+  if (timer == null) return;
+  const left = timer - dt;
+  if (left <= 0) {
+    G.respawnTimers.delete(G.player);
+    respawnCharacter(G.player);
+    G.mpSyncedSelf = true;
+    hud.showRespawn(false);
+  } else {
+    G.respawnTimers.set(G.player, left);
+    hud.showRespawn(true, left);
+  }
 }
 
 // Debug handles: inspect state / fast-forward the sim headlessly

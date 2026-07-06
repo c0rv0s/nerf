@@ -233,7 +233,7 @@ function sanitizePos(pos, map) {
   if (!pos || typeof pos !== 'object') return null;
   return {
     x: Math.max(-b, Math.min(b, finite(pos.x, 0))),
-    y: Math.max(-20, Math.min(80, finite(pos.y, 0))),
+    y: Math.max(-200, Math.min(260, finite(pos.y, 0))),
     z: Math.max(-b, Math.min(b, finite(pos.z, 0))),
   };
 }
@@ -578,6 +578,7 @@ function sanitizeHostSnapshot(snapshot, lobby) {
     human: !!r.human,
   })) : sanitizedPlayers;
   const events = Array.isArray(snapshot.events) ? snapshot.events.slice(0, 32).map(sanitizeEvent).filter(Boolean) : [];
+  const drops = Array.isArray(snapshot.drops) ? snapshot.drops.slice(0, 32).map(d => sanitizeDrop(d, lobby)).filter(Boolean) : [];
   return {
     tick: Date.now(),
     phase: lobby.phase,
@@ -586,7 +587,25 @@ function sanitizeHostSnapshot(snapshot, lobby) {
     ranked,
     players: sanitizedPlayers,
     events,
+    drops,
   };
+}
+
+function sanitizeDrop(drop, lobby) {
+  if (!drop || typeof drop !== 'object') return null;
+  const kind = String(drop.kind || '');
+  if (!['points', 'drop'].includes(kind)) return null;
+  const pos = sanitizePos(drop.pos, lobby.map);
+  if (!pos) return null;
+  const id = String(drop.id || `${kind}:${Math.round(pos.x * 10)}:${Math.round(pos.y * 10)}:${Math.round(pos.z * 10)}`).slice(0, 64);
+  const out = {
+    id,
+    kind,
+    pos,
+    amount: Math.max(0, Math.min(5000, Math.floor(finite(drop.amount, kind === 'points' ? 250 : 0)))),
+  };
+  if (kind === 'drop') out.weapon = String(drop.weapon || 'blaster').slice(0, 24);
+  return out;
 }
 
 function mergeHostSnapshot(lobby, snap) {
