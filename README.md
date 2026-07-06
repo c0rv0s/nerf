@@ -1,17 +1,39 @@
 # NERF ARENA BLAST — Web Homage
 
 A browser tribute to *Nerf Arena Blast* (1999): first-person team deathmatch
-against NPC bots, built with Three.js. No build step, no dependencies to
-install — plain ES modules with Three.js loaded from a CDN.
+against NPC bots, built with Three.js. Solo play is still plain ES modules
+with Three.js loaded from a CDN; multiplayer runs through the included Node
+WebSocket server.
 
 ## Run it
 
-Any static file server works (ES modules can't load from `file://`):
+For single-player only, any static file server works (ES modules can't load
+from `file://`):
 
 ```sh
 python3 -m http.server 8123
 # then open http://localhost:8123
 ```
+
+For multiplayer or Railway-style local testing, run the all-in-one Node server:
+
+```sh
+npm start
+# then open http://localhost:3000
+```
+
+The Node server serves the same static files and hosts `/ws` for the continuous
+multiplayer lobbies. Railway uses `npm start` via `railway.json`.
+
+## Multiplayer
+
+- Enter through the **MULTIPLAYER** portal in the atrium.
+- The first human creates a lobby; empty lobbies wind down automatically.
+- Up to five lobbies are supported, with eight competitor slots per lobby.
+- Humans replace bots when they join. If a human joins mid-match, their score
+  starts at 0.
+- Each cycle is 10 seconds of map voting, 5 minutes of play, then a 6-second
+  winner podium before the next vote.
 
 ## The game
 

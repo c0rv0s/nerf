@@ -2542,6 +2542,26 @@ export function buildAtrium(scene) {
   fLight.position.set(0, 3, -28);
   scene.add(fLight);
 
+  // multiplayer portal: central always-on lobby entry
+  addBox(scene, world, 0, 0.18, 10, 6.4, 0.36, 6.4, 0x141a38, { tex: 'panel' });
+  addBox(scene, world, 0, 0.46, 10, 5.2, 0.16, 5.2, 0xffd23c, {
+    collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.1,
+  });
+  addBox(scene, world, -3.2, 2.4, 10, 0.35, 4.8, 0.35, 0x30e0ff, {
+    collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.2,
+  });
+  addBox(scene, world, 3.2, 2.4, 10, 0.35, 4.8, 0.35, 0xff40a0, {
+    collide: false, shadow: false, emissive: 0xff40a0, emissiveIntensity: 1.2,
+  });
+  addBox(scene, world, 0, 4.9, 10, 6.8, 0.35, 0.35, 0xffd23c, {
+    collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.2,
+  });
+  makeSign(scene, 0, 6.2, 13.4, 12, '#ffd23c', 'MULTIPLAYER');
+  world.multiplayerPortal = { x: 0, z: 10 };
+  const mpLight = new THREE.PointLight(0xffd23c, 24, 24);
+  mpLight.position.set(0, 4, 10);
+  scene.add(mpLight);
+
   // rooftop billboard above the north wall
   makeSign(scene, 0, 15.5, -48.5, 26, '#ff4d2e', 'NERF ARENA BLAST REVIVAL');
   addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
