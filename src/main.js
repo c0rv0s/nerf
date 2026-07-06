@@ -295,7 +295,7 @@ function startMultiplayerMatch(mapDef) {
     characters: () => characters,
     onDamage: () => {},
   });
-  const pickups = new PickupManager(scene, [], { onPickup: () => false });
+  const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
   world.getPickups = () => pickups.items;
 
@@ -326,6 +326,113 @@ function startMultiplayerMatch(mapDef) {
   musicPlay();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
+}
+
+function startMultiplayerHostMatch(mapDef) {
+  startMatch(mapDef, 'ffa');
+  if (!G) return;
+  G.multiplayerHost = true;
+  G.mpSnapshotT = 0;
+  G.remoteInputs = new Map();
+  G.remoteHumans = new Map();
+  G.player.id = multiplayer.slotId;
+  G.player.name = multiplayer.name || 'YOU';
+  G.player.color = '#ffd23c';
+  G.player.team = multiplayer.slotId || 'host';
+  let botIdx = 0;
+  for (const ch of G.characters) {
+    if (ch === G.player) continue;
+    ch.id = `bot-${botIdx}`;
+    botIdx++;
+  }
+}
+
+function syncRemoteHumans() {
+  if (!G?.multiplayerHost) return;
+  const remoteSlots = (multiplayer.slots || []).filter(s => s.human && s.id !== multiplayer.slotId);
+  const wanted = new Set(remoteSlots.map(s => s.id));
+  for (const slot of remoteSlots) ensureHostRemoteHuman(slot);
+  for (const [slotId, ch] of G.remoteHumans || []) {
+    if (wanted.has(slotId)) continue;
+    removeCharacter(ch);
+    G.remoteHumans.delete(slotId);
+    addReplacementBot();
+  }
+}
+
+function ensureHostRemoteHuman(slot) {
+  if (G.remoteHumans.has(slot.id)) return G.remoteHumans.get(slot.id);
+  const bot = G.characters.find(ch => !ch.isPlayer && !ch.remoteHuman);
+  if (bot) removeCharacter(bot);
+  const color = parseInt(String(slot.color || '#ffffff').replace('#', ''), 16) || 0xffffff;
+  const remote = new Bot(G.scene, G.world, slot.id, slot.name || 'Player', color);
+  remote.id = slot.id;
+  remote.remoteHuman = true;
+  remote.human = true;
+  remote.team = slot.id;
+  remote.name = slot.name || 'Player';
+  remote.color = slot.color || '#ffffff';
+  remote.score = 0;
+  remote.kills = 0;
+  remote.deaths = 0;
+  G.characters.push(remote);
+  respawnCharacter(remote, true);
+  G.remoteHumans.set(slot.id, remote);
+  return remote;
+}
+
+function removeCharacter(ch) {
+  const idx = G.characters.indexOf(ch);
+  if (idx >= 0) G.characters.splice(idx, 1);
+  if (ch.mesh) G.scene.remove(ch.mesh);
+  G.respawnTimers.delete(ch);
+}
+
+function addReplacementBot() {
+  if (!G?.multiplayerHost || G.characters.length >= 8) return;
+  const i = G.characters.filter(ch => !ch.isPlayer && !ch.remoteHuman).length;
+  const bot = new Bot(G.scene, G.world, `ffa-bot-${i}`, BOT_NAMES[i % BOT_NAMES.length],
+    parseInt(FFA_COLORS[i % FFA_COLORS.length].slice(1), 16));
+  bot.id = `bot-${i}`;
+  bot.color = FFA_COLORS[i % FFA_COLORS.length];
+  bot.score = 0;
+  G.characters.push(bot);
+  respawnCharacter(bot, true);
+}
+
+function updateRemoteHuman(ch, dt, fire) {
+  const input = G.remoteInputs?.get(ch.id);
+  if (!input || !ch.alive) return;
+  if (input.pos) ch.pos.set(input.pos.x, input.pos.y, input.pos.z);
+  ch.yaw = input.yaw || 0;
+  ch.pitch = input.pitch || 0;
+  if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
+    ch.weapon = input.weapon;
+  }
+  ch.cooldown = Math.max(0, ch.cooldown - dt);
+  if (input.firing && ch.cooldown <= 0) {
+    const w = WEAPONS[ch.weapon] || WEAPONS.blaster;
+    const cp = Math.cos(ch.pitch || 0);
+    const dir = new THREE.Vector3(
+      -Math.sin(ch.yaw || 0) * cp,
+      Math.sin(ch.pitch || 0),
+      -Math.cos(ch.yaw || 0) * cp,
+    ).normalize();
+    const origin = new THREE.Vector3(ch.pos.x, ch.pos.y + 1.55, ch.pos.z).addScaledVector(dir, 0.8);
+    fire(ch, origin, dir, ch.weapon || 'blaster');
+    if (ch.weapon !== 'blaster') ch.ammo[ch.weapon]--;
+    ch.cooldown = 1 / w.rof;
+    if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) ch.weapon = 'blaster';
+  }
+  if (ch.mesh) {
+    ch.syncGunModel?.();
+    ch.mesh.position.copy(ch.pos);
+    ch.mesh.rotation.y = ch.yaw || 0;
+  }
+  if (ch.powerup) {
+    ch.powerup.timeLeft -= dt;
+    if (ch.powerup.timeLeft <= 0) { ch.powerup = null; ch.damageMult = 1; }
+  }
 }
 
 function ensureRemoteSlot(state) {
@@ -1149,7 +1256,7 @@ quitBtn.addEventListener('click', (e) => {
   quitBtn.style.display = 'none';
   hud.els.board.style.display = 'none';
   document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
-  if (G?.multiplayer) multiplayer.leave();
+  if (G?.multiplayer || G?.multiplayerHost) multiplayer.leave();
   endMatch(true);                    // back to the lobby
 });
 
@@ -1189,7 +1296,8 @@ multiplayer.addEventListener('phase', (e) => {
   const { phase, mapId, ranked } = e.detail;
   if (phase === 'playing') {
     const map = MAPS.find(m => m.id === mapId) || MAPS[0];
-    startMultiplayerMatch(map);
+    if (multiplayer.isHost) startMultiplayerHostMatch(map);
+    else startMultiplayerMatch(map);
   } else if (phase === 'podium' && G?.multiplayer) {
     const currentRanked = ranked?.map(r => {
       const ch = G.characters.find(c => c.id === r.id) || (r.id === multiplayer.slotId ? G.player : null);
@@ -1211,6 +1319,7 @@ multiplayer.addEventListener('phase', (e) => {
 });
 
 multiplayer.addEventListener('snapshot', (e) => {
+  if (multiplayer.isHost) return;
   if (e.detail.phase === 'playing' && (!G || !G.multiplayer)) {
     const map = MAPS.find(m => m.id === e.detail.mapId) || MAPS[0];
     startMultiplayerMatch(map);
@@ -1218,8 +1327,14 @@ multiplayer.addEventListener('snapshot', (e) => {
   applyMultiplayerSnapshot(e.detail);
 });
 
+multiplayer.addEventListener('remoteInput', (e) => {
+  if (!G?.multiplayerHost) return;
+  G.remoteInputs ||= new Map();
+  G.remoteInputs.set(e.detail.slotId, e.detail.input);
+});
+
 multiplayer.addEventListener('disconnect', () => {
-  if (G?.multiplayer) {
+  if (G?.multiplayer || G?.multiplayerHost) {
     hud.message('MULTIPLAYER DISCONNECTED', '#ff5c5c');
     endMatch(true);
   }
@@ -1288,11 +1403,15 @@ function step(dt) {
   setListener(G.player.pos); // distance-based sfx volume
 
   G.world.update?.(dt, G.characters);
+  if (G.multiplayerHost) syncRemoteHumans();
 
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);
   for (const ch of G.characters) {
-    if (!ch.isPlayer) ch.update(dt, G.characters, fire);
+    if (!ch.isPlayer) {
+      if (ch.remoteHuman) updateRemoteHuman(ch, dt, fire);
+      else ch.update(dt, G.characters, fire);
+    }
   }
 
   G.world.updateDoors?.(G.characters, dt); // proximity doors (Labyrinth)
@@ -1351,6 +1470,39 @@ function step(dt) {
     player: G.player, mode: G.atrium ? 'atrium' : G.mode, scores: G.scores,
     characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,
   });
+  sendHostSnapshot(dt);
+}
+
+function serializeCharacter(ch, i) {
+  return {
+    id: ch.id || (ch.isPlayer ? multiplayer.slotId : `bot-${i}`),
+    name: ch.isPlayer ? (multiplayer.name || ch.name || 'YOU') : ch.name,
+    human: !!(ch.isPlayer || ch.remoteHuman),
+    color: ch.color || '#ffffff',
+    pos: { x: ch.pos.x, y: ch.pos.y, z: ch.pos.z },
+    yaw: ch.yaw ?? ch.aimYaw ?? 0,
+    pitch: ch.pitch ?? 0,
+    hp: ch.hp ?? 100,
+    alive: ch.alive !== false,
+    score: ch.score || 0,
+    kills: ch.kills || 0,
+    deaths: ch.deaths || 0,
+    respawn: G.respawnTimers.get(ch) || 0,
+    weapon: ch.weapon || 'blaster',
+  };
+}
+
+function sendHostSnapshot(dt) {
+  if (!G?.multiplayerHost || multiplayer.phase !== 'playing') return;
+  G.mpSnapshotT = (G.mpSnapshotT || 0) - dt;
+  if (G.mpSnapshotT > 0) return;
+  G.mpSnapshotT = 1 / 20;
+  const players = G.characters.map((ch, i) => serializeCharacter(ch, i));
+  multiplayer.sendHostSnapshot({
+    players,
+    ranked: players.slice().sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths),
+    events: [],
+  });
 }
 
 function stepMultiplayer(dt) {
@@ -1360,6 +1512,7 @@ function stepMultiplayer(dt) {
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);
   G.projectiles.update(dt, G.characters);
+  G.pickups.update(dt, G.characters);
   G.fxPool.update(dt);
   updateDmgMarkers(dt);
   updateRemoteSlots(dt);

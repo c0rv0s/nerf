@@ -178,7 +178,7 @@ function handleMessage(conn, msg) {
     const lobby = lobbies.get(conn.lobbyId);
     const slot = lobby?.slots.find(s => s.connId === conn.id);
     if (!slot || !slot.human) return;
-    slot.input = {
+    const input = {
       seq: Number(msg.seq || 0),
       yaw: finite(msg.yaw, slot.yaw),
       pitch: finite(msg.pitch, slot.pitch),
@@ -186,7 +186,16 @@ function handleMessage(conn, msg) {
       weapon: String(msg.weapon || slot.weapon || 'blaster'),
       pos: sanitizePos(msg.pos, lobby.map),
     };
-    applyHumanInput(slot, lobby);
+    slot.input = input;
+    if (lobby.hostConnId && lobby.hostConnId !== conn.id) {
+      const host = connections.get(lobby.hostConnId);
+      if (host) send(host, { type: 'remoteInput', slotId: slot.id, name: slot.name, input });
+    }
+  } else if (msg.type === 'hostSnapshot') {
+    const lobby = lobbies.get(conn.lobbyId);
+    if (!lobby || lobby.hostConnId !== conn.id || lobby.phase !== 'playing') return;
+    const snap = sanitizeHostSnapshot(msg.snapshot, lobby);
+    if (snap) broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
   } else if (msg.type === 'leaveLobby') {
     leaveLobby(conn);
   } else if (msg.type === 'ping') {
@@ -235,10 +244,9 @@ function createLobby() {
     map: MAPS[0],
     votes: new Map(),
     slots: [],
+    hostConnId: null,
     tickHandle: null,
-    snapshotHandle: null,
     lastTick: Date.now(),
-    events: [],
     humanCount() { return this.slots.filter(s => s.human).length; },
   };
   for (let i = 0; i < SLOTS; i++) lobby.slots.push(makeBotSlot(i, lobby.map));
@@ -259,15 +267,9 @@ function makeBotSlot(i, map, previousSpawnIndex = null) {
     lastSpawnIndex: spawn.index,
     yaw: Math.random() * Math.PI * 2,
     pitch: 0,
-    hp: 100,
-    alive: true,
     score: 0,
     kills: 0,
     deaths: 0,
-    weapon: 'blaster',
-    cooldown: 0,
-    respawn: 0,
-    botGoal: null,
     input: null,
   };
   return s;
@@ -283,14 +285,9 @@ function resetSlotForHuman(slot, conn, lobby) {
     lastSpawnIndex: spawn.index,
     yaw: 0,
     pitch: 0,
-    hp: 100,
-    alive: true,
     score: 0,
     kills: 0,
     deaths: 0,
-    weapon: 'blaster',
-    cooldown: 0,
-    respawn: 0,
     input: null,
   });
 }
@@ -315,7 +312,19 @@ function joinLobby(conn, lobbyId) {
   resetSlotForHuman(slot, conn, lobby);
   conn.lobbyId = lobby.id;
   conn.slotId = slot.id;
-  send(conn, { type: 'joinedLobby', lobbyId: lobby.id, slotId: slot.id, phase: lobby.phase, mapId: lobby.map.id, phaseEndsAt: lobby.phaseEndsAt, maps: MAPS.map(({ id, name }) => ({ id, name })) });
+  if (!lobby.hostConnId) lobby.hostConnId = conn.id;
+  send(conn, {
+    type: 'joinedLobby',
+    lobbyId: lobby.id,
+    slotId: slot.id,
+    isHost: lobby.hostConnId === conn.id,
+    phase: lobby.phase,
+    mapId: lobby.map.id,
+    phaseEndsAt: lobby.phaseEndsAt,
+    maps: MAPS.map(({ id, name }) => ({ id, name })),
+    slots: publicSlots(lobby),
+  });
+  broadcastHost(lobby);
   broadcastLobbyMeta(lobby);
 }
 
@@ -325,21 +334,26 @@ function leaveLobby(conn) {
   const slot = lobby.slots.find(s => s.connId === conn.id);
   if (slot) convertToBot(slot, lobby);
   lobby.votes.delete(conn.id);
+  if (lobby.hostConnId === conn.id) {
+    const nextHost = [...connections.values()].find(c => c.lobbyId === lobby.id && c.id !== conn.id);
+    lobby.hostConnId = nextHost?.id || null;
+  }
   conn.lobbyId = null;
   conn.slotId = null;
   if (lobby.humanCount() === 0) destroyLobby(lobby);
-  else broadcastLobbyMeta(lobby);
+  else {
+    broadcastHost(lobby);
+    broadcastLobbyMeta(lobby);
+  }
 }
 
 function destroyLobby(lobby) {
   clearInterval(lobby.tickHandle);
-  clearInterval(lobby.snapshotHandle);
   lobbies.delete(lobby.id);
 }
 
 function startLobbyTimers(lobby) {
   lobby.tickHandle = setInterval(() => tickLobby(lobby), 1000 / TICK_HZ);
-  lobby.snapshotHandle = setInterval(() => broadcastSnapshot(lobby), 1000 / SNAPSHOT_HZ);
 }
 
 function lobbyList() {
@@ -352,6 +366,7 @@ function lobbyList() {
     mapId: l.map.id,
     mapName: l.map.name,
     phaseEndsAt: l.phaseEndsAt,
+    hostId: l.hostConnId,
   }));
 }
 
@@ -365,6 +380,8 @@ function broadcastLobbyMeta(lobby) {
     phase: lobby.phase,
     mapId: lobby.map.id,
     phaseEndsAt: lobby.phaseEndsAt,
+    hostId: lobby.hostConnId,
+    slots: publicSlots(lobby),
   });
 }
 
@@ -372,6 +389,34 @@ function broadcast(lobby, data) {
   for (const conn of connections.values()) {
     if (conn.lobbyId === lobby.id) send(conn, data);
   }
+}
+
+function broadcastExcept(lobby, data, exceptConnId) {
+  for (const conn of connections.values()) {
+    if (conn.lobbyId === lobby.id && conn.id !== exceptConnId) send(conn, data);
+  }
+}
+
+function broadcastHost(lobby) {
+  for (const conn of connections.values()) {
+    if (conn.lobbyId !== lobby.id) continue;
+    send(conn, {
+      type: 'hostChanged',
+      hostId: lobby.hostConnId,
+      isHost: conn.id === lobby.hostConnId,
+      slots: publicSlots(lobby),
+    });
+  }
+}
+
+function publicSlots(lobby) {
+  return lobby.slots.map(s => ({
+    id: s.id,
+    human: s.human,
+    name: s.name,
+    color: s.color,
+    connId: s.human ? s.connId : null,
+  }));
 }
 
 function chooseVotedMap(lobby) {
@@ -414,7 +459,15 @@ function setPhase(lobby, phase) {
   } else if (phase === 'podium') {
     lobby.phaseEndsAt = now + PODIUM_TIME * 1000;
   }
-  broadcast(lobby, { type: 'phaseChanged', phase: lobby.phase, mapId: lobby.map.id, phaseEndsAt: lobby.phaseEndsAt, ranked: ranked(lobby) });
+  broadcast(lobby, {
+    type: 'phaseChanged',
+    phase: lobby.phase,
+    mapId: lobby.map.id,
+    phaseEndsAt: lobby.phaseEndsAt,
+    ranked: ranked(lobby),
+    hostId: lobby.hostConnId,
+    slots: publicSlots(lobby),
+  });
   broadcastLobbyMeta(lobby);
 }
 
@@ -438,129 +491,6 @@ function tickLobby(lobby) {
     else if (lobby.phase === 'playing') setPhase(lobby, 'podium');
     else setPhase(lobby, 'voting');
   }
-  if (lobby.phase !== 'playing') return;
-  for (const slot of lobby.slots) {
-    if (slot.respawn > 0) {
-      slot.respawn -= dt;
-      if (slot.respawn <= 0) {
-        slot.alive = true;
-        slot.hp = 100;
-        const spawn = chooseSpawn(lobby.map, slot.lastSpawnIndex);
-        slot.pos = spawn.pos;
-        slot.lastSpawnIndex = spawn.index;
-      }
-      continue;
-    }
-    if (!slot.alive) continue;
-    if (!slot.human) updateBot(slot, lobby, dt);
-    slot.cooldown = Math.max(0, slot.cooldown - dt);
-    if (slot.human && slot.input?.firing) tryFire(slot, lobby);
-  }
-}
-
-function applyHumanInput(slot, lobby) {
-  if (!slot.input) return;
-  if (slot.input.pos && slot.alive) slot.pos = slot.input.pos;
-  slot.yaw = slot.input.yaw;
-  slot.pitch = slot.input.pitch;
-  slot.weapon = slot.input.weapon;
-}
-
-function updateBot(slot, lobby, dt) {
-  const b = lobby.map.bounds;
-  if (!slot.botGoal || dist2(slot.pos, slot.botGoal) < 16) {
-    slot.botGoal = { x: rand(-b * 0.75, b * 0.75), y: slot.pos.y, z: rand(-b * 0.75, b * 0.75) };
-  }
-  const target = nearestEnemy(slot, lobby);
-  if (target) {
-    slot.yaw = Math.atan2(target.pos.x - slot.pos.x, target.pos.z - slot.pos.z);
-    if (Math.sqrt(dist2(slot.pos, target.pos)) < 42) tryFire(slot, lobby);
-  }
-  const goal = target && Math.random() < 0.55 ? target.pos : slot.botGoal;
-  const dx = goal.x - slot.pos.x;
-  const dz = goal.z - slot.pos.z;
-  const len = Math.hypot(dx, dz) || 1;
-  const speed = 7.5;
-  slot.pos.x = Math.max(-b, Math.min(b, slot.pos.x + (dx / len) * speed * dt));
-  slot.pos.z = Math.max(-b, Math.min(b, slot.pos.z + (dz / len) * speed * dt));
-}
-
-function tryFire(attacker, lobby) {
-  if (attacker.cooldown > 0) return;
-  attacker.cooldown = attacker.human ? 0.24 : 0.55 + Math.random() * 0.35;
-  const target = bestShotTarget(attacker, lobby);
-  const shot = buildShot(attacker, target, lobby.map);
-  lobby.events.push({ type: 'shot', attackerId: attacker.id, targetId: target?.id || null, ...shot });
-  if (!target) return;
-  const dmg = attacker.human ? 12 : 9;
-  target.hp -= dmg;
-  lobby.events.push({ type: 'damage', attackerId: attacker.id, targetId: target.id, amount: dmg });
-  if (target.hp <= 0) killSlot(target, attacker, lobby);
-}
-
-function buildShot(attacker, target, map) {
-  const from = { x: attacker.pos.x, y: attacker.pos.y + 1.35, z: attacker.pos.z };
-  let to;
-  if (target) {
-    to = { x: target.pos.x, y: target.pos.y + 1.1, z: target.pos.z };
-  } else {
-    const range = Math.min(52, map.bounds * 1.2);
-    to = {
-      x: from.x + Math.sin(attacker.yaw) * range,
-      y: from.y + Math.sin(attacker.pitch || 0) * range,
-      z: from.z + Math.cos(attacker.yaw) * range,
-    };
-  }
-  return { from, to, color: attacker.color || '#ffd23c', hit: !!target };
-}
-
-function bestShotTarget(attacker, lobby) {
-  let best = null;
-  let bestScore = Infinity;
-  for (const target of lobby.slots) {
-    if (target === attacker || !target.alive || target.respawn > 0) continue;
-    const dx = target.pos.x - attacker.pos.x;
-    const dz = target.pos.z - attacker.pos.z;
-    const d = Math.hypot(dx, dz);
-    if (d > 48) continue;
-    const yaw = Math.atan2(dx, dz);
-    const angle = Math.abs(angleDiff(yaw, attacker.yaw));
-    const cone = attacker.human ? 0.28 : 0.38;
-    if (angle > cone) continue;
-    const score = d + angle * 120;
-    if (score < bestScore) {
-      bestScore = score;
-      best = target;
-    }
-  }
-  return best;
-}
-
-function nearestEnemy(slot, lobby) {
-  let best = null;
-  let bd = Infinity;
-  for (const other of lobby.slots) {
-    if (other === slot || !other.alive || other.respawn > 0) continue;
-    const d = dist2(slot.pos, other.pos);
-    if (d < bd) {
-      bd = d;
-      best = other;
-    }
-  }
-  return best;
-}
-
-function killSlot(victim, attacker, lobby) {
-  if (!victim.alive) return;
-  victim.alive = false;
-  victim.hp = 0;
-  victim.deaths++;
-  victim.respawn = RESPAWN_TIME;
-  if (attacker && attacker !== victim) {
-    attacker.kills++;
-    attacker.score += 250;
-  }
-  lobby.events.push({ type: 'kill', killerId: attacker?.id, victimId: victim.id });
 }
 
 function ranked(lobby) {
@@ -568,35 +498,48 @@ function ranked(lobby) {
     .map(s => ({ id: s.id, name: s.name, score: s.score, kills: s.kills, deaths: s.deaths, color: s.color, human: s.human }));
 }
 
-function broadcastSnapshot(lobby) {
-  if (!lobbies.has(lobby.id) || lobby.humanCount() === 0) return;
-  const events = lobby.events.splice(0, 20);
-  broadcast(lobby, {
-    type: 'snapshot',
+function sanitizeHostSnapshot(snapshot, lobby) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const players = Array.isArray(snapshot.players) ? snapshot.players.slice(0, SLOTS) : [];
+  const sanitizedPlayers = players.map((p, i) => {
+    const id = String(p.id || `slot-${i}`).slice(0, 32);
+    const pos = sanitizePos(p.pos, lobby.map) || { x: 0, y: 0, z: 0 };
+    return {
+      id,
+      name: cleanName(p.name || id),
+      human: !!p.human,
+      color: /^#[0-9a-f]{6}$/i.test(String(p.color || '')) ? p.color : COLORS[i % COLORS.length],
+      pos,
+      yaw: finite(p.yaw, 0),
+      pitch: finite(p.pitch, 0),
+      hp: Math.max(0, Math.min(100, finite(p.hp, 100))),
+      alive: p.alive !== false,
+      score: Math.max(0, Math.floor(finite(p.score, 0))),
+      kills: Math.max(0, Math.floor(finite(p.kills, 0))),
+      deaths: Math.max(0, Math.floor(finite(p.deaths, 0))),
+      respawn: Math.max(0, finite(p.respawn, 0)),
+      weapon: String(p.weapon || 'blaster').slice(0, 24),
+    };
+  });
+  const ranked = Array.isArray(snapshot.ranked) ? snapshot.ranked.slice(0, SLOTS).map((r, i) => ({
+    id: String(r.id || `slot-${i}`).slice(0, 32),
+    name: cleanName(r.name || r.id || `slot-${i}`),
+    score: Math.max(0, Math.floor(finite(r.score, 0))),
+    kills: Math.max(0, Math.floor(finite(r.kills, 0))),
+    deaths: Math.max(0, Math.floor(finite(r.deaths, 0))),
+    color: /^#[0-9a-f]{6}$/i.test(String(r.color || '')) ? r.color : COLORS[i % COLORS.length],
+    human: !!r.human,
+  })) : sanitizedPlayers;
+  const events = Array.isArray(snapshot.events) ? snapshot.events.slice(0, 24) : [];
+  return {
     tick: Date.now(),
     phase: lobby.phase,
     phaseEndsAt: lobby.phaseEndsAt,
     mapId: lobby.map.id,
-    ranked: ranked(lobby),
-    players: lobby.slots.map(s => ({
-      id: s.id,
-      name: s.name,
-      human: s.human,
-      color: s.color,
-      pos: s.pos,
-      yaw: s.yaw,
-      pitch: s.pitch,
-      hp: s.hp,
-      alive: s.alive,
-      score: s.score,
-      kills: s.kills,
-      deaths: s.deaths,
-      respawn: Math.max(0, s.respawn),
-      weapon: s.weapon,
-      self: false,
-    })),
+    ranked,
+    players: sanitizedPlayers,
     events,
-  });
+  };
 }
 
 function dist2(a, b) {

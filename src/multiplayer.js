@@ -13,6 +13,9 @@ export class MultiplayerClient extends EventTarget {
     this.phase = null;
     this.mapId = null;
     this.phaseEndsAt = 0;
+    this.isHost = false;
+    this.hostId = null;
+    this.slots = [];
     this.seq = 0;
     this.name = localStorage.getItem('nerf-mp-name') || '';
     this.pendingInput = null;
@@ -92,24 +95,38 @@ export class MultiplayerClient extends EventTarget {
       this.phase = msg.phase;
       this.mapId = msg.mapId;
       this.phaseEndsAt = msg.phaseEndsAt;
+      this.isHost = !!msg.isHost;
+      this.hostId = msg.hostId || null;
+      this.slots = msg.slots || [];
       this.closeOverlay();
       this.dispatchEvent(new CustomEvent('joined', { detail: msg }));
       this._renderPhase();
+    } else if (msg.type === 'hostChanged') {
+      this.isHost = !!msg.isHost;
+      this.hostId = msg.hostId || null;
+      this.slots = msg.slots || [];
+      this.dispatchEvent(new CustomEvent('hostChanged', { detail: msg }));
     } else if (msg.type === 'lobbyList') {
       this._renderLobbyList(msg);
     } else if (msg.type === 'lobbyMeta') {
       this.phase = msg.phase;
       this.mapId = msg.mapId;
       this.phaseEndsAt = msg.phaseEndsAt;
+      this.hostId = msg.hostId || this.hostId;
+      this.slots = msg.slots || this.slots;
       this._renderPhase(msg.votes);
       this.dispatchEvent(new CustomEvent('meta', { detail: msg }));
     } else if (msg.type === 'phaseChanged') {
       this.phase = msg.phase;
       this.mapId = msg.mapId;
       this.phaseEndsAt = msg.phaseEndsAt;
+      this.hostId = msg.hostId || this.hostId;
+      this.slots = msg.slots || this.slots;
       this.closeOverlay();
       this._renderPhase();
       this.dispatchEvent(new CustomEvent('phase', { detail: msg }));
+    } else if (msg.type === 'remoteInput') {
+      this.dispatchEvent(new CustomEvent('remoteInput', { detail: msg }));
     } else if (msg.type === 'snapshot') {
       this.lastSnapshot = msg;
       this.phase = msg.phase;
@@ -121,6 +138,10 @@ export class MultiplayerClient extends EventTarget {
     } else if (msg.type === 'error') {
       this.status.textContent = msg.message;
     }
+  }
+
+  sendHostSnapshot(snapshot) {
+    this.send({ type: 'hostSnapshot', snapshot });
   }
 
   _submitName() {
