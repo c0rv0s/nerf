@@ -647,6 +647,7 @@ function sanitizeEvent(ev) {
     return {
       type,
       shooterId: String(ev.shooterId || '').slice(0, 32),
+      weapon: String(ev.weapon || 'blaster').slice(0, 24),
       from,
       to,
       color: /^#[0-9a-f]{6}$/i.test(String(ev.color || '')) ? ev.color : '#ffd23c',

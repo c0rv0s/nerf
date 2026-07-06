@@ -796,6 +796,7 @@ function recordMultiplayerShot(owner, origin, dir, weaponId) {
   queueMultiplayerEvent({
     type: 'shot',
     shooterId: characterNetworkId(owner),
+    weapon: weaponId,
     from: { x: origin.x, y: origin.y, z: origin.z },
     to: { x: to.x, y: to.y, z: to.z },
     color: `#${w.color.toString(16).padStart(6, '0')}`,
@@ -816,19 +817,40 @@ function spawnMultiplayerTracer(ev) {
   if (!G?.multiplayer || !ev.from || !ev.to) return;
   const from = new THREE.Vector3(ev.from.x, ev.from.y, ev.from.z);
   const to = new THREE.Vector3(ev.to.x, ev.to.y, ev.to.z);
-  if (from.distanceToSquared(to) < 0.01) return;
+  const distSq = from.distanceToSquared(to);
+  if (distSq < 0.01) return;
+  const weaponId = WEAPONS[ev.weapon] ? ev.weapon : 'blaster';
+  const weapon = WEAPONS[weaponId];
   const color = parseInt(String(ev.color || '#ffd23c').replace('#', ''), 16) || 0xffd23c;
-  const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-  const mat = new THREE.LineBasicMaterial({
-    color,
-    transparent: true,
-    opacity: ev.hit ? 0.95 : 0.55,
-  });
-  const line = new THREE.Line(geo, mat);
-  G.scene.add(line);
-  G.mpTracers.push({ line, mat, geo, t: 0, life: ev.hit ? 0.16 : 0.1 });
-  G.fxPool.spawnPuff(from, color, 0.28);
-  if (ev.hit) G.fxPool.spawnPuff(to, color, 0.5);
+  const pellets = Math.min(weapon.pellets || 1, 6);
+  const dir = new THREE.Vector3().subVectors(to, from).normalize();
+  const right = Math.abs(dir.y) > 0.9
+    ? new THREE.Vector3(1, 0, 0)
+    : new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+  const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+  const dist = Math.sqrt(distSq);
+  const life = Math.min(0.2, Math.max(0.07, dist / Math.max(weapon.speed, 1)));
+  for (let i = 0; i < pellets; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const mesh = new THREE.Mesh(G.projectiles.geoBall, mat);
+    if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
+    else mesh.scale.setScalar(Math.max(weapon.size, 0.1));
+    const pelletTo = to.clone();
+    if (pellets > 1) {
+      const spread = dist * 0.03;
+      pelletTo
+        .addScaledVector(right, rand(-spread, spread))
+        .addScaledVector(up, rand(-spread, spread));
+    }
+    mesh.position.copy(from);
+    G.scene.add(mesh);
+    G.mpTracers.push({ mesh, mat, from: from.clone(), to: pelletTo, t: 0, life, impact: !!ev.hit, color });
+  }
+  G.fxPool.spawnPuff(from, color, 0.22);
 }
 
 function updateMultiplayerTracers(dt) {
@@ -836,8 +858,21 @@ function updateMultiplayerTracers(dt) {
   for (let i = G.mpTracers.length - 1; i >= 0; i--) {
     const tr = G.mpTracers[i];
     tr.t += dt;
+    const done = tr.t >= tr.life;
+    if (tr.mesh) {
+      const a = Math.min(1, tr.t / tr.life);
+      tr.mesh.position.lerpVectors(tr.from, tr.to, a);
+      tr.mat.opacity = Math.max(0, 1 - a);
+      if (done) {
+        if (tr.impact) G.fxPool.spawnPuff(tr.to, tr.color, 0.45);
+        G.scene.remove(tr.mesh);
+        tr.mat.dispose();
+        G.mpTracers.splice(i, 1);
+      }
+      continue;
+    }
     tr.mat.opacity = Math.max(0, 1 - tr.t / tr.life);
-    if (tr.t >= tr.life) {
+    if (done) {
       G.scene.remove(tr.line);
       tr.geo.dispose();
       tr.mat.dispose();
