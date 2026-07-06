@@ -324,6 +324,7 @@ function startMultiplayerMatch(mapDef) {
   hud.show(true);
   document.getElementById('scores').style.display = '';
   document.getElementById('endscreen').style.display = 'none';
+  document.getElementById('catchtitle').textContent = 'CLICK TO RESUME';
   clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
   requestPointerLock();
   musicPlay();
@@ -340,6 +341,8 @@ function startMultiplayerHostMatch(mapDef) {
   G.remoteInputs = new Map();
   G.remoteHumans = new Map();
   G.paused = false;
+  document.getElementById('catchtitle').textContent = 'CLICK TO RESUME';
+  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
   G.player.id = multiplayer.slotId;
   G.player.name = multiplayer.name || 'YOU';
   G.player.color = '#ffd23c';
@@ -1373,12 +1376,13 @@ document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   if (G && !G.over) {
     const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
+    const multiplayerPanelOpen = multiplayer.overlay && !multiplayer.overlay.hidden;
     G.paused = multiplayerMatch ? false : !locked;
-    clickcatch.style.display = locked ? 'none' : 'flex';
+    clickcatch.style.display = (locked || multiplayerPanelOpen) ? 'none' : 'flex';
     document.getElementById('catchtitle').textContent =
       locked ? '' : (multiplayerMatch ? 'CLICK TO RESUME' : '⏸ PAUSED — CLICK TO RESUME');
     // pause menu extras (matches only): live scoreboard + quit
-    const showPause = !locked && !G.atrium;
+    const showPause = !locked && !G.atrium && !multiplayerPanelOpen;
     quitBtn.style.display = showPause ? '' : 'none';
     const board = hud.els.board;
     board.style.display = showPause ? 'block' : 'none';
@@ -1435,6 +1439,10 @@ document.addEventListener('keyup', (e) => {
 
 function startCurrentMultiplayerMatch(mapId) {
   clearTimeout(multiplayerVotingTimer);
+  document.getElementById('endscreen').style.display = 'none';
+  clickcatch.style.display = 'none';
+  quitBtn.style.display = 'none';
+  hud.els.board.style.display = 'none';
   const map = MAPS.find(m => m.id === mapId) || MAPS[0];
   if (multiplayer.shouldHost()) {
     if (!G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
@@ -1495,10 +1503,13 @@ multiplayer.addEventListener('remoteInput', (e) => {
 });
 
 multiplayer.addEventListener('hostChanged', () => {
-  if (!multiplayer.shouldHost() || multiplayer.phase !== 'playing') return;
-  if (G?.multiplayerHost) return;
+  if (multiplayer.phase !== 'playing') return;
   const map = MAPS.find(m => m.id === multiplayer.mapId) || MAPS[0];
-  startMultiplayerHostMatch(map);
+  if (multiplayer.shouldHost()) {
+    if (!G?.multiplayerHost) startMultiplayerHostMatch(map);
+  } else if (G?.multiplayerHost) {
+    startMultiplayerMatch(map);
+  }
 });
 
 multiplayer.addEventListener('disconnect', () => {
@@ -1532,6 +1543,8 @@ function stepAtrium(dt) {
     openingMultiplayer = true;
     document.exitPointerLock?.();
     multiplayer.open();
+    clickcatch.style.display = 'none';
+    quitBtn.style.display = 'none';
     hud.message('JOINING MULTIPLAYER', '#ffd23c');
     setTimeout(() => { openingMultiplayer = false; }, 1500);
     return;

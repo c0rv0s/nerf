@@ -16,7 +16,8 @@ const SLOTS = 8;
 const TICK_HZ = 30;
 const SNAPSHOT_HZ = 20;
 const RESPAWN_TIME = 3;
-const STALE_CONNECTION_MS = 15000;
+const STALE_CONNECTION_MS = 45000;
+const HOST_SNAPSHOT_TIMEOUT_MS = 2500;
 const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
 const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const MAPS = [
@@ -198,6 +199,7 @@ function handleMessage(conn, msg) {
       pos: sanitizePos(msg.pos, lobby.map),
     };
     slot.input = input;
+    slot.lastInputAt = Date.now();
     if (lobby.hostConnId && lobby.hostConnId !== conn.id) {
       const host = connections.get(lobby.hostConnId);
       if (host) send(host, { type: 'remoteInput', slotId: slot.id, name: slot.name, input });
@@ -207,6 +209,7 @@ function handleMessage(conn, msg) {
     if (!lobby || lobby.hostConnId !== conn.id || lobby.phase !== 'playing') return;
     const snap = sanitizeHostSnapshot(msg.snapshot, lobby);
     if (snap) {
+      lobby.lastHostSnapshotAt = Date.now();
       mergeHostSnapshot(lobby, snap);
       broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
     }
@@ -258,6 +261,7 @@ function createLobby() {
     map: MAPS[0],
     votes: new Map(),
     latestRanked: null,
+    lastHostSnapshotAt: Date.now(),
     slots: [],
     hostConnId: null,
     tickHandle: null,
@@ -286,6 +290,7 @@ function makeBotSlot(i, map, previousSpawnIndex = null) {
     kills: 0,
     deaths: 0,
     input: null,
+    lastInputAt: 0,
   };
   return s;
 }
@@ -304,6 +309,7 @@ function resetSlotForHuman(slot, conn, lobby) {
     kills: 0,
     deaths: 0,
     input: null,
+    lastInputAt: Date.now(),
   });
 }
 
@@ -459,6 +465,7 @@ function setPhase(lobby, phase) {
     lobby.map = chooseVotedMap(lobby);
     lobby.phaseEndsAt = now + MATCH_TIME * 1000;
     lobby.latestRanked = null;
+    lobby.lastHostSnapshotAt = now;
     const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
@@ -504,11 +511,33 @@ function tickLobby(lobby) {
   const now = Date.now();
   const dt = Math.min(0.1, (now - lobby.lastTick) / 1000);
   lobby.lastTick = now;
+  if (lobby.phase === 'playing') promoteHostIfStale(lobby, now);
   if (now >= lobby.phaseEndsAt) {
     if (lobby.phase === 'voting') setPhase(lobby, 'playing');
     else if (lobby.phase === 'playing') setPhase(lobby, 'podium');
     else setPhase(lobby, 'voting');
   }
+}
+
+function promoteHostIfStale(lobby, now = Date.now()) {
+  if (lobby.humanCount() <= 1) return;
+  if (now - (lobby.lastHostSnapshotAt || 0) <= HOST_SNAPSHOT_TIMEOUT_MS) return;
+  const candidates = [...connections.values()]
+    .filter(c => c.lobbyId === lobby.id && c.id !== lobby.hostConnId)
+    .map(conn => {
+      const slot = lobby.slots.find(s => s.connId === conn.id);
+      return { conn, activity: Math.max(slot?.lastInputAt || 0, conn.lastSeen || 0) };
+    })
+    .sort((a, b) => b.activity - a.activity);
+  const next = candidates[0]?.conn;
+  if (!next) {
+    lobby.lastHostSnapshotAt = now;
+    return;
+  }
+  lobby.hostConnId = next.id;
+  lobby.lastHostSnapshotAt = now;
+  broadcastHost(lobby);
+  broadcastLobbyMeta(lobby);
 }
 
 function ranked(lobby) {
