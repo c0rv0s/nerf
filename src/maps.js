@@ -1674,9 +1674,9 @@ function buildCity(scene) {
   addBox(scene, world, 36.5, -3.35, 7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 1, -6.5, -7, 70, 1, 10, 0x2f3542, { tex: 'panel', repeat: [9, 2] });   // tunnel floor E-W
   addBox(scene, world, 1, -3.5, -12.5, 70, 5, 1, 0x262b38, { tex: 'panel' });                 // tunnel walls
-  addBox(scene, world, -3, -3.5, -1.5, 62, 5, 1, 0x262b38, { tex: 'panel' });
+  addBox(scene, world, -4.75, -3.5, -1.5, 58.5, 5, 1, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 32, -6.5, 5, 8, 1, 14, 0x2f3542, { tex: 'panel', repeat: [1, 2] });    // connector leg
-  addBox(scene, world, 27.5, -3.5, 5, 1, 5, 14, 0x262b38, { tex: 'panel' });
+  addBox(scene, world, 27.5, -3.5, 7, 1, 5, 10, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 36.5, -3.5, 5, 1, 5, 14, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 32, -3.5, 12.5, 10, 5, 1, 0x262b38, { tex: 'panel' });
   const tubeLight = new THREE.PointLight(0xffe040, 30, 34);
@@ -1891,7 +1891,6 @@ function buildCity(scene) {
   // ground variety: galleria plaza, crosswalk bands
   addBox(scene, world, -12, 0.031, 14, 30, 0.06, 14, 0x9088b0, { tex: 'arcade', repeat: [6, 3] });
   addBox(scene, world, 0, 0.031, -20, 8, 0.06, 30, 0x8a94b0, { tex: 'checker', repeat: [2, 7] });
-  addBox(scene, world, 41.5, 0.031, 0, 7, 0.06, 60, 0x8a94b0, { tex: 'checker', repeat: [2, 14] });
   // floating platforms over the street + pads
   addBox(scene, world, 0, 11.7, -20, 12, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
   addJumpPad(scene, world, -9, 0, -20, 28, 3.8, 0, 0x30e0ff);

@@ -377,7 +377,7 @@ export class Player {
     if (!(this._vineExitT > 0)) {
       for (const z of this.world.vineZones || []) {
         if (
-          midY >= z.minY - 0.5 && midY <= z.maxY + 0.5 &&
+          midY >= z.minY - 0.5 && midY <= z.maxY + 2.0 &&
           (px - z.x) * (px - z.x) + (pz - z.z) * (pz - z.z) < z.r * z.r
         ) { vine = z; break; }
       }
@@ -407,16 +407,16 @@ export class Player {
 
   _applyVineMotion(dt, vine) {
     let climb = -1.15;                 // no input: slide down slowly
-    if (this.keys['Space']) climb = 4.4;
+    if (this.keys['Space']) climb = 5.4;
     else if (this.keys['KeyS']) climb = -3.0;
 
     const midY = this.pos.y + this.height * 0.5;
-    if (this.keys['Space'] && vine && midY > vine.maxY - 0.45) {
+    if (this.keys['Space'] && vine && midY > vine.maxY + 1.35) {
       const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-      this.vel.x += -sin * 2.6;
-      this.vel.z += -cos * 2.6;
-      this.vel.y = this.world.jumpVel * 0.82;
-      this._vineExitT = 0.35;
+      this.vel.x += -sin * 4.5;
+      this.vel.z += -cos * 4.5;
+      this.vel.y = this.world.jumpVel * 1.12;
+      this._vineExitT = 0.45;
       this._airJumped = false;
       return;
     }
