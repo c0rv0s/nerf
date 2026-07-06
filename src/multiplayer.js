@@ -77,6 +77,7 @@ export class MultiplayerClient extends EventTarget {
       weapon: player.weapon || 'blaster',
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
       vel: player.vel ? { x: player.vel.x, y: player.vel.y, z: player.vel.z } : { x: 0, y: 0, z: 0 },
+      alive: player.alive !== false,
     });
   }
 

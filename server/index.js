@@ -198,6 +198,7 @@ function handleMessage(conn, msg) {
       weapon: String(msg.weapon || slot.weapon || 'blaster'),
       pos: sanitizePos(msg.pos, lobby.map),
       vel: sanitizeVel(msg.vel),
+      alive: msg.alive !== false,
     };
     slot.input = input;
     slot.lastInputAt = Date.now();

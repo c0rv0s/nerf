@@ -163,6 +163,7 @@ export class PickupManager {
       it.mesh.position.z = it.def.pos.z;
       it.mesh.position.y = it.def.pos.y + 1.0 + Math.sin(this.t * 2 + it.phase) * 0.18;
       for (const L of it.lights) L.position.copy(it.mesh.position);
+      if (it.hostMirror) continue;
 
       for (const ch of characters) {
         if (!ch.alive) continue;

@@ -331,6 +331,8 @@ function startMultiplayerMatch(mapDef) {
     lastT: performance.now(),
     mpSendT: 0,
     mpSyncedSelf: false,
+    mpSawSelfSnapshot: false,
+    mpLocalRespawnedAt: 0,
   };
 
   respawnCharacter(player, true);
@@ -484,6 +486,7 @@ function updateRemoteHumanMotion(ch, input, dt) {
 function updateRemoteHuman(ch, dt, fire) {
   const input = G.remoteInputs?.get(ch.id);
   if (!input || !ch.alive) return;
+  if (input.alive === false) return;
   updateRemoteHumanMotion(ch, input, dt);
   const turnA = 1 - Math.exp(-24 * dt);
   ch.yaw = smoothNetworkAngle(ch.yaw || 0, input.yaw || 0, turnA);
@@ -629,33 +632,50 @@ function applyMultiplayerSnapshot(snap) {
     seen.add(state.id);
     if (state.id === multiplayer.slotId) {
       const statePos = new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z);
+      const recentLocalRespawn = G.mpLocalRespawnedAt && performance.now() - G.mpLocalRespawnedAt < 1200;
       if (state.alive && !G.mpSyncedSelf) {
         if (multiplayerPositionIsVoid(statePos, G.player)) {
+          if (recentLocalRespawn && G.player.alive) continue;
           beginMultiplayerLocalRespawn();
           continue;
         }
         G.player.spawn(statePos);
         G.mpSyncedSelf = true;
+        G.mpLocalRespawnedAt = 0;
       }
       G.player.name = state.name;
       G.player.color = state.color || G.player.color;
+      const previousScore = G.player.score || 0;
       G.player.score = state.score || 0;
+      if (G.mpSawSelfSnapshot && G.player.score > previousScore) {
+        const gained = G.player.score - previousScore;
+        sfx('coin');
+        hud.message(`+${gained} PTS!`, '#ffd23c');
+      }
+      G.mpSawSelfSnapshot = true;
       G.player.kills = state.kills || 0;
       G.player.deaths = state.deaths || 0;
+      const staleDeadSnapshot = !state.alive && G.player.alive && recentLocalRespawn;
+      const staleVoidSnapshot = state.alive && G.player.alive && recentLocalRespawn &&
+        multiplayerPositionIsVoid(statePos, G.player);
+      if (staleDeadSnapshot || staleVoidSnapshot) continue;
       if (state.hp < G.player.hp) hud.damageFlash();
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
+        if (recentLocalRespawn) continue;
         G.player.alive = false;
         G.mpSyncedSelf = false;
         hud.showRespawn(true, state.respawn || RESPAWN_TIME);
         sfx('death');
       } else if (state.alive && !G.player.alive) {
         if (multiplayerPositionIsVoid(statePos, G.player)) {
+          if (recentLocalRespawn) continue;
           hud.showRespawn(true, RESPAWN_TIME);
           continue;
         }
         G.player.spawn(statePos);
         G.mpSyncedSelf = true;
+        G.mpLocalRespawnedAt = 0;
       }
       if (state.alive) hud.showRespawn(false);
       if (!state.alive) hud.showRespawn(true, state.respawn || 0);
@@ -706,9 +726,6 @@ function applyMultiplayerSnapshot(snap) {
 
 function applyPredictedMultiplayerDamage(target, dmg, attacker) {
   if (!G?.multiplayer || attacker !== G.player || !target || target === G.player) return;
-  hud.hitmarker();
-  spawnDmgMarker(target, dmg);
-  sfx('hit');
 }
 
 function dropSnapshotId(drop) {
@@ -725,8 +742,6 @@ function reconcileMultiplayerDrops(drops) {
     if (!drop?.pos) continue;
     const id = dropSnapshotId(drop);
     live.add(id);
-    const hasItem = G.pickups.items.some(item => item.mpDropId === id);
-    if (G.mpDropIds.has(id) && hasItem) continue;
     const def = {
       id,
       kind: drop.kind,
@@ -734,9 +749,21 @@ function reconcileMultiplayerDrops(drops) {
       weapon: drop.weapon,
       pos: new THREE.Vector3(drop.pos.x, drop.pos.y, drop.pos.z),
     };
+    const existing = G.pickups.items.find(item => item.mpDropId === id);
+    if (existing) {
+      existing.def.pos.copy(def.pos);
+      existing.def.amount = def.amount;
+      existing.def.weapon = def.weapon;
+      existing.hostMirror = true;
+      existing.active = true;
+      existing.mesh.visible = true;
+      G.mpDropIds.add(id);
+      continue;
+    }
     G.pickups.addDrop(def);
     const item = G.pickups.items[G.pickups.items.length - 1];
     item.mpDropId = id;
+    item.hostMirror = true;
     G.mpDropIds.add(id);
   }
   for (let i = G.pickups.items.length - 1; i >= 0; i--) {
@@ -1901,6 +1928,8 @@ function handleMultiplayerLocalVoid(dt) {
     G.respawnTimers.delete(G.player);
     respawnCharacter(G.player);
     G.mpSyncedSelf = true;
+    G.mpLocalRespawnedAt = performance.now();
+    multiplayer.sendInput(G.player);
     hud.showRespawn(false);
   } else {
     G.respawnTimers.set(G.player, left);
