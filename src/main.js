@@ -18,6 +18,10 @@ import { multiplayer } from './multiplayer.js';
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
 const MULTIPLAYER_PODIUM_HOLD_MS = 6000;
+const REMOTE_HUMAN_SNAP_DIST = 8;
+const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
+const REMOTE_HUMAN_MAX_PREDICT = 0.18;
+const REMOTE_HUMAN_SMOOTH = 20;
 
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
@@ -397,6 +401,7 @@ function ensureHostRemoteHuman(slot) {
   remote.deaths = 0;
   G.characters.push(remote);
   respawnCharacter(remote, true);
+  remote.remoteNet = makeRemoteNet(remote.pos);
   setNameTag(remote, remote.name, remote.color);
   G.remoteHumans.set(slot.id, remote);
   return remote;
@@ -423,12 +428,66 @@ function addReplacementBot() {
   setNameTag(bot, bot.name, bot.color);
 }
 
+function makeRemoteNet(pos) {
+  return {
+    targetPos: pos.clone(),
+    predictedPos: pos.clone(),
+    velocity: new THREE.Vector3(),
+    lastInputPos: pos.clone(),
+    lastInputAt: performance.now(),
+    lastSeq: null,
+  };
+}
+
+function smoothNetworkAngle(current, target, a) {
+  let d = target - current;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return current + d * a;
+}
+
+function updateRemoteHumanMotion(ch, input, dt) {
+  if (!input?.pos) return;
+  const now = performance.now();
+  const net = ch.remoteNet ||= makeRemoteNet(ch.pos);
+  const receivedAt = input.receivedAt || now;
+  const freshPacket = input.seq !== net.lastSeq;
+  if (freshPacket) {
+    const rawPos = new THREE.Vector3(input.pos.x, input.pos.y, input.pos.z);
+    if (input.vel) {
+      net.velocity.set(input.vel.x || 0, input.vel.y || 0, input.vel.z || 0);
+    } else {
+      const sampleDt = Math.max(0.001, (receivedAt - net.lastInputAt) / 1000);
+      net.velocity.copy(rawPos).sub(net.lastInputPos).multiplyScalar(1 / sampleDt);
+    }
+    if (net.velocity.lengthSq() > 120 * 120) net.velocity.setLength(120);
+    net.targetPos.copy(rawPos);
+    net.lastInputPos.copy(rawPos);
+    net.lastInputAt = receivedAt;
+    net.lastSeq = input.seq;
+    if (ch.pos.distanceToSquared(rawPos) > REMOTE_HUMAN_SNAP_DIST * REMOTE_HUMAN_SNAP_DIST) {
+      ch.pos.copy(rawPos);
+    }
+  }
+
+  const lead = Math.min(REMOTE_HUMAN_MAX_PREDICT,
+    Math.max(0, (now - net.lastInputAt) / 1000) + REMOTE_HUMAN_PREDICT_LEAD);
+  net.predictedPos.copy(net.targetPos).addScaledVector(net.velocity, lead);
+  if (ch.pos.distanceToSquared(net.predictedPos) > REMOTE_HUMAN_SNAP_DIST * REMOTE_HUMAN_SNAP_DIST) {
+    ch.pos.copy(net.targetPos);
+  } else {
+    ch.pos.lerp(net.predictedPos, 1 - Math.exp(-REMOTE_HUMAN_SMOOTH * dt));
+  }
+  ch.vel.copy(net.velocity);
+}
+
 function updateRemoteHuman(ch, dt, fire) {
   const input = G.remoteInputs?.get(ch.id);
   if (!input || !ch.alive) return;
-  if (input.pos) ch.pos.set(input.pos.x, input.pos.y, input.pos.z);
-  ch.yaw = input.yaw || 0;
-  ch.pitch = input.pitch || 0;
+  updateRemoteHumanMotion(ch, input, dt);
+  const turnA = 1 - Math.exp(-24 * dt);
+  ch.yaw = smoothNetworkAngle(ch.yaw || 0, input.yaw || 0, turnA);
+  ch.pitch += ((input.pitch || 0) - (ch.pitch || 0)) * turnA;
   if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
     ch.weapon = input.weapon;
   }
@@ -862,6 +921,10 @@ function respawnCharacter(ch, initial = false) {
   if (G.spawnBatchUsed && !G.spawnBatchUsed.has(poolKey)) G.spawnBatchUsed.set(poolKey, new Set());
   const p = pickSpawnPoint(spawns, ch, poolKey);
   ch.spawn(p);
+  if (ch.remoteHuman) {
+    ch.remoteNet = makeRemoteNet(ch.pos);
+    G.remoteInputs?.delete(ch.id);
+  }
   if (ch.isPlayer && !initial) hud.showRespawn(false);
 }
 
@@ -1567,7 +1630,7 @@ multiplayer.addEventListener('snapshot', (e) => {
 multiplayer.addEventListener('remoteInput', (e) => {
   if (!G?.multiplayerHost) return;
   G.remoteInputs ||= new Map();
-  G.remoteInputs.set(e.detail.slotId, e.detail.input);
+  G.remoteInputs.set(e.detail.slotId, { ...e.detail.input, receivedAt: performance.now() });
 });
 
 multiplayer.addEventListener('hostChanged', () => {

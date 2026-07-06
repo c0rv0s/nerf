@@ -197,6 +197,7 @@ function handleMessage(conn, msg) {
       firing: !!msg.firing,
       weapon: String(msg.weapon || slot.weapon || 'blaster'),
       pos: sanitizePos(msg.pos, lobby.map),
+      vel: sanitizeVel(msg.vel),
     };
     slot.input = input;
     slot.lastInputAt = Date.now();
@@ -235,6 +236,15 @@ function sanitizePos(pos, map) {
     x: Math.max(-b, Math.min(b, finite(pos.x, 0))),
     y: Math.max(-200, Math.min(260, finite(pos.y, 0))),
     z: Math.max(-b, Math.min(b, finite(pos.z, 0))),
+  };
+}
+
+function sanitizeVel(vel) {
+  if (!vel || typeof vel !== 'object') return { x: 0, y: 0, z: 0 };
+  return {
+    x: Math.max(-120, Math.min(120, finite(vel.x, 0))),
+    y: Math.max(-160, Math.min(160, finite(vel.y, 0))),
+    z: Math.max(-120, Math.min(120, finite(vel.z, 0))),
   };
 }
 
