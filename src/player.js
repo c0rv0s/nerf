@@ -200,6 +200,7 @@ export class Player {
 
   // ---- normal, Y-gravity movement + camera (all maps except PRISM RUN) ----
   _moveNormal(dt) {
+    this._vineExitT = Math.max(0, (this._vineExitT || 0) - dt);
     const env = this._environmentState();
     const speed = this.world.playerSpeed * (this.speedMult || 1) * env.speedMult;
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
@@ -226,7 +227,7 @@ export class Player {
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
     if (vine) {
-      this._applyVineMotion(dt);
+      this._applyVineMotion(dt, vine);
       this.jumpBuffer = 0;
       this.wantJump = false;
       this.coyote = 0;
@@ -373,11 +374,13 @@ export class Player {
     }
 
     let vine = null;
-    for (const z of this.world.vineZones || []) {
-      if (
-        midY >= z.minY - 0.5 && midY <= z.maxY + 0.5 &&
-        (px - z.x) * (px - z.x) + (pz - z.z) * (pz - z.z) < z.r * z.r
-      ) { vine = z; break; }
+    if (!(this._vineExitT > 0)) {
+      for (const z of this.world.vineZones || []) {
+        if (
+          midY >= z.minY - 0.5 && midY <= z.maxY + 0.5 &&
+          (px - z.x) * (px - z.x) + (pz - z.z) * (pz - z.z) < z.r * z.r
+        ) { vine = z; break; }
+      }
     }
 
     return {
@@ -402,10 +405,21 @@ export class Player {
     this._airJumped = false;
   }
 
-  _applyVineMotion(dt) {
+  _applyVineMotion(dt, vine) {
     let climb = -1.15;                 // no input: slide down slowly
     if (this.keys['Space']) climb = 4.4;
     else if (this.keys['KeyS']) climb = -3.0;
+
+    const midY = this.pos.y + this.height * 0.5;
+    if (this.keys['Space'] && vine && midY > vine.maxY - 0.45) {
+      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
+      this.vel.x += -sin * 2.6;
+      this.vel.z += -cos * 2.6;
+      this.vel.y = this.world.jumpVel * 0.82;
+      this._vineExitT = 0.35;
+      this._airJumped = false;
+      return;
+    }
 
     // moveCharacter applies gravity at the start of integration; offset it so
     // vine velocity is controlled by input instead of free fall.

@@ -25,6 +25,7 @@ const REMOTE_HUMAN_SMOOTH = 20;
 
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
+const WATER = { name: 'Water', color: '#3fcfff', isPlayer: false, kills: 0, team: 'water' };
 
 // Soundtrack — matches only, never the lobby. Alternates tracks per match.
 const MUSIC = ['./music/track1.mp3', './music/track2.mp3'];
@@ -201,12 +202,30 @@ function updateDeathCamera(dt) {
   G.deathBaseFov ||= camera.fov;
   const timer = G.respawnTimers?.get(G.player);
   const dead = !G.player.alive && timer != null;
-  const elapsed = dead ? THREE.MathUtils.clamp(1 - timer / RESPAWN_TIME, 0, 1) : 0;
-  const target = elapsed * elapsed * (3 - 2 * elapsed);
-  G.deathZoomMix = THREE.MathUtils.damp(G.deathZoomMix || 0, target, dead ? 4 : 10, dt);
-  const nextFov = THREE.MathUtils.lerp(G.deathBaseFov, G.deathBaseFov + 13, G.deathZoomMix);
-  if (Math.abs(camera.fov - nextFov) > 0.01) {
-    camera.fov = nextFov;
+  if (dead) {
+    if (!G.deathSpectate) {
+      const yaw = G.player.yaw ?? 0;
+      const back = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      const anchor = G.player.pos.clone().add(new THREE.Vector3(0, 1.1, 0));
+      G.deathSpectate = {
+        anchor,
+        pos: anchor.clone().addScaledVector(back, 10).add(new THREE.Vector3(0, 3.2, 0)),
+      };
+      camera.fov = 70;
+      camera.updateProjectionMatrix();
+      if (G.player.viewmodel) G.player.viewmodel.visible = false;
+    }
+    camera.position.copy(G.deathSpectate.pos);
+    camera.lookAt(G.deathSpectate.anchor);
+    return;
+  }
+
+  if (G.deathSpectate) {
+    G.deathSpectate = null;
+    if (G.player.viewmodel) G.player.viewmodel.visible = true;
+  }
+  if (Math.abs(camera.fov - G.deathBaseFov) > 0.01) {
+    camera.fov = G.deathBaseFov;
     camera.updateProjectionMatrix();
   }
 }
@@ -1921,6 +1940,32 @@ function step(dt) {
         ch.vel.x *= wade;
         ch.vel.z *= wade;
       } else ch._lavaT = 0;
+    }
+  }
+
+  // staying fully underwater too long starts drowning: 40s grace, then 5 hp/s
+  if (G.world.waterZones) {
+    for (const ch of G.characters) {
+      if (!ch.alive) continue;
+      const eyeY = ch.pos.y + (ch.eyeHeight ?? 1.55);
+      const underwater = G.world.waterZones.some(zn =>
+        ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
+        ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ &&
+        eyeY < zn.surfaceY - 0.04 &&
+        ch.pos.y > (zn.bottomY ?? zn.surfaceY - 4) - 0.6);
+      if (underwater) {
+        ch._drownT = (ch._drownT || 0) + dt;
+        if (ch._drownT > 40) {
+          ch._drownDamageT = (ch._drownDamageT || 0) + dt;
+          while (ch._drownDamageT >= 1 && ch.alive) {
+            ch._drownDamageT -= 1;
+            applyDamage(ch, 5, WATER);
+          }
+        }
+      } else {
+        ch._drownT = 0;
+        ch._drownDamageT = 0;
+      }
     }
   }
 

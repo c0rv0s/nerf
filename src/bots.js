@@ -436,7 +436,8 @@ export class Bot {
       this.speedTime -= dt;
       if (this.speedTime <= 0) this.speedMult = 1;
     }
-    const speed = this.world.playerSpeed * 0.82 * (this.speedMult || 1);
+    const water = this._waterZone();
+    const speed = this.world.playerSpeed * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
     const lowGrav = this.world.gravity < 12;
     let moveX = 0, moveZ = 0;
 
@@ -530,6 +531,7 @@ export class Bot {
       this.vel.x += (moveX * speed - this.vel.x) * Math.min(1, accel * dt);
       this.vel.z += (moveZ * speed - this.vel.z) * Math.min(1, accel * dt);
     }
+    if (water) this._applyWaterMotion(water, dt);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
     if (lowGrav && wasAirborne && this.grounded) {
@@ -570,6 +572,37 @@ export class Bot {
       this.powerup.timeLeft -= dt;
       if (this.powerup.timeLeft <= 0) { this.powerup = null; this.damageMult = 1; }
     }
+  }
+
+  _waterZone() {
+    const zones = this.world.waterZones;
+    if (!zones?.length) return null;
+    const midY = this.pos.y + this.height * 0.5;
+    for (const z of zones) {
+      if (
+        this.pos.x >= z.minX && this.pos.x <= z.maxX &&
+        this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
+        midY >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
+        this.pos.y < z.surfaceY + 0.35
+      ) return z;
+    }
+    return null;
+  }
+
+  _applyWaterMotion(zone, dt) {
+    const eyeY = this.pos.y + 1.55;
+    let targetVy = eyeY < zone.surfaceY - 0.25 ? 1.05 : -0.25;
+    const nearSurface = eyeY > zone.surfaceY - 0.35;
+    if (nearSurface && (this.grounded || (this._waterHopT || 0) <= 0)) {
+      targetVy = this.world.jumpVel * 0.72;
+      this._waterHopT = 0.8;
+    }
+    this._waterHopT = Math.max(0, (this._waterHopT || 0) - dt);
+    this.vel.y = THREE.MathUtils.damp(this.vel.y, targetVy + this.world.gravity * dt, 8, dt);
+    const drag = Math.exp(-2.8 * dt);
+    this.vel.x *= drag;
+    this.vel.z *= drag;
+    this.grounded = false;
   }
 }
 

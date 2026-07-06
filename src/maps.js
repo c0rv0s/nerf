@@ -1485,9 +1485,15 @@ function buildCanopy(scene) {
   addBox(scene, world, 0, 9.48, 45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
   addVine(scene, world, -45, -18, 0.2, 19.1, 1.05);  // hanging from west bridge
   addVine(scene, world, 45, 16, 0.2, 19.1, 1.05);    // hanging from east bridge
+  addVine(scene, world, -45, 30, 0.2, 19.1, 1.0);    // west bridge south drop
+  addVine(scene, world, 45, -28, 0.2, 19.1, 1.0);    // east bridge north drop
   addVine(scene, world, -18, -45, 0.2, 9.1, 0.95);   // north catwalk drop
   addVine(scene, world, 20, 45, 0.2, 9.1, 0.95);     // south catwalk drop
+  addVine(scene, world, 34, -45, 0.2, 9.1, 0.9);     // north catwalk east drop
+  addVine(scene, world, -34, 45, 0.2, 9.1, 0.9);     // south catwalk west drop
   addVine(scene, world, 7.8, 3, 0.2, 8.1, 0.85, -0.4, 0);     // center-tree wall growth
+  addVine(scene, world, 7.8, 7.2, 8.1, 16.1, 0.85, -0.35, 0.2); // center 8 → 16
+  addVine(scene, world, 3.6, -6.8, 16.1, 24.1, 0.8, 0.2, -0.25); // center 16 → 24
   addVine(scene, world, -38.1, -45, 0.2, 20.1, 0.95, -0.2, 0); // SW hollow tree exterior
   addVine(scene, world, -30, 15, 0.2, 4.1, 0.8, 0, -0.2);     // hedge-top shortcut
   addVine(scene, world, 51.9, -45, 0.2, 19.1, 0.9, 0.2, 0);   // NE trunk side
@@ -1650,16 +1656,22 @@ function buildCity(scene) {
   addBox(scene, world, 73.5, -0.5, -39.5, 27, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [3, 7] });
   addBox(scene, world, 56, -0.5, -29, 8, 1, 34, 0x3a3f4a, { tex: 'neonfloor', repeat: [1, 4] });
   addBox(scene, world, 56, -0.5, -60.5, 8, 1, 13, 0x3a3f4a, { tex: 'neonfloor', repeat: [1, 2] });
-  addBox(scene, world, -62.5, -0.5, -7, 49, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [6, 2] });
-  addBox(scene, world, 32.5, -0.5, -7, 109, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
-  addBox(scene, world, 0, -0.5, 0, 174, 1, 3, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 1] });
-  addBox(scene, world, -31.5, -0.5, 7, 111, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
-  addBox(scene, world, 63.5, -0.5, 7, 47, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [6, 2] });
+  addBox(scene, world, -60.5, -0.5, -7, 53, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [7, 2] });
+  addBox(scene, world, 30.5, -0.5, -7, 113, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
+  addBox(scene, world, 0, -0.5, 0, 174, 1, 4, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 1] });
+  addBox(scene, world, -29.5, -0.5, 7, 115, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [14, 2] });
+  addBox(scene, world, 61.5, -0.5, 7, 51, 1, 10, 0x3a3f4a, { tex: 'neonfloor', repeat: [7, 2] });
   addBox(scene, world, 0, -0.5, 39.5, 174, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [20, 7] });
 
   // SUBWAY: stairs at (-30,-7) and (32,7) down into an L-shaped tunnel
   addRamp(scene, world, { axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2, h0: -6, h1: 0, color: 0x2f3542 });
   addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: 2, maxZ: 12, h0: -6, h1: 0, color: 0x2f3542 });
+  // Stairwell guard walls: keep the ramp mouths open, but seal the side voids
+  // so players cannot fall out of the map beside the subway entrances.
+  addBox(scene, world, -34.5, -3.35, -7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
+  addBox(scene, world, -25.5, -3.35, -7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
+  addBox(scene, world, 27.5, -3.35, 7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
+  addBox(scene, world, 36.5, -3.35, 7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 1, -6.5, -7, 70, 1, 10, 0x2f3542, { tex: 'panel', repeat: [9, 2] });   // tunnel floor E-W
   addBox(scene, world, 1, -3.5, -12.5, 70, 5, 1, 0x262b38, { tex: 'panel' });                 // tunnel walls
   addBox(scene, world, -3, -3.5, -1.5, 62, 5, 1, 0x262b38, { tex: 'panel' });
@@ -1710,7 +1722,7 @@ function buildCity(scene) {
   addBox(scene, world, -37, railY - 0.35, -18, 44, 0.5, 3, 0x51607a, { tex: 'panel', repeat: [8, 1] });
   addRamp(scene, world, { axis: 'z', minX: -60, maxX: -56, minZ: -34, maxZ: -18, h0: 12, h1: railY, color: 0x51607a });
   for (const x of [-72, -48, -24, 24, 48, 72]) {
-    addBox(scene, world, x, railY - 4.6, 0, 0.45, 8.8, 0.45, 0x242b3a, { tex: 'panel' });
+    addBox(scene, world, x, railY - 5.1, 0, 0.45, 9.8, 0.45, 0x242b3a, { tex: 'panel' });
   }
   addMonorailTrain(scene, world, [V(0, 0, 0), V(104, 0, 0), V(104, 0, 78), V(-104, 0, 78), V(-104, 0, 0)], railY, 27, 8);
 
@@ -1879,7 +1891,7 @@ function buildCity(scene) {
   // ground variety: galleria plaza, crosswalk bands
   addBox(scene, world, -12, 0.031, 14, 30, 0.06, 14, 0x9088b0, { tex: 'arcade', repeat: [6, 3] });
   addBox(scene, world, 0, 0.031, -20, 8, 0.06, 30, 0x8a94b0, { tex: 'checker', repeat: [2, 7] });
-  addBox(scene, world, 40, 0.031, 0, 10, 0.06, 60, 0x8a94b0, { tex: 'checker', repeat: [2, 14] });
+  addBox(scene, world, 41.5, 0.031, 0, 7, 0.06, 60, 0x8a94b0, { tex: 'checker', repeat: [2, 14] });
   // floating platforms over the street + pads
   addBox(scene, world, 0, 11.7, -20, 12, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
   addJumpPad(scene, world, -9, 0, -20, 28, 3.8, 0, 0x30e0ff);
