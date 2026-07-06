@@ -22,6 +22,7 @@ export class MultiplayerClient extends EventTarget {
     this.lastSnapshot = null;
     this.lastPong = 0;
     this._buildUI();
+    window.addEventListener('pagehide', () => this._closeForPageHide());
   }
 
   open() {
@@ -84,6 +85,14 @@ export class MultiplayerClient extends EventTarget {
     this.send({ type: 'leaveLobby' });
     this.slotId = null;
     this.lobbyId = null;
+  }
+
+  _closeForPageHide() {
+    if (!this.ws) return;
+    this.send({ type: 'leaveLobby' });
+    try {
+      this.ws.close(1000, 'pagehide');
+    } catch {}
   }
 
   _message(msg) {

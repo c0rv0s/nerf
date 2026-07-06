@@ -16,6 +16,7 @@ const SLOTS = 8;
 const TICK_HZ = 30;
 const SNAPSHOT_HZ = 20;
 const RESPAWN_TIME = 3;
+const STALE_CONNECTION_MS = 15000;
 const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
 const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const MAPS = [
@@ -89,7 +90,16 @@ httpServer.on('upgrade', (req, socket) => {
     '',
   ].join('\r\n'));
 
-  const conn = { id: randomUUID(), socket, name: 'Player', lobbyId: null, slotId: null, buffer: Buffer.alloc(0), alive: true };
+  const conn = {
+    id: randomUUID(),
+    socket,
+    name: 'Player',
+    lobbyId: null,
+    slotId: null,
+    buffer: Buffer.alloc(0),
+    alive: true,
+    lastSeen: Date.now(),
+  };
   connections.set(conn.id, conn);
   socket.on('data', (chunk) => onData(conn, chunk));
   socket.on('end', () => disconnect(conn));
@@ -164,6 +174,7 @@ function disconnect(conn) {
 }
 
 function handleMessage(conn, msg) {
+  conn.lastSeen = Date.now();
   if (msg.type === 'hello') {
     conn.name = cleanName(msg.name);
     autoJoin(conn);
@@ -195,7 +206,10 @@ function handleMessage(conn, msg) {
     const lobby = lobbies.get(conn.lobbyId);
     if (!lobby || lobby.hostConnId !== conn.id || lobby.phase !== 'playing') return;
     const snap = sanitizeHostSnapshot(msg.snapshot, lobby);
-    if (snap) broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
+    if (snap) {
+      mergeHostSnapshot(lobby, snap);
+      broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
+    }
   } else if (msg.type === 'leaveLobby') {
     leaveLobby(conn);
   } else if (msg.type === 'ping') {
@@ -243,6 +257,7 @@ function createLobby() {
     phaseEndsAt: Date.now() + VOTE_TIME * 1000,
     map: MAPS[0],
     votes: new Map(),
+    latestRanked: null,
     slots: [],
     hostConnId: null,
     tickHandle: null,
@@ -435,6 +450,7 @@ function setPhase(lobby, phase) {
   if (phase === 'voting') {
     lobby.phaseEndsAt = now + VOTE_TIME * 1000;
     lobby.votes.clear();
+    lobby.latestRanked = null;
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
       if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map, s.lastSpawnIndex), { id: s.id, color: s.color });
@@ -442,6 +458,7 @@ function setPhase(lobby, phase) {
   } else if (phase === 'playing') {
     lobby.map = chooseVotedMap(lobby);
     lobby.phaseEndsAt = now + MATCH_TIME * 1000;
+    lobby.latestRanked = null;
     const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
@@ -465,7 +482,7 @@ function setPhase(lobby, phase) {
     phase: lobby.phase,
     mapId: lobby.map.id,
     phaseEndsAt: lobby.phaseEndsAt,
-    ranked: ranked(lobby),
+    ranked: phase === 'podium' && lobby.latestRanked ? lobby.latestRanked : ranked(lobby),
     hostId: lobby.hostConnId,
     slots: publicSlots(lobby),
   });
@@ -531,7 +548,7 @@ function sanitizeHostSnapshot(snapshot, lobby) {
     color: /^#[0-9a-f]{6}$/i.test(String(r.color || '')) ? r.color : COLORS[i % COLORS.length],
     human: !!r.human,
   })) : sanitizedPlayers;
-  const events = Array.isArray(snapshot.events) ? snapshot.events.slice(0, 24) : [];
+  const events = Array.isArray(snapshot.events) ? snapshot.events.slice(0, 32).map(sanitizeEvent).filter(Boolean) : [];
   return {
     tick: Date.now(),
     phase: lobby.phase,
@@ -541,6 +558,75 @@ function sanitizeHostSnapshot(snapshot, lobby) {
     players: sanitizedPlayers,
     events,
   };
+}
+
+function mergeHostSnapshot(lobby, snap) {
+  const byId = new Map(snap.players.map(p => [p.id, p]));
+  for (const slot of lobby.slots) {
+    const p = byId.get(slot.id);
+    if (!p) continue;
+    slot.pos = p.pos;
+    slot.yaw = p.yaw;
+    slot.pitch = p.pitch;
+    slot.hp = p.hp;
+    slot.alive = p.alive;
+    slot.respawn = p.respawn;
+    slot.score = p.score;
+    slot.kills = p.kills;
+    slot.deaths = p.deaths;
+  }
+  lobby.latestRanked = snap.ranked || ranked(lobby);
+}
+
+function sanitizeEvent(ev) {
+  if (!ev || typeof ev !== 'object') return null;
+  const type = String(ev.type || '');
+  if (type === 'shot') {
+    const from = sanitizeEventPoint(ev.from);
+    const to = sanitizeEventPoint(ev.to);
+    if (!from || !to) return null;
+    return {
+      type,
+      shooterId: String(ev.shooterId || '').slice(0, 32),
+      from,
+      to,
+      color: /^#[0-9a-f]{6}$/i.test(String(ev.color || '')) ? ev.color : '#ffd23c',
+      hit: !!ev.hit,
+    };
+  }
+  if (type === 'damage') {
+    return {
+      type,
+      attackerId: String(ev.attackerId || '').slice(0, 32),
+      targetId: String(ev.targetId || '').slice(0, 32),
+      amount: Math.max(0, Math.min(999, finite(ev.amount, 0))),
+    };
+  }
+  if (type === 'kill') {
+    return {
+      type,
+      killerId: String(ev.killerId || '').slice(0, 32),
+      victimId: String(ev.victimId || '').slice(0, 32),
+    };
+  }
+  return null;
+}
+
+function sanitizeEventPoint(p) {
+  if (!p || typeof p !== 'object') return null;
+  return {
+    x: Math.max(-250, Math.min(250, finite(p.x, 0))),
+    y: Math.max(-50, Math.min(120, finite(p.y, 0))),
+    z: Math.max(-250, Math.min(250, finite(p.z, 0))),
+  };
+}
+
+function pruneStaleConnections() {
+  const now = Date.now();
+  for (const conn of [...connections.values()]) {
+    if (!conn.alive || conn.socket.destroyed || now - conn.lastSeen <= STALE_CONNECTION_MS) continue;
+    close(conn);
+  }
 }
 
 function dist2(a, b) {
@@ -563,3 +649,5 @@ function angleDiff(a, b) {
 httpServer.listen(PORT, () => {
   console.log(`NERF Arena server listening on :${PORT}`);
 });
+
+setInterval(pruneStaleConnections, 5000);
