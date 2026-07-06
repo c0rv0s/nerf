@@ -23,6 +23,11 @@ export class MultiplayerClient extends EventTarget {
     this.snapshotCount = 0;
     this.lastSnapshotAt = 0;
     this.lastPong = 0;
+    this.intentionalClose = false;
+    this.reconnecting = false;
+    this.reconnectAttempts = 0;
+    this.reconnectLobbyId = null;
+    this.reconnectTimer = null;
     this._buildUI();
     window.addEventListener('pagehide', () => this._closeForPageHide());
   }
@@ -43,15 +48,31 @@ export class MultiplayerClient extends EventTarget {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${proto}//${location.host}${WS_PATH}`);
+    this.intentionalClose = false;
     this.ws.addEventListener('open', () => {
       this.connected = true;
-      this.status.textContent = 'Finding lobby...';
-      this.send({ type: 'hello', name: this.name });
+      this.status.textContent = this.reconnecting ? 'Rejoining lobby...' : 'Finding lobby...';
+      const hello = { type: 'hello', name: this.name };
+      if (this.reconnecting && this.reconnectLobbyId) hello.lobbyId = this.reconnectLobbyId;
+      this.send(hello);
       this._ping();
     });
     this.ws.addEventListener('message', (e) => this._message(JSON.parse(e.data)));
     this.ws.addEventListener('close', () => {
       this.connected = false;
+      this.ws = null;
+      if (this.intentionalClose) {
+        this.intentionalClose = false;
+        return;
+      }
+      const lobbyId = this.lobbyId || this.reconnectLobbyId;
+      if (lobbyId) {
+        this.reconnectLobbyId = lobbyId;
+        this.status.textContent = 'Connection lost. Rejoining...';
+        this.dispatchEvent(new CustomEvent('connectionLost', { detail: { lobbyId } }));
+        this._scheduleReconnect();
+        return;
+      }
       this.status.textContent = 'Disconnected. Re-enter the portal to retry.';
       this.dispatchEvent(new CustomEvent('disconnect'));
     });
@@ -86,6 +107,7 @@ export class MultiplayerClient extends EventTarget {
   }
 
   leave() {
+    this._clearReconnect();
     this.send({ type: 'leaveLobby' });
     this.slotId = null;
     this.lobbyId = null;
@@ -100,6 +122,7 @@ export class MultiplayerClient extends EventTarget {
 
   _closeForPageHide() {
     if (!this.ws) return;
+    this.intentionalClose = true;
     this.send({ type: 'leaveLobby' });
     try {
       this.ws.close(1000, 'pagehide');
@@ -110,6 +133,7 @@ export class MultiplayerClient extends EventTarget {
     if (msg.type === 'welcome') {
       this.playerId = msg.id;
     } else if (msg.type === 'joinedLobby') {
+      const wasReconnecting = this.reconnecting;
       this.slotId = msg.slotId;
       this.lobbyId = msg.lobbyId;
       this.phase = msg.phase;
@@ -118,8 +142,10 @@ export class MultiplayerClient extends EventTarget {
       this.isHost = !!msg.isHost;
       this.hostId = msg.hostId || null;
       this.slots = msg.slots || [];
+      this._clearReconnect();
       this.closeOverlay();
       this.dispatchEvent(new CustomEvent('joined', { detail: msg }));
+      if (wasReconnecting) this.dispatchEvent(new CustomEvent('reconnected', { detail: msg }));
       this._renderPhase();
     } else if (msg.type === 'hostChanged') {
       this.isHost = !!msg.isHost;
@@ -179,8 +205,27 @@ export class MultiplayerClient extends EventTarget {
     this.name = name;
     localStorage.setItem('nerf-mp-name', name);
     this.status.textContent = 'Connecting...';
+    this._clearReconnect();
     this.ensureConnected();
     if (this.ws?.readyState === WebSocket.OPEN) this.send({ type: 'hello', name });
+  }
+
+  _scheduleReconnect() {
+    clearTimeout(this.reconnectTimer);
+    this.reconnecting = true;
+    this.reconnectAttempts++;
+    const delay = Math.min(8000, 750 * 2 ** Math.min(this.reconnectAttempts - 1, 4));
+    this.reconnectTimer = setTimeout(() => {
+      this.ensureConnected();
+    }, delay);
+  }
+
+  _clearReconnect() {
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnecting = false;
+    this.reconnectAttempts = 0;
+    this.reconnectLobbyId = null;
   }
 
   _renderLobbyList(msg) {

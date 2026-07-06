@@ -16,7 +16,8 @@ const SLOTS = 8;
 const TICK_HZ = 30;
 const SNAPSHOT_HZ = 20;
 const RESPAWN_TIME = 3;
-const STALE_CONNECTION_MS = 45000;
+const STALE_CONNECTION_MS = 3 * 60 * 1000;
+const EMPTY_LOBBY_GRACE_MS = 60 * 1000;
 const HOST_SNAPSHOT_TIMEOUT_MS = 5000;
 const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
 const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
@@ -178,7 +179,9 @@ function handleMessage(conn, msg) {
   conn.lastSeen = Date.now();
   if (msg.type === 'hello') {
     conn.name = cleanName(msg.name);
-    autoJoin(conn);
+    const requestedLobbyId = String(msg.lobbyId || '');
+    if (requestedLobbyId && lobbies.has(requestedLobbyId)) joinLobby(conn, requestedLobbyId);
+    else autoJoin(conn);
   } else if (msg.type === 'joinLobby') {
     joinLobby(conn, String(msg.lobbyId || ''));
   } else if (msg.type === 'voteMap') {
@@ -251,8 +254,9 @@ function sanitizeVel(vel) {
 
 function autoJoin(conn) {
   const active = [...lobbies.values()].filter(l => l.humanCount() > 0 && l.humanCount() < SLOTS);
+  const occupied = [...lobbies.values()].filter(l => l.humanCount() > 0);
   if (active.length <= 1) {
-    if (!active[0] && lobbies.size >= MAX_LOBBIES) {
+    if (!active[0] && occupied.length >= MAX_LOBBIES) {
       send(conn, { type: 'lobbyList', lobbies: lobbyList(), full: true });
       return;
     }
@@ -276,6 +280,7 @@ function createLobby() {
     slots: [],
     hostConnId: null,
     tickHandle: null,
+    destroyTimer: null,
     lastTick: Date.now(),
     humanCount() { return this.slots.filter(s => s.human).length; },
   };
@@ -333,8 +338,10 @@ function joinLobby(conn, lobbyId) {
   leaveLobby(conn);
   let lobby = lobbies.get(lobbyId);
   if (!lobby) lobby = createLobby();
+  clearEmptyLobbyDestroy(lobby);
   if (lobby.humanCount() >= SLOTS) {
-    if (lobbies.size < MAX_LOBBIES) lobby = createLobby();
+    const occupied = [...lobbies.values()].filter(l => l.humanCount() > 0);
+    if (occupied.length < MAX_LOBBIES) lobby = createLobby();
     else {
       send(conn, { type: 'lobbyList', lobbies: lobbyList(), full: true });
       return;
@@ -373,14 +380,29 @@ function leaveLobby(conn) {
   }
   conn.lobbyId = null;
   conn.slotId = null;
-  if (lobby.humanCount() === 0) destroyLobby(lobby);
+  if (lobby.humanCount() === 0) scheduleEmptyLobbyDestroy(lobby);
   else {
     broadcastHost(lobby);
     broadcastLobbyMeta(lobby);
   }
 }
 
+function scheduleEmptyLobbyDestroy(lobby) {
+  if (lobby.destroyTimer) return;
+  lobby.destroyTimer = setTimeout(() => {
+    lobby.destroyTimer = null;
+    if (lobby.humanCount() === 0) destroyLobby(lobby);
+  }, EMPTY_LOBBY_GRACE_MS);
+}
+
+function clearEmptyLobbyDestroy(lobby) {
+  if (!lobby?.destroyTimer) return;
+  clearTimeout(lobby.destroyTimer);
+  lobby.destroyTimer = null;
+}
+
 function destroyLobby(lobby) {
+  clearEmptyLobbyDestroy(lobby);
   clearInterval(lobby.tickHandle);
   lobbies.delete(lobby.id);
 }

@@ -1632,7 +1632,7 @@ document.addEventListener('keyup', (e) => {
   if (e.code === 'Tab') G.showBoard = false;
 });
 
-function startCurrentMultiplayerMatch(mapId) {
+function startCurrentMultiplayerMatch(mapId, force = false) {
   clearTimeout(multiplayerVotingTimer);
   document.getElementById('endscreen').style.display = 'none';
   clickcatch.style.display = 'none';
@@ -1640,14 +1640,21 @@ function startCurrentMultiplayerMatch(mapId) {
   hud.els.board.style.display = 'none';
   const map = MAPS.find(m => m.id === mapId) || MAPS[0];
   if (multiplayer.shouldHost()) {
-    if (!G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
-  } else if (!G?.multiplayer || G.mapDef?.id !== map.id) {
+    if (force || !G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
+  } else if (force || !G?.multiplayer || G.mapDef?.id !== map.id) {
     startMultiplayerMatch(map);
   }
 }
 
 multiplayer.addEventListener('joined', (e) => {
-  if (e.detail.phase === 'playing') startCurrentMultiplayerMatch(e.detail.mapId);
+  if (e.detail.phase === 'playing') {
+    const slotChanged = !!G?.player?.id && G.player.id !== e.detail.slotId;
+    const roleMismatch = multiplayer.shouldHost() ? !G?.multiplayerHost : !G?.multiplayer;
+    startCurrentMultiplayerMatch(e.detail.mapId, slotChanged || roleMismatch);
+  } else if (G?.multiplayer || G?.multiplayerHost) {
+    hud.message('MULTIPLAYER LOBBY REJOINED', '#ffd23c');
+    endMatch(true);
+  }
 });
 
 multiplayer.addEventListener('phase', (e) => {
@@ -1704,6 +1711,18 @@ multiplayer.addEventListener('hostChanged', () => {
     if (!G?.multiplayerHost) startMultiplayerHostMatch(map);
   } else if (G?.multiplayerHost) {
     startMultiplayerMatch(map);
+  }
+});
+
+multiplayer.addEventListener('connectionLost', () => {
+  if (G?.multiplayer || G?.multiplayerHost) {
+    hud.message('CONNECTION LOST — REJOINING...', '#ffd23c');
+  }
+});
+
+multiplayer.addEventListener('reconnected', () => {
+  if (G?.multiplayer || G?.multiplayerHost) {
+    hud.message('MULTIPLAYER REJOINED', '#6dff6d');
   }
 });
 
