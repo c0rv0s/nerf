@@ -176,11 +176,16 @@ function cameraInFoliage() {
   const zones = G?.world?.foliageZones;
   if (!zones?.length) return false;
   const p = camera.position;
-  return zones.some(z => (
-    (p.x - z.x) * (p.x - z.x) +
-    (p.y - z.y) * (p.y - z.y) +
-    (p.z - z.z) * (p.z - z.z) < z.r * z.r
-  ));
+  return zones.some(z => {
+    if (z.r != null) {
+      return (p.x - z.x) * (p.x - z.x) +
+        (p.y - z.y) * (p.y - z.y) +
+        (p.z - z.z) * (p.z - z.z) < z.r * z.r;
+    }
+    return p.x >= z.minX && p.x <= z.maxX &&
+      p.y >= z.minY && p.y <= z.maxY &&
+      p.z >= z.minZ && p.z <= z.maxZ;
+  });
 }
 
 function updateFoliageFx(dt, forceClear = false) {
@@ -188,7 +193,7 @@ function updateFoliageFx(dt, forceClear = false) {
   const target = !forceClear && cameraInFoliage() ? 1 : 0;
   G.foliageMix = forceClear ? 0 : THREE.MathUtils.damp(G.foliageMix || 0, target, 9, dt);
   const mix = G.foliageMix;
-  if (foliageFx) foliageFx.style.opacity = mix > 0.01 ? String(0.48 * mix) : '0';
+  if (foliageFx) foliageFx.style.opacity = mix > 0.01 ? String(0.72 * mix) : '0';
 }
 
 function updateDeathCamera(dt) {

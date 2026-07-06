@@ -220,6 +220,7 @@ export class Player {
     this._speedRatio = Math.min(hs / speed, 1);
 
     const vine = this._vineZone();
+    const water = this._waterZone();
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
@@ -228,6 +229,11 @@ export class Player {
       this.jumpBuffer = 0;
       this.wantJump = false;
       this.coyote = 0;
+    } else if (water) {
+      this._applyWaterMotion(water, dt);
+      this.jumpBuffer = 0;
+      this.wantJump = false;
+      this.coyote = 0.04;
     } else if (this.jumpBuffer > 0 && this.coyote > 0) {
       this.vel.y = this.world.jumpVel;
       this.jumpBuffer = 0; this.coyote = 0; sfx('jump');
@@ -331,23 +337,48 @@ export class Player {
     const zones = this.world.waterZones;
     const foliageMult = this._foliageSpeedMult();
     if (!zones?.length) return foliageMult;
-    const eyeY = this.pos.y + this.eyeHeight;
-    return zones.some(z => (
+    return this._waterZone() ? 0.68 : foliageMult;
+  }
+
+  _waterZone() {
+    const zones = this.world.waterZones;
+    if (!zones?.length) return null;
+    const midY = this.pos.y + this.height * 0.5;
+    return zones.find(z => (
       this.pos.x >= z.minX && this.pos.x <= z.maxX &&
       this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
-      eyeY < z.surfaceY - 0.04
-    )) ? 0.68 : foliageMult;
+      midY >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
+      this.pos.y < z.surfaceY + 0.35
+    )) || null;
+  }
+
+  _applyWaterMotion(zone, dt) {
+    const surface = zone.surfaceY;
+    const eyeY = this.pos.y + this.eyeHeight;
+    let targetVy = eyeY < surface - 0.25 ? 1.15 : -0.35;
+    if (this.keys['Space']) targetVy = eyeY < surface + 0.15 ? 5.6 : this.world.jumpVel * 0.78;
+    else if (this.keys['KeyS']) targetVy = -2.4;
+    this.vel.y = THREE.MathUtils.damp(this.vel.y, targetVy + this.world.gravity * dt, 8, dt);
+    const waterDrag = Math.exp(-2.8 * dt);
+    this.vel.x *= waterDrag;
+    this.vel.z *= waterDrag;
+    this._airJumped = false;
   }
 
   _foliageSpeedMult() {
     const zones = this.world.foliageZones;
     if (!zones?.length) return 1;
     const eyeY = this.pos.y + this.eyeHeight;
-    return zones.some(z => (
-      (this.pos.x - z.x) * (this.pos.x - z.x) +
-      (eyeY - z.y) * (eyeY - z.y) +
-      (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r
-    )) ? 0.84 : 1;
+    return zones.some(z => {
+      if (z.r != null) {
+        return (this.pos.x - z.x) * (this.pos.x - z.x) +
+          (eyeY - z.y) * (eyeY - z.y) +
+          (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r;
+      }
+      return this.pos.x >= z.minX && this.pos.x <= z.maxX &&
+        eyeY >= z.minY && eyeY <= z.maxY &&
+        this.pos.z >= z.minZ && this.pos.z <= z.maxZ;
+    }) ? 0.84 : 1;
   }
 
   _vineZone() {
@@ -363,8 +394,7 @@ export class Player {
 
   _applyVineMotion(dt) {
     let climb = -1.15;                 // no input: slide down slowly
-    if (this.keys['Space']) climb = 0;
-    else if (this.keys['KeyW']) climb = 4.4;
+    if (this.keys['Space']) climb = 4.4;
     else if (this.keys['KeyS']) climb = -3.0;
 
     // moveCharacter applies gravity at the start of integration; offset it so
