@@ -144,6 +144,11 @@ export class MultiplayerClient extends EventTarget {
     this.send({ type: 'hostSnapshot', snapshot });
   }
 
+  shouldHost() {
+    const humanSlots = (this.slots || []).filter(s => s.human);
+    return !!this.isHost || this.hostId === this.playerId || humanSlots.length <= 1;
+  }
+
   _submitName() {
     const name = this.nameInput.value.trim().slice(0, 18);
     if (!name) {

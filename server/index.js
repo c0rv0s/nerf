@@ -317,6 +317,7 @@ function joinLobby(conn, lobbyId) {
     type: 'joinedLobby',
     lobbyId: lobby.id,
     slotId: slot.id,
+    hostId: lobby.hostConnId,
     isHost: lobby.hostConnId === conn.id,
     phase: lobby.phase,
     mapId: lobby.map.id,

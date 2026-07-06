@@ -1296,7 +1296,7 @@ multiplayer.addEventListener('phase', (e) => {
   const { phase, mapId, ranked } = e.detail;
   if (phase === 'playing') {
     const map = MAPS.find(m => m.id === mapId) || MAPS[0];
-    if (multiplayer.isHost) startMultiplayerHostMatch(map);
+    if (multiplayer.shouldHost()) startMultiplayerHostMatch(map);
     else startMultiplayerMatch(map);
   } else if (phase === 'podium' && G?.multiplayer) {
     const currentRanked = ranked?.map(r => {
@@ -1319,7 +1319,7 @@ multiplayer.addEventListener('phase', (e) => {
 });
 
 multiplayer.addEventListener('snapshot', (e) => {
-  if (multiplayer.isHost) return;
+  if (multiplayer.shouldHost()) return;
   if (e.detail.phase === 'playing' && (!G || !G.multiplayer)) {
     const map = MAPS.find(m => m.id === e.detail.mapId) || MAPS[0];
     startMultiplayerMatch(map);
@@ -1331,6 +1331,13 @@ multiplayer.addEventListener('remoteInput', (e) => {
   if (!G?.multiplayerHost) return;
   G.remoteInputs ||= new Map();
   G.remoteInputs.set(e.detail.slotId, e.detail.input);
+});
+
+multiplayer.addEventListener('hostChanged', () => {
+  if (!multiplayer.shouldHost() || multiplayer.phase !== 'playing') return;
+  if (G?.multiplayerHost) return;
+  const map = MAPS.find(m => m.id === multiplayer.mapId) || MAPS[0];
+  startMultiplayerHostMatch(map);
 });
 
 multiplayer.addEventListener('disconnect', () => {
@@ -1530,6 +1537,16 @@ function stepMultiplayer(dt) {
 
 // Debug handles: inspect state / fast-forward the sim headlessly
 window.__game = () => G;
+window.__mp = () => ({
+  isHost: multiplayer.isHost,
+  shouldHost: multiplayer.shouldHost(),
+  hostId: multiplayer.hostId,
+  playerId: multiplayer.playerId,
+  slotId: multiplayer.slotId,
+  phase: multiplayer.phase,
+  path: G?.multiplayerHost ? 'host-real-match' : G?.multiplayer ? 'client-renderer' : G?.atrium ? 'atrium' : 'singleplayer',
+  characters: G?.characters?.map(c => ({ name: c.name, id: c.id, bot: !c.isPlayer && !c.remoteHuman, human: !!(c.isPlayer || c.remoteHuman) })) || [],
+});
 window.__bench = (frames = 60) => {
   renderer.info.autoReset = false;
   renderer.info.reset();
