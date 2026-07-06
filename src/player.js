@@ -200,7 +200,7 @@ export class Player {
 
   // ---- normal, Y-gravity movement + camera (all maps except PRISM RUN) ----
   _moveNormal(dt) {
-    const speed = this.world.playerSpeed * (this.speedMult || 1);
+    const speed = this.world.playerSpeed * (this.speedMult || 1) * this._waterSpeedMult();
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
@@ -219,10 +219,16 @@ export class Player {
     if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
     this._speedRatio = Math.min(hs / speed, 1);
 
+    const vine = this._vineZone();
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
-    if (this.jumpBuffer > 0 && this.coyote > 0) {
+    if (vine) {
+      this._applyVineMotion(dt);
+      this.jumpBuffer = 0;
+      this.wantJump = false;
+      this.coyote = 0;
+    } else if (this.jumpBuffer > 0 && this.coyote > 0) {
       this.vel.y = this.world.jumpVel;
       this.jumpBuffer = 0; this.coyote = 0; sfx('jump');
     } else if (this.jumpBuffer > 0 && !this.grounded && this.djumpTime > 0 && !this._airJumped) {
@@ -253,7 +259,7 @@ export class Player {
     fwd.normalize();
     this._moveFwd = fwd.clone();
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    const speed = this.world.playerSpeed * (this.speedMult || 1);
+    const speed = this.world.playerSpeed * (this.speedMult || 1) * this._waterSpeedMult();
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const want = new THREE.Vector3().addScaledVector(fwd, f).addScaledVector(right, s);
@@ -312,6 +318,62 @@ export class Player {
     this.camera.up.copy(this.frameUp);
     this.camera.position.copy(eye);
     this.camera.lookAt(eye.add(look));
+  }
+
+  _waterSpeedMult() {
+    const lavaZones = this.world.lavaZones;
+    if (lavaZones?.some(z => (
+      this.pos.x >= z.minX && this.pos.x <= z.maxX &&
+      this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
+      this.pos.y < z.maxY
+    ))) return 0.34;
+
+    const zones = this.world.waterZones;
+    const foliageMult = this._foliageSpeedMult();
+    if (!zones?.length) return foliageMult;
+    const eyeY = this.pos.y + this.eyeHeight;
+    return zones.some(z => (
+      this.pos.x >= z.minX && this.pos.x <= z.maxX &&
+      this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
+      eyeY < z.surfaceY - 0.04
+    )) ? 0.68 : foliageMult;
+  }
+
+  _foliageSpeedMult() {
+    const zones = this.world.foliageZones;
+    if (!zones?.length) return 1;
+    const eyeY = this.pos.y + this.eyeHeight;
+    return zones.some(z => (
+      (this.pos.x - z.x) * (this.pos.x - z.x) +
+      (eyeY - z.y) * (eyeY - z.y) +
+      (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r
+    )) ? 0.84 : 1;
+  }
+
+  _vineZone() {
+    const zones = this.world.vineZones;
+    if (!zones?.length) return null;
+    const midY = this.pos.y + this.height * 0.5;
+    return zones.find(z => (
+      midY >= z.minY - 0.5 && midY <= z.maxY + 0.5 &&
+      (this.pos.x - z.x) * (this.pos.x - z.x) +
+      (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r
+    )) || null;
+  }
+
+  _applyVineMotion(dt) {
+    let climb = -1.15;                 // no input: slide down slowly
+    if (this.keys['Space']) climb = 0;
+    else if (this.keys['KeyW']) climb = 4.4;
+    else if (this.keys['KeyS']) climb = -3.0;
+
+    // moveCharacter applies gravity at the start of integration; offset it so
+    // vine velocity is controlled by input instead of free fall.
+    this.vel.y = climb + this.world.gravity * dt;
+    const drag = Math.exp(-4.5 * dt);
+    this.vel.x *= drag;
+    this.vel.z *= drag;
+    this._airJumped = false;
   }
 
   // Outward normal (as a cardinal "up") of the nearest solid surface to the

@@ -80,6 +80,8 @@ addEventListener('resize', resize);
 resize();
 
 const hud = new HUD();
+const underwaterFx = document.getElementById('underwaterFx');
+const foliageFx = document.getElementById('foliageFx');
 let G = null; // current match state (or the lobby)
 let rafId = 0;
 let selectedMode = 'ffa';
@@ -105,6 +107,8 @@ document.getElementById('againbtn').addEventListener('click', () => {
 /* ---------------- match setup ---------------- */
 function teardown() {
   if (!G) return;
+  updateUnderwaterFx(1, true);
+  updateFoliageFx(1, true);
   G.over = true;
   for (const ch of G.characters || []) disposeNameTag(ch);
   G.projectiles.clear();
@@ -125,6 +129,81 @@ function teardown() {
   G.scene.clear();
   dmgMarkers = [];
   G = null;
+}
+
+function cameraUnderwater() {
+  const zones = G?.world?.waterZones;
+  if (!zones?.length) return false;
+  const p = camera.position;
+  return zones.some(z => (
+    p.x >= z.minX && p.x <= z.maxX &&
+    p.z >= z.minZ && p.z <= z.maxZ &&
+    p.y < z.surfaceY - 0.04
+  ));
+}
+
+function updateUnderwaterFx(dt, forceClear = false) {
+  if (!G) return;
+  const target = !forceClear && cameraUnderwater() ? 1 : 0;
+  G.underwaterMix = forceClear ? 0 : THREE.MathUtils.damp(G.underwaterMix || 0, target, 10, dt);
+  const mix = G.underwaterMix;
+  if (underwaterFx) underwaterFx.style.opacity = mix > 0.01 ? String(0.78 * mix) : '0';
+
+  const scene = G.scene;
+  if (!scene) return;
+  if (!G.baseFog) {
+    G.baseFog = scene.fog ? {
+      color: scene.fog.color.clone(),
+      near: scene.fog.near,
+      far: scene.fog.far,
+    } : null;
+  }
+  if (mix > 0.01) {
+    if (!scene.fog) scene.fog = new THREE.Fog(0x0a7aa0, 8, 70);
+    scene.fog.color.set(0x0a7aa0);
+    scene.fog.near = THREE.MathUtils.lerp(G.baseFog?.near ?? 120, 5, mix);
+    scene.fog.far = THREE.MathUtils.lerp(G.baseFog?.far ?? 340, 42, mix);
+  } else if (G.baseFog) {
+    scene.fog.color.copy(G.baseFog.color);
+    scene.fog.near = G.baseFog.near;
+    scene.fog.far = G.baseFog.far;
+  } else {
+    scene.fog = null;
+  }
+}
+
+function cameraInFoliage() {
+  const zones = G?.world?.foliageZones;
+  if (!zones?.length) return false;
+  const p = camera.position;
+  return zones.some(z => (
+    (p.x - z.x) * (p.x - z.x) +
+    (p.y - z.y) * (p.y - z.y) +
+    (p.z - z.z) * (p.z - z.z) < z.r * z.r
+  ));
+}
+
+function updateFoliageFx(dt, forceClear = false) {
+  if (!G) return;
+  const target = !forceClear && cameraInFoliage() ? 1 : 0;
+  G.foliageMix = forceClear ? 0 : THREE.MathUtils.damp(G.foliageMix || 0, target, 9, dt);
+  const mix = G.foliageMix;
+  if (foliageFx) foliageFx.style.opacity = mix > 0.01 ? String(0.48 * mix) : '0';
+}
+
+function updateDeathCamera(dt) {
+  if (!G?.player || G.over) return;
+  G.deathBaseFov ||= camera.fov;
+  const timer = G.respawnTimers?.get(G.player);
+  const dead = !G.player.alive && timer != null;
+  const elapsed = dead ? THREE.MathUtils.clamp(1 - timer / RESPAWN_TIME, 0, 1) : 0;
+  const target = elapsed * elapsed * (3 - 2 * elapsed);
+  G.deathZoomMix = THREE.MathUtils.damp(G.deathZoomMix || 0, target, dead ? 4 : 10, dt);
+  const nextFov = THREE.MathUtils.lerp(G.deathBaseFov, G.deathBaseFov + 13, G.deathZoomMix);
+  if (Math.abs(camera.fov - nextFov) > 0.01) {
+    camera.fov = nextFov;
+    camera.updateProjectionMatrix();
+  }
 }
 
 // THE LOBBY: a walkable atrium — stroll into a glowing gate to start a match.
@@ -1742,6 +1821,9 @@ function tick(now) {
     G.lastStepWall = now;
     step(dt);
   }
+  updateDeathCamera(dt);
+  updateUnderwaterFx(dt);
+  updateFoliageFx(dt);
   composer.render();
   if (G.pendingMap) { // walked into a lobby gate — swap to that arena
     const map = G.pendingMap;

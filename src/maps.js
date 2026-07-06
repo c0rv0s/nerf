@@ -133,7 +133,7 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'poster1', 'target', 'hazard', 'grass', 'dirt', 'flowers', 'door', 'lava']
+   'poster1', 'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava']
     .map((name) => new Promise((done) => {
       const url = `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -312,6 +312,13 @@ function waterNormalTex() {
 }
 
 function addWater(scene, world, x, y, z, w, d) {
+  world.waterZones ||= [];
+  world.waterZones.push({
+    minX: x - w / 2, maxX: x + w / 2,
+    minZ: z - d / 2, maxZ: z + d / 2,
+    surfaceY: y,
+  });
+
   const layers = [];
   for (const [dy, opacity, scale] of [[0, 0.55, 8], [-0.12, 0.3, 13]]) {
     const n = waterNormalTex().clone();
@@ -349,6 +356,38 @@ function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff,
     disc.position.y = y + 0.34 + Math.abs(Math.sin(t * 3)) * 0.12;
     disc.material.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.6;
   });
+}
+
+function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0) {
+  (world.vineZones ||= []).push({ x, z, minY: Math.min(y0, y1), maxY: Math.max(y0, y1), r });
+  const h = Math.abs(y1 - y0);
+  const matVine = new THREE.MeshStandardMaterial({
+    color: 0x2d8a32, roughness: 0.9, metalness: 0,
+    emissive: 0x0b2a0f, emissiveIntensity: 0.08,
+  });
+  const matLeaf = new THREE.MeshStandardMaterial({ color: 0x57b33a, roughness: 0.85, metalness: 0 });
+  for (let i = 0; i < 5; i++) {
+    const a = i * 2.15;
+    const strand = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.055, h, 6), matVine);
+    strand.position.set(
+      x + Math.cos(a) * r * 0.22 + leanX * 0.5,
+      (y0 + y1) / 2,
+      z + Math.sin(a) * r * 0.22 + leanZ * 0.5,
+    );
+    strand.rotation.z = leanX * 0.035;
+    strand.rotation.x = -leanZ * 0.035;
+    strand.castShadow = strand.receiveShadow = true;
+    scene.add(strand);
+  }
+  for (let i = 0; i < Math.max(6, Math.floor(h * 1.3)); i++) {
+    const yy = Math.min(y0, y1) + 0.45 + (i / Math.max(1, Math.floor(h * 1.3))) * (h - 0.7);
+    const a = i * 2.4;
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.16 + (i % 3) * 0.035, 6, 4), matLeaf);
+    leaf.scale.set(1.25, 0.45, 0.75);
+    leaf.position.set(x + Math.cos(a) * r * 0.28, yy, z + Math.sin(a) * r * 0.28);
+    leaf.rotation.set(rand(-0.7, 0.7), rand(0, Math.PI), rand(-0.5, 0.5));
+    scene.add(leaf);
+  }
 }
 
 function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
@@ -1284,20 +1323,44 @@ function buildCanopy(scene) {
   scene.fog = new THREE.Fog(0x14291f, 110, 320);
   baseLighting(scene, 0xa8d8a0, 0x1c3020, [60, 120, -40], 130);
 
-  // Mossy ground split by a RIVER (channel x −58..−50, bed −2.6, water −0.55):
-  // wade it, cross the plank bridge, or duck through the two covered flooded
-  // tunnels; in-channel ramps at both ends climb back out
+  // Mossy ground split by twin RIVERS (channels x −58..−50 and x 50..58,
+  // bed −2.6, water −0.55): wade them, cross the plank bridges, or duck into
+  // the covered flooded tunnels. A submerged connector runs under the south
+  // lawn between the two riverbeds.
   addBox(scene, world, -70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
-  addBox(scene, world, 16, -0.5, 0, 132, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [13, 16] });
+  addBox(scene, world, 0, -0.5, 0, 100, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [10, 16] });
+  addBox(scene, world, 70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
   addBox(scene, world, -54, -3.1, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });   // riverbed
-  addBox(scene, world, -57.6, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);    // channel sides — inset 5cm
-  addBox(scene, world, -50.4, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);    //  from the bank faces
+  addBox(scene, world, 54, -3.1, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });
+  const riverSide = (x, gapZ = null) => {
+    if (gapZ == null) {
+      addBox(scene, world, x, -1.35, 0, 0.7, 2.6, 164, 0x4a7a52);
+      return;
+    }
+    addBox(scene, world, x, -1.35, (gapZ - 4 - 82) / 2, 0.7, 2.6, 82 + gapZ - 4, 0x4a7a52);
+    addBox(scene, world, x, -1.35, (gapZ + 4 + 82) / 2, 0.7, 2.6, 82 - gapZ - 4, 0x4a7a52);
+  };
+  riverSide(-57.6);        // channel sides — inset 5cm from the bank faces
+  riverSide(-50.4, 64);    // gap opens into the underwater connector
+  riverSide(50.4, 64);
+  riverSide(57.6);
   addWater(scene, world, -54, -0.55, 0, 7.8, 162);
+  addWater(scene, world, 54, -0.55, 0, 7.8, 162);
+  addBox(scene, world, 0, -3.1, 64, 108, 1, 8, 0x3f6e5e, { tex: 'rock', repeat: [12, 1] });   // underwater connector bed
+  addBox(scene, world, 0, -1.35, 59.6, 108, 2.6, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
+  addBox(scene, world, 0, -1.35, 68.4, 108, 2.6, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
+  addBox(scene, world, 0, -0.1, 64, 108, 0.3, 8.8, 0x4a7a52, { tex: 'rock', repeat: [12, 1] }); // low ceiling keeps it underwater
+  addWater(scene, world, 0, -0.55, 64, 108, 7.8);
   addBox(scene, world, -54, -0.1, 4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });   // flooded tunnel covers
   addBox(scene, world, -54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
+  addBox(scene, world, 54, -0.1, -4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });
+  addBox(scene, world, 54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
   addBox(scene, world, -54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] }); // plank bridge
+  addBox(scene, world, 54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] });
   addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -2.6, h1: 0.3, color: 0x4a7a52 });
   addRamp(scene, world, { axis: 'x', minX: -58, maxX: -51.5, minZ: -52, maxZ: -48, h0: 0.3, h1: -2.6, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: 50, maxX: 56.5, minZ: 28, maxZ: 32, h0: 0.3, h1: -2.6, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: 51.5, maxX: 58, minZ: -52, maxZ: -48, h0: -2.6, h1: 0.3, color: 0x4a7a52 });
   // ground variety: dirt roads + flower meadows across the lawn
   addBox(scene, world, 10, 0.031, -40, 120, 0.06, 7, 0xb08a5a, { tex: 'dirt', repeat: [16, 1] });
   addBox(scene, world, 55, 0.031, 20, 7, 0.06, 113, 0xb08a5a, { tex: 'dirt', repeat: [1, 15] });
@@ -1421,6 +1484,13 @@ function buildCanopy(scene) {
   addBox(scene, world, 45, 19.48, 0, 3, 1, 78, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
   addBox(scene, world, 0, 9.48, -45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
   addBox(scene, world, 0, 9.48, 45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
+  addVine(scene, world, -45, -18, 0.2, 19.1, 1.05);  // hanging from west bridge
+  addVine(scene, world, 45, 16, 0.2, 19.1, 1.05);    // hanging from east bridge
+  addVine(scene, world, -18, -45, 0.2, 9.1, 0.95);   // north catwalk drop
+  addVine(scene, world, 20, 45, 0.2, 9.1, 0.95);     // south catwalk drop
+  addVine(scene, world, 7.8, 3, 0.2, 8.1, 0.85, -0.4, 0);     // center-tree wall growth
+  addVine(scene, world, -39.1, -45, 0.2, 20.1, 0.95, -0.35, 0); // SW hollow tree exterior
+  addVine(scene, world, -30, 15, 0.2, 4.1, 0.8, 0, -0.2);     // hedge-top shortcut
 
   // Ramps: ground ↔ center deck 8; bridges ↔ center 16 / center 8
   addRamp(scene, world, { axis: 'x', minX: 12, maxX: 42, minZ: -2, maxZ: 2, h0: 8, h1: 0, color: 0x8a6a40 });
@@ -1443,10 +1513,12 @@ function buildCanopy(scene) {
   const deco = { colliders: [], ramps: [] };
   const autumn = addAsteroid(scene, deco, 45, 33, 45, 13, 0xd8742a); // one tree turns first
   autumn.material.map = null;
+  (world.foliageZones ||= []).push({ x: 45, y: 33, z: 45, r: 12.5 });
   for (const [x, y, z, r] of [[-45, 33, -45, 13], [45, 33, -45, 13], [-45, 33, 45, 13], [0, 39, 0, 16],
                               [-20, 1, -60, 3], [60, 1, 20, 3], [-60, 1, 10, 2.5], [25, 1, 60, 3]]) {
     const blob = addAsteroid(scene, deco, x, y, z, r, 0x3f7a33);
     blob.material.map = null;
+    world.foliageZones.push({ x, y, z, r: r * 0.95 });
   }
 
   // Spawns
@@ -1515,7 +1587,11 @@ function buildCanopy(scene) {
     // river: bed line, flooded tunnels, exit-ramp mids, crossings on top
     [-54, -2.6, -20], [-54, -2.6, 4], [-54, -2.6, 24], [-54, -2.6, 40], [-54, -2.6, 56],
     [-53, -1.2, 30], [-55, -1.2, -50],
+    [54, -2.6, -20], [54, -2.6, 4], [54, -2.6, 24], [54, -2.6, 40], [54, -2.6, 56],
+    [53, -1.2, 30], [55, -1.2, -50],
+    [-40, -2.6, 64], [-18, -2.6, 64], [0, -2.6, 64], [18, -2.6, 64], [40, -2.6, 64],
     [-54, 0, -40], [-54, 0, 10], [-54, 0, 46],
+    [54, 0, -40], [54, 0, 10], [54, 0, 46],
     // center tree-base room + interior stairs
     [0, 0, 2], [0, 0, 12], [-4.5, 2, 0], [-1.5, 4, -5], [3, 6, -5],
     // SW hollow tree: door, shaft, ledge, attic, top exit
@@ -1577,7 +1653,7 @@ function buildCity(scene) {
 
   // SUBWAY: stairs at (-30,-7) and (32,7) down into an L-shaped tunnel
   addRamp(scene, world, { axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2, h0: -6, h1: 0, color: 0x2f3542 });
-  addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: 2, maxZ: 12, h0: 0, h1: -6, color: 0x2f3542 });
+  addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: 2, maxZ: 12, h0: -6, h1: 0, color: 0x2f3542 });
   addBox(scene, world, 1, -6.5, -7, 70, 1, 10, 0x2f3542, { tex: 'panel', repeat: [9, 2] });   // tunnel floor E-W
   addBox(scene, world, 1, -3.5, -12.5, 70, 5, 1, 0x262b38, { tex: 'panel' });                 // tunnel walls
   addBox(scene, world, -3, -3.5, -1.5, 62, 5, 1, 0x262b38, { tex: 'panel' });
@@ -1607,11 +1683,15 @@ function buildCity(scene) {
   const railY = 10;
   addBox(scene, world, 0, railY - 0.55, 0, 178, 0.32, 0.45, 0x171b28,
     { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 0.7 });
+  addBox(scene, world, 0, railY - 0.18, 0, 178, 0.3, 1.15, 0x202638, { tex: 'panel', repeat: [22, 1] });
   addBox(scene, world, 0, railY - 0.95, -2.7, 178, 0.28, 0.35, 0x202638, { collide: false });
   addBox(scene, world, 0, railY - 0.95, 2.7, 178, 0.28, 0.35, 0x202638, { collide: false });
   addBox(scene, world, 104, railY - 0.95, 39, 0.35, 0.28, 78, 0x202638, { collide: false });
   addBox(scene, world, -104, railY - 0.95, 39, 0.35, 0.28, 78, 0x202638, { collide: false });
   addBox(scene, world, 0, railY - 0.95, 78, 208, 0.28, 0.35, 0x202638, { collide: false });
+  addBox(scene, world, 104, railY - 0.18, 39, 1.15, 0.3, 78, 0x202638, { tex: 'panel', repeat: [1, 10] });
+  addBox(scene, world, -104, railY - 0.18, 39, 1.15, 0.3, 78, 0x202638, { tex: 'panel', repeat: [1, 10] });
+  addBox(scene, world, 0, railY - 0.18, 78, 208, 0.3, 1.15, 0x202638, { tex: 'panel', repeat: [26, 1] });
   addBox(scene, world, 0, railY - 0.3, 5.3, 30, 0.6, 5, 0x596478, { tex: 'arcade', repeat: [6, 1] });
   addBox(scene, world, 0, railY - 0.3, -5.3, 30, 0.6, 5, 0x596478, { tex: 'arcade', repeat: [6, 1] });
   addBox(scene, world, 0, railY + 1.4, 8.05, 28, 0.7, 0.3, 0xffd23c,
@@ -1631,7 +1711,6 @@ function buildCity(scene) {
   // Buildings [x, z, size, height, color] — roofs are the playground.
   // (The two −12 towers are hollow now — built below as interiors.)
   const buildings = [
-    [-58, -35, 26, 12, 0x51607a],
     [32, -35, 26, 28, 0x44586e], [62, -32, 18, 16, 0x60566e],
     [-58, 33, 22, 24, 0x4c5a6a],
     [32, 34, 22, 18, 0x5c4f62], [64, 30, 16, 10, 0x596478],
@@ -1643,6 +1722,30 @@ function buildCity(scene) {
   for (const [bx, bz, s, h, c] of buildings) {
     addBox(scene, world, bx, h / 2, bz, s, h, s, c, { tex: 'neonwall', repeat: [Math.round(s / 4), Math.round(h / 4)] });
   }
+  /* ---- WEST SKYSCRAPER: the west station skywalk used to dead-end into this
+     tower. It now enters a hollow interior floor, ramps up, and exits onto the
+     roof. Shell x −71..−45, z −48..−22, roof top y=12. ---- */
+  const westTower = 0x51607a;
+  const westIn = 0x5f6f90;
+  addBox(scene, world, -58, 0.03, -35, 24.5, 0.06, 24.5, westIn, { tex: 'arcade', repeat: [5, 5] });
+  addBox(scene, world, -58, 9.65, -35, 24.5, 0.7, 24.5, westIn, { tex: 'arcade', repeat: [5, 5] }); // skywalk interior floor
+  addBox(scene, world, -58, 11.6, -42, 24.5, 0.8, 11, westTower, { tex: 'neonwall', repeat: [5, 2] }); // roof north slab
+  addBox(scene, world, -64.5, 11.6, -28, 11.5, 0.8, 15, westTower, { tex: 'neonwall', repeat: [3, 3] }); // roof west/east strips leave hatch
+  addBox(scene, world, -51.5, 11.6, -28, 11.5, 0.8, 15, westTower, { tex: 'neonwall', repeat: [3, 3] });
+  addBox(scene, world, -68.75, 6, -35, 4.5, 12, 26, westTower, { tex: 'neonwall', repeat: [1, 4] }); // west wall
+  addBox(scene, world, -47.25, 6, -35, 4.5, 12, 26, westTower, { tex: 'neonwall', repeat: [1, 4] }); // east wall
+  addBox(scene, world, -58, 6, -47.25, 26, 12, 1.5, westTower, { tex: 'neonwall', repeat: [6, 3] }); // south wall
+  // North face with a skywalk doorway centered at x -58, y 10.
+  addBox(scene, world, -67, 6, -22.75, 8, 12, 1.5, westTower, { tex: 'neonwall' });
+  addBox(scene, world, -49, 6, -22.75, 8, 12, 1.5, westTower, { tex: 'neonwall' });
+  addBox(scene, world, -58, 4, -22.75, 10, 8, 1.5, westTower, { tex: 'neonwall' });
+  addBox(scene, world, -58, 10.25, -20.35, 11, 0.45, 4.5, westIn, { tex: 'panel', repeat: [2, 1] }); // skywalk threshold
+  addRamp(scene, world, { axis: 'z', minX: -62.5, maxX: -55.5, minZ: -41, maxZ: -29, h0: 10, h1: 12.3, color: westIn });
+  addBox(scene, world, -55, 12.35, -23.8, 0.3, 0.9, 5.5, 0xffd23c);
+  addBox(scene, world, -61, 12.35, -23.8, 0.3, 0.9, 5.5, 0xffd23c);
+  const westTowerLight = new THREE.PointLight(0x30e0ff, 24, 20);
+  westTowerLight.position.set(-58, 10.8, -35);
+  scene.add(westTowerLight);
   // Extra ground-level pathway texture so the city reads less like open asphalt.
   for (const [x, z, w, d] of [
     [-78, 0, 8, 128], [78, 0, 8, 128], [-20, 58, 52, 6], [52, 58, 54, 6],
@@ -1698,7 +1801,7 @@ function buildCity(scene) {
   addRamp(scene, world, { axis: 'x', minX: -18, maxX: -6, minZ: 23.5, maxZ: 27, h0: 24, h1: 16, color: galIn });
   // L-shaped top chamber at 24 (west strip + southwest wing) with rails
   addBox(scene, world, -21.25, 23.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
-  addBox(scene, world, -14, 23.6, 26.75, 8, 0.8, 6.5, galIn, { tex: 'arcade', repeat: [2, 2] });
+  addBox(scene, world, -14, 23.6, 29.5, 8, 0.8, 1, galIn, { tex: 'arcade', repeat: [2, 1] }); // leaves ramp crest open
   addBox(scene, world, -18.35, 24.45, 37.75, 0.3, 0.9, 21.5, 0xffd23c);
   addBox(scene, world, -10.35, 24.45, 26.75, 0.3, 0.9, 6.5, 0xffd23c);
   addBox(scene, world, -14, 24.45, 29.65, 8, 0.9, 0.3, 0xffd23c);
@@ -1886,6 +1989,8 @@ function buildCity(scene) {
     // skybridges (with mid points so the climb stays within link tolerance)
     [-58, 15, -11], [-58, 18, 0], [-58, 21, 11], [-58, 23.5, 19],
     [32, 25.5, -11], [32, 23, 0], [32, 20.5, 11],
+    // west skyscraper interior: skywalk entrance → inside floor → roof exit
+    [-58, 10, -21], [-58, 10, -34], [-58, 11, -38], [-58, 12.4, -29],
     // east fire escape: street → B4 roof
     [48, 2.5, 20.5], [56, 5, 20.5], [64, 7.5, 20.5], [71, 10, 20.5],
     // west wall ramp: street → A1 landing → roof
@@ -1946,6 +2051,9 @@ function buildCity(scene) {
     [-12, 10, -7, 0, 10, -5.3, false],
     [0, 10, 5.3, 0, 10, 0, false],
     [0, 10, -5.3, 0, 10, 0, false],
+    [-56, 11.2, -22, -58, 10, -21, false],
+    [-58, 10, -34, -58, 12.4, -29, false],
+    [-58, 12.4, -29, -58, 12, -35, false],
     [0, 10, 5.3, 20, 10, 26, false],
     [0, 10, -5.3, -18, 10, -18, false],
   );
@@ -2531,7 +2639,7 @@ export function buildAtrium(scene) {
   scene.add(sancLight);
 
   // grass boulevard + fountain
-  addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35);
+  addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 9] });
   addBox(scene, world, 0, 0.45, -22, 16, 0.9, 2, 0x555a74, { tex: 'panel' });   // pool rim
   addBox(scene, world, 0, 0.45, -34, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
   addBox(scene, world, -8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });

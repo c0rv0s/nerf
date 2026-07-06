@@ -19,7 +19,7 @@ export const WEAPONS = {
                 sound: 'pulsar' },
   sidewinder: { name: 'SIDEWINDER',   slot: 4, dmg: 24, rof: 1.6, speed: 55,  spread: 0.01,
                 pellets: 1, ammo: 0, pickupAmmo: 10, color: 0x8aff30, size: 0.17,
-                disc: true, bounce: 3, sound: 'disc' },
+                disc: true, bounce: 6, sound: 'disc' },
   zooka:      { name: 'BALLZOOKA',    slot: 5, dmg: 42, rof: 0.8, speed: 38,  spread: 0.005,
                 pellets: 1, ammo: 0, pickupAmmo: 6, color: 0xffe040, size: 0.35,
                 splash: 5.5, splashDmg: 32, gravity: true, trail: true, sound: 'zooka' },
