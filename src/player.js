@@ -200,7 +200,8 @@ export class Player {
 
   // ---- normal, Y-gravity movement + camera (all maps except PRISM RUN) ----
   _moveNormal(dt) {
-    const speed = this.world.playerSpeed * (this.speedMult || 1) * this._waterSpeedMult();
+    const env = this._environmentState();
+    const speed = this.world.playerSpeed * (this.speedMult || 1) * env.speedMult;
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
@@ -219,8 +220,8 @@ export class Player {
     if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
     this._speedRatio = Math.min(hs / speed, 1);
 
-    const vine = this._vineZone();
-    const water = this._waterZone();
+    const vine = env.vine;
+    const water = env.water;
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
@@ -327,29 +328,65 @@ export class Player {
   }
 
   _waterSpeedMult() {
-    const lavaZones = this.world.lavaZones;
-    if (lavaZones?.some(z => (
-      this.pos.x >= z.minX && this.pos.x <= z.maxX &&
-      this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
-      this.pos.y < z.maxY
-    ))) return 0.34;
-
-    const zones = this.world.waterZones;
-    const foliageMult = this._foliageSpeedMult();
-    if (!zones?.length) return foliageMult;
-    return this._waterZone() ? 0.68 : foliageMult;
+    return this._environmentState().speedMult;
   }
 
-  _waterZone() {
-    const zones = this.world.waterZones;
-    if (!zones?.length) return null;
-    const midY = this.pos.y + this.height * 0.5;
-    return zones.find(z => (
-      this.pos.x >= z.minX && this.pos.x <= z.maxX &&
-      this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
-      midY >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
-      this.pos.y < z.surfaceY + 0.35
-    )) || null;
+  _environmentState() {
+    const px = this.pos.x, py = this.pos.y, pz = this.pos.z;
+    const eyeY = py + this.eyeHeight;
+    const midY = py + this.height * 0.5;
+    let lava = false;
+    for (const z of this.world.lavaZones || []) {
+      if (
+        px >= z.minX && px <= z.maxX &&
+        pz >= z.minZ && pz <= z.maxZ &&
+        py < z.maxY
+      ) { lava = true; break; }
+    }
+
+    let water = null;
+    if (!lava) {
+      for (const z of this.world.waterZones || []) {
+        if (
+          px >= z.minX && px <= z.maxX &&
+          pz >= z.minZ && pz <= z.maxZ &&
+          midY >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
+          py < z.surfaceY + 0.35
+        ) { water = z; break; }
+      }
+    }
+
+    let foliage = false;
+    if (!lava && !water) {
+      for (const z of this.world.foliageZones || []) {
+        if (z.r != null) {
+          foliage = (px - z.x) * (px - z.x) +
+            (eyeY - z.y) * (eyeY - z.y) +
+            (pz - z.z) * (pz - z.z) < z.r * z.r;
+        } else {
+          foliage = px >= z.minX && px <= z.maxX &&
+            eyeY >= z.minY && eyeY <= z.maxY &&
+            pz >= z.minZ && pz <= z.maxZ;
+        }
+        if (foliage) break;
+      }
+    }
+
+    let vine = null;
+    for (const z of this.world.vineZones || []) {
+      if (
+        midY >= z.minY - 0.5 && midY <= z.maxY + 0.5 &&
+        (px - z.x) * (px - z.x) + (pz - z.z) * (pz - z.z) < z.r * z.r
+      ) { vine = z; break; }
+    }
+
+    return {
+      lava,
+      water,
+      foliage,
+      vine,
+      speedMult: lava ? 0.34 : water ? 0.68 : foliage ? 0.84 : 1,
+    };
   }
 
   _applyWaterMotion(zone, dt) {
@@ -363,33 +400,6 @@ export class Player {
     this.vel.x *= waterDrag;
     this.vel.z *= waterDrag;
     this._airJumped = false;
-  }
-
-  _foliageSpeedMult() {
-    const zones = this.world.foliageZones;
-    if (!zones?.length) return 1;
-    const eyeY = this.pos.y + this.eyeHeight;
-    return zones.some(z => {
-      if (z.r != null) {
-        return (this.pos.x - z.x) * (this.pos.x - z.x) +
-          (eyeY - z.y) * (eyeY - z.y) +
-          (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r;
-      }
-      return this.pos.x >= z.minX && this.pos.x <= z.maxX &&
-        eyeY >= z.minY && eyeY <= z.maxY &&
-        this.pos.z >= z.minZ && this.pos.z <= z.maxZ;
-    }) ? 0.84 : 1;
-  }
-
-  _vineZone() {
-    const zones = this.world.vineZones;
-    if (!zones?.length) return null;
-    const midY = this.pos.y + this.height * 0.5;
-    return zones.find(z => (
-      midY >= z.minY - 0.5 && midY <= z.maxY + 0.5 &&
-      (this.pos.x - z.x) * (this.pos.x - z.x) +
-      (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r
-    )) || null;
   }
 
   _applyVineMotion(dt) {

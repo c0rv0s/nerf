@@ -319,26 +319,21 @@ function addWater(scene, world, x, y, z, w, d, depth = 4) {
     surfaceY: y, bottomY: y - depth,
   });
 
-  const layers = [];
-  for (const [dy, opacity, scale] of [[0, 0.55, 8], [-0.12, 0.3, 13]]) {
-    const n = waterNormalTex().clone();
-    n.needsUpdate = true;
-    n.repeat.set(w / scale, d / scale);
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
-      new THREE.MeshStandardMaterial({
-        color: 0x11557f, transparent: true, opacity, roughness: 0.06, metalness: 0.1,
-        normalMap: n, normalScale: new THREE.Vector2(0.9, 0.9),
-        envMapIntensity: 1.6, emissive: 0x06283f, emissiveIntensity: 0.15,
-        depthWrite: false,
-      }));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(x, y + dy, z);
-    scene.add(mesh);
-    layers.push(n);
-  }
+  const n = waterNormalTex().clone();
+  n.needsUpdate = true;
+  n.repeat.set(w / 9, d / 9);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+    new THREE.MeshStandardMaterial({
+      color: 0x11557f, transparent: true, opacity: 0.58, roughness: 0.08, metalness: 0.05,
+      normalMap: n, normalScale: new THREE.Vector2(0.75, 0.75),
+      envMapIntensity: 1.15, emissive: 0x06283f, emissiveIntensity: 0.12,
+      depthWrite: false,
+    }));
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
   world.anim.push((dt, t) => {
-    layers[0].offset.set(t * 0.018, t * 0.03);
-    layers[1].offset.set(-t * 0.026, t * 0.012);
+    n.offset.set(t * 0.018, t * 0.03);
   });
 }
 
