@@ -1390,6 +1390,17 @@ function makeEndTextSprite(text, {
   return sprite;
 }
 
+function makePodiumRankSprite(rank, color) {
+  return makeEndTextSprite(String(rank), {
+    color,
+    bg: null,
+    width: 320,
+    height: 320,
+    font: 'bold 150px "Arial Black", Arial',
+    scale: [0.98, 0.98],
+  });
+}
+
 function buildPodiumAvatar(ch, place) {
   const { group } = buildBotMesh(colorHex(ch));
   const gun = buildBlaster(ch.weapon || 'blaster');
@@ -1479,15 +1490,9 @@ function buildVictoryScene({ ranked, title, color, stats }) {
   pedestalSpecs.forEach((spec, i) => {
     podiumBox(stage, spec.x, spec.h / 2, 0, spec.w, spec.h, spec.d, spec.mat);
     podiumBox(stage, spec.x, spec.h + 0.05, 0, spec.w + 0.36, 0.1, spec.d + 0.36, green);
-    const face = makeEndTextSprite(String(i + 1), {
-      color: spec.medal,
-      bg: null,
-      width: 256,
-      height: 256,
-      font: 'bold 142px "Arial Black", Arial',
-      scale: [1.05, 1.05],
-    });
-    face.position.set(spec.x, spec.h * 0.52, 1.04);
+    const face = makePodiumRankSprite(i + 1, spec.medal);
+    face.position.set(spec.x, spec.h * 0.5, spec.d / 2 + 0.1);
+    face.renderOrder = 4;
     stage.add(face);
 
     const ch = ranked[i];
