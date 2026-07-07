@@ -87,9 +87,10 @@ function texRock() {
 
 const TEXES = { checker: texChecker, panel: texPanel, crate: texCrate, rock: texRock };
 
-// ---- AI texture set (textures/*.jpg) — used when present, else canvas fallback ----
+// ---- AI texture set (textures/*.jpg/.png) — used when present, else canvas fallback ----
 // A normal map is derived from each image's luminance so surfaces catch light.
 const AI_TEX = {};
+const AI_TEX_SOURCES = { parasite: './textures/parasite.png' };
 function makeNormalMap(img) {
   const size = 256;
   const c = document.createElement('canvas');
@@ -133,9 +134,9 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'poster1', 'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava']
+   'poster1', 'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite']
     .map((name) => new Promise((done) => {
-      const url = `./textures/${name}.jpg`;
+      const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
         if (!r.ok) return done();
         new THREE.TextureLoader().load(url, (t) => {
@@ -990,8 +991,10 @@ function buildArena(scene) {
   pk(world, 'weapon', 20, 0.2, 50, { weapon: 'scatter' });   // north hall
   pk(world, 'weapon', 48, -4.8, 0, { weapon: 'whomper' });   // basement mid lane
   pk(world, 'weapon', -15, 0.2, -12, { weapon: 'sidewinder' });
+  pk(world, 'weapon', 6, 9.2, 6, { weapon: 'parasite' });        // mid tower upper deck
   pk(world, 'ammo', 55, -4.8, 8, { weapon: 'whomper' });
   pk(world, 'ammo', -15, 0.2, -20, { weapon: 'sidewinder' });
+  pk(world, 'ammo', -4, 9.2, 6, { weapon: 'parasite' });
   pk(world, 'ammo', 60, -4.8, 0, { weapon: 'zooka' });
   pk(world, 'ammo', 75, 0.2, -10, { weapon: 'hyper' });
   pk(world, 'ammo', -35, 0.2, 10, { weapon: 'pulsar' });
@@ -1303,8 +1306,10 @@ function buildFortress(scene) {
   pk(world, 'weapon', 48, 0.2, 30, { weapon: 'scatter' });
   pk(world, 'weapon', 4, 0.2, 26, { weapon: 'sidewinder' }); // keep interior, beside the gold
   pk(world, 'weapon', -40, 5.4, 43.5, { weapon: 'whomper' }); // north battlement
+  pk(world, 'weapon', 0, 8.2, -30, { weapon: 'parasite' });      // keep roof south edge
   pk(world, 'ammo', -4, 0.2, 26, { weapon: 'sidewinder' });
   pk(world, 'ammo', -48, 5.4, 43.5, { weapon: 'whomper' });
+  pk(world, 'ammo', 8, 8.2, -30, { weapon: 'parasite' });
   pk(world, 'ammo', 64, 8, 35, { weapon: 'hyper' });
   pk(world, 'ammo', -64, 8, -35, { weapon: 'pulsar' });
   pk(world, 'ammo', 34, -3.8, 0, { weapon: 'zooka' });
@@ -1586,8 +1591,10 @@ function buildAsteroids(scene) {
   pk(world, 'weapon', 40, 8.2, 21, { weapon: 'pulsar' });
   pk(world, 'weapon', 16, -7.8, 68, { weapon: 'whomper' });  // far south rock
   pk(world, 'weapon', -44, 13.2, -42, { weapon: 'sidewinder' });
+  pk(world, 'weapon', 0, 9.3, 28, { weapon: 'parasite' });       // station bridge approach
   pk(world, 'ammo', 13, -7.8, 72, { weapon: 'whomper' });
   pk(world, 'ammo', -40, 13.2, -46, { weapon: 'sidewinder' });
+  pk(world, 'ammo', 8, 9.3, 28, { weapon: 'parasite' });
   pk(world, 'ammo', -3, 9.3, -2, { weapon: 'zooka' });
   pk(world, 'ammo', 0, 16.7, -44, { weapon: 'hyper' });           // cave roof
   pk(world, 'ammo', -48, 4.2, -10, { weapon: 'pulsar' });         // west balcony
@@ -1897,9 +1904,11 @@ function buildCanopy(scene) {
   pk(world, 'weapon', 30, 0.2, 24, { weapon: 'zooka' });
   pk(world, 'weapon', -25, 0.2, 25, { weapon: 'scatter' });
   pk(world, 'weapon', 25, 0.2, -25, { weapon: 'pulsar' });
+  pk(world, 'weapon', -20, 10.2, 0, { weapon: 'parasite' });     // west bridge deck
   pk(world, 'ammo', 39, 20.2, 44, { weapon: 'whomper' });
   pk(world, 'ammo', 0, 0.2, -26, { weapon: 'sidewinder' });
   pk(world, 'ammo', -39, 20.2, -44, { weapon: 'hyper' });
+  pk(world, 'ammo', -28, 10.2, 0, { weapon: 'parasite' });
   pk(world, 'ammo', 0, 10.2, -45, { weapon: 'zooka' });    // north bridge mid
   pk(world, 'ammo', 0, 10.2, 45, { weapon: 'scatter' });
   pk(world, 'ammo', -40, 10.2, 40, { weapon: 'pulsar' });
@@ -2301,9 +2310,11 @@ function buildCity(scene) {
   pk(world, 'weapon', 40, 0.2, 0, { weapon: 'zooka' });
   pk(world, 'weapon', -40, 0.2, 10, { weapon: 'scatter' });
   pk(world, 'weapon', 32, 18.2, 30, { weapon: 'pulsar' });
+  pk(world, 'weapon', -21, 8.2, 40, { weapon: 'parasite' });    // galleria mezzanine
   pk(world, 'ammo', 26, -5.8, -7, { weapon: 'whomper' });
   pk(world, 'ammo', -54, 24.2, 37, { weapon: 'sidewinder' });
   pk(world, 'ammo', -8, 20.2, -34, { weapon: 'hyper' });
+  pk(world, 'ammo', -29, 8.2, 40, { weapon: 'parasite' });
   pk(world, 'ammo', 44, 0.2, -6, { weapon: 'zooka' });
   pk(world, 'ammo', 60, 0.2, -8, { weapon: 'scatter' });
   pk(world, 'ammo', 36, 18.2, 38, { weapon: 'pulsar' });
@@ -2675,9 +2686,11 @@ function buildSanctum(scene) {
   pk(world, 'weapon', 35, 0.2, 6, { weapon: 'scatter' });
   pk(world, 'weapon', 0, 0.2, -37, { weapon: 'pulsar' });
   pk(world, 'weapon', 22, 0.2, 22, { weapon: 'sidewinder' });
+  pk(world, 'weapon', -22, 0.2, 22, { weapon: 'parasite' });
   pk(world, 'ammo', 4, 6.7, 35, { weapon: 'whomper' });
   pk(world, 'ammo', -39, 5.2, -1, { weapon: 'hyper' });
   pk(world, 'ammo', 20, -5.8, 0, { weapon: 'zooka' });
+  pk(world, 'ammo', -28, 0.2, 22, { weapon: 'parasite' });
   pk(world, 'ammo', 35, 0.2, -6, { weapon: 'scatter' });
   pk(world, 'ammo', -5, 0.2, -35, { weapon: 'pulsar' });
   pk(world, 'ammo', -22, 0.2, -22, { weapon: 'sidewinder' });
@@ -2880,11 +2893,13 @@ function buildPrism(scene) {
   pk(world, 'weapon', -6, 46.6, 12, { weapon: 'hyper' });  // ceiling
   pk(world, 'weapon', 23.4, 32, -8, { weapon: 'sidewinder' });
   pk(world, 'weapon', -9, 37.5, 0, { weapon: 'whomper' }); // upper inner ring
+  pk(world, 'weapon', -23.4, 20, 0, { weapon: 'parasite' });   // mid on -X wall
   pk(world, 'ammo', 0, 0.2, -20, { weapon: 'zooka' });
   pk(world, 'ammo', 17, 25.5, 0, { weapon: 'scatter' });
   pk(world, 'ammo', 0, 25.5, -12, { weapon: 'pulsar' });
   pk(world, 'ammo', 6, 46.6, 12, { weapon: 'hyper' });
   pk(world, 'ammo', 23.4, 26, -8, { weapon: 'sidewinder' });
+  pk(world, 'ammo', -23.4, 26, 0, { weapon: 'parasite' });
   pk(world, 'health', -20, 0.2, 8);
   pk(world, 'health', 20, 0.2, -8);
   pk(world, 'health', 0, 47.7, 12);                       // ceiling
@@ -3181,7 +3196,7 @@ export function buildAtrium(scene) {
     g.font = 'bold 27px Arial';
     g.fillStyle = '#dde2ff';
     const lines = ['WASD — move', 'Mouse — aim + shoot', 'Space — jump',
-      '1–7 / wheel — weapons', 'Tab — scoreboard', 'Esc — pause', 'G — toggle glow',
+      '1–8 / wheel — weapons', 'Tab — scoreboard', 'Esc — pause', 'G — toggle glow',
       '', 'Walk into a gate to play!'];
     lines.forEach((t, i) => g.fillText(t, 256, 128 + i * 42));
     const tex = new THREE.CanvasTexture(c);

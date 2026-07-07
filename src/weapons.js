@@ -5,7 +5,7 @@ import { pointHitsWorld, rand } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
-export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper'];
+export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite'];
 
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
@@ -28,6 +28,10 @@ export const WEAPONS = {
                 splash: 10, splashDmg: 50, sound: 'whomp' },
   hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 320, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
+                pierce: 2, trail: true, sound: 'hyper' },
+  parasite:   { name: 'PARASITE',      slot: 8, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
+                pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
+                bounce: 1, split: 5, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
                 trail: true, sound: 'hyper' },
 };
 
@@ -35,18 +39,21 @@ export const WEAPONS = {
    Distinct Nerf-style silhouettes per weapon, merged into 2 draw calls each
    (plastic shell with baked vertex colors + one emissive "energy" mesh). */
 const _blasterMats = {};
-function blasterMats(color) {
-  if (!_blasterMats.body) {
-    _blasterMats.body = new THREE.MeshStandardMaterial({
+function blasterMats(color, textureName = null) {
+  const bodyKey = textureName ? `body-${textureName}` : 'body';
+  if (!_blasterMats[bodyKey]) {
+    _blasterMats[bodyKey] = new THREE.MeshStandardMaterial({
       color: 0xffffff, vertexColors: true, roughness: 0.45, metalness: 0.05,
-      envMapIntensity: 0.5, ...aiTex('plastic', 0.6, 0.6) });
+      envMapIntensity: textureName ? 0.85 : 0.5,
+      ...aiTex(textureName || 'plastic', textureName ? 1.3 : 0.6, textureName ? 1.3 : 0.6),
+    });
   }
   const key = 'e' + color;
   if (!_blasterMats[key]) {
     _blasterMats[key] = new THREE.MeshStandardMaterial({
       color, emissive: color, emissiveIntensity: 1.3, roughness: 0.4 });
   }
-  return { body: _blasterMats.body, energy: _blasterMats[key] };
+  return { body: _blasterMats[bodyKey], energy: _blasterMats[key] };
 }
 
 // Powerup skins: the blaster shell goes metallic gold/silver while active.
@@ -133,7 +140,7 @@ export function buildBlaster(id) {
     add(geos, B(0.02, 0.06, 0.5), WHITE, -0.15, 0.06, 0);
     add(geos, B(0.02, 0.06, 0.5), WHITE, 0.15, 0.06, 0);
     add(glow, new THREE.SphereGeometry(0.11, 10, 8), 0, 0, 0.02, -0.56);
-  } else { // hyper
+  } else if (id === 'hyper') {
     add(geos, B(0.14, 0.2, 0.7), SHELL, 0, 0, 0.1);
     add(geos, C(0.04, 0.04, 0.85), DARK, 0, 0.03, -0.65, HPI);
     add(geos, C(0.06, 0.06, 0.12), WHITE, 0, 0.03, -1.02, HPI);
@@ -142,9 +149,23 @@ export function buildBlaster(id) {
     add(geos, B(0.1, 0.06, 0.2), WHITE, 0, 0.09, 0.5);
     add(geos, B(0.12, 0.26, 0.15), DARK, 0, -0.2, 0.3, 0.3);
     add(glow, C(0.045, 0.045, 0.02), 0, 0, 0.18, 0.14, HPI);     // scope lens
+  } else { // parasite
+    add(geos, B(0.18, 0.22, 0.68), SHELL, 0, 0, 0.06);
+    add(geos, C(0.055, 0.045, 0.72), DARK, 0, 0.02, -0.56, HPI);
+    add(geos, C(0.09, 0.075, 0.08), 0xff36b8, 0, 0.02, -0.94, HPI);
+    add(geos, C(0.11, 0.11, 0.14), 0xff36b8, -0.13, 0.02, -0.16, HPI); // side sacs
+    add(geos, C(0.11, 0.11, 0.14), 0xff36b8, 0.13, 0.02, -0.16, HPI);
+    add(geos, C(0.075, 0.105, 0.22), WHITE, 0, 0.16, 0.05, 0, HPI);
+    add(geos, C(0.075, 0.105, 0.22), WHITE, 0, -0.13, 0.05, 0, HPI);
+    add(geos, B(0.09, 0.07, 0.46), DARK, 0, 0.17, 0.16);
+    add(geos, B(0.11, 0.28, 0.16), DARK, 0, -0.24, 0.28, 0.25);
+    add(geos, B(0.22, 0.14, 0.22), 0xff36b8, 0, -0.05, 0.5);
+    add(glow, C(0.115, 0.115, 0.035), 0, -0.13, 0.02, -0.16, HPI);
+    add(glow, C(0.115, 0.115, 0.035), 0, 0.13, 0.02, -0.16, HPI);
+    add(glow, B(0.14, 0.035, 0.35), 0, 0, 0.08, 0.18);
   }
 
-  const { body, energy } = blasterMats(w.color);
+  const { body, energy } = blasterMats(w.color, w.texture);
   const g = new THREE.Group();
   const shellMesh = new THREE.Mesh(mergeGeometries(geos.map(x => x.toNonIndexed()), false), body);
   shellMesh.castShadow = true;
@@ -170,6 +191,27 @@ export class ProjectileSystem {
     return this.mats[color];
   }
 
+  spawnProjectile(owner, origin, dir, weapon, opts = {}) {
+    const mesh = new THREE.Mesh(this.geoBall, this.matFor(weapon.color));
+    if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
+    else mesh.scale.setScalar(opts.size ?? weapon.size);
+    mesh.position.copy(origin);
+    this.scene.add(mesh);
+    this.projectiles.push({
+      mesh, owner, weapon,
+      pos: origin.clone(),
+      vel: dir.clone().multiplyScalar(opts.speed ?? weapon.speed),
+      life: opts.life ?? 4,
+      trailT: 0,
+      bounced: 0,
+      bounceLimit: opts.bounce ?? weapon.bounce,
+      pierced: weapon.pierce ? new Set() : null,
+      ignore: opts.ignore ? new Set(opts.ignore) : null,
+      damage: opts.damage ?? weapon.dmg,
+      noSplit: opts.noSplit === true,
+    });
+  }
+
   fire(owner, origin, dir, weaponId) {
     const w = WEAPONS[weaponId];
     for (let i = 0; i < w.pellets; i++) {
@@ -178,21 +220,35 @@ export class ProjectileSystem {
       d.y += rand(-w.spread, w.spread);
       d.z += rand(-w.spread, w.spread);
       d.normalize();
-      const mesh = new THREE.Mesh(this.geoBall, this.matFor(w.color));
-      if (w.disc) mesh.scale.set(w.size * 1.5, w.size * 0.35, w.size * 1.5);
-      else mesh.scale.setScalar(w.size);
-      mesh.position.copy(origin);
-      this.scene.add(mesh);
-      this.projectiles.push({
-        mesh, owner, weapon: w,
-        pos: origin.clone(),
-        vel: d.multiplyScalar(w.speed),
-        life: 4, trailT: 0, bounced: 0,
-      });
+      this.spawnProjectile(owner, origin, d, w);
     }
     // muzzle flash only for other shooters — your own fills the screen
     if (!owner.isPlayer) this.fx.spawnPuff(origin, w.color, 0.3);
     sfx(w.sound, owner.isPlayer ? null : origin);
+  }
+
+  splitParasite(p, ch) {
+    const origin = ch.pos.clone();
+    origin.y += ch.height * 0.5;
+    const base = p.vel.clone();
+    base.y = 0;
+    if (base.lengthSq() < 0.001) base.set(0, 0, -1);
+    base.normalize();
+    const count = p.weapon.split || 3;
+    const spread = 0.9;
+    for (let i = 0; i < count; i++) {
+      const angle = count === 1 ? 0 : -spread + (spread * 2 * i) / (count - 1);
+      const dir = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle).normalize();
+      this.spawnProjectile(p.owner, origin, dir, p.weapon, {
+        damage: p.weapon.childDmg ?? p.weapon.dmg,
+        speed: p.weapon.childSpeed ?? p.weapon.speed,
+        size: p.weapon.size * 0.82,
+        life: 2.2,
+        bounce: p.weapon.childBounce ?? p.weapon.bounce,
+        ignore: [ch],
+        noSplit: true,
+      });
+    }
   }
 
   // Characters: array of {pos, height, radius, alive, team, ...}
@@ -219,19 +275,27 @@ export class ProjectileSystem {
 
         // hit a character?
         for (const ch of characters) {
-          if (!ch.alive || ch === p.owner || ch.team === p.owner.team) continue;
+          if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
+              p.pierced?.has(ch) || p.ignore?.has(ch)) continue;
           const dx = p.pos.x - ch.pos.x;
           const dy = p.pos.y - (ch.pos.y + ch.height * 0.55);
           const dz = p.pos.z - ch.pos.z;
           if (dx * dx + dz * dz < 0.85 && Math.abs(dy) < ch.height * 0.65) {
-            this.fx.onDamage(ch, p.weapon.dmg * p.owner.damageMult, p.owner);
+            this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner);
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
-            dead = true;
+            if (p.weapon.split && !p.noSplit) {
+              this.splitParasite(p, ch);
+              dead = true;
+            } else if (p.weapon.pierce && p.pierced.size < p.weapon.pierce) {
+              p.pierced.add(ch);
+            } else {
+              dead = true;
+            }
             break;
           }
         }
         if (!dead && pointHitsWorld(p.pos, p.weapon.size * 0.6, this.world)) {
-          if (p.weapon.bounce && p.bounced < p.weapon.bounce) {
+          if (p.bounceLimit && p.bounced < p.bounceLimit) {
             // Sidewinder disc: reflect off whichever axis is blocked
             const r = p.weapon.size * 0.6;
             p.pos.copy(prev);

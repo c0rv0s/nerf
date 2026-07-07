@@ -44,7 +44,7 @@ multiplayer lobbies. Railway uses `npm start` via `railway.json`.
   anyone can collect — or steal. Value scales with the victim's placing:
   1000 for the leader, 750 for second, 500 for third, 250 otherwise.
   Hidden ★ stars are +500.
-- **Weapons** (keys 1–7, or scroll):
+- **Weapons** (keys 1–8, or scroll):
   1. **Secret Shot** — default blaster, infinite ammo
   2. **Scatterblast** — 6-pellet shotgun
   3. **Pulsator** — rapid fire
@@ -52,6 +52,7 @@ multiplayer lobbies. Railway uses `npm start` via `railway.json`.
   5. **Ballzooka** — slow arcing ball with splash damage
   6. **Whomper** — massive single foam slug with mini-splash
   7. **Hyperstrike** — high-damage sniper dart
+  8. **Parasite** — one-bounce dart that spawns five waist-level two-bounce balls on hit
   All except the Secret Shot must be found on the map, with limited ammo;
   your active weapon (with its ammo) drops where you die.
 - **Powerups**:
@@ -79,7 +80,7 @@ multiplayer lobbies. Railway uses `npm start` via `railway.json`.
 
 ## Controls
 
-WASD move · mouse aim · left-click shoot · Space jump · 1–5/scroll switch
+WASD move · mouse aim · left-click shoot · Space jump · 1–8/scroll switch
 weapon · Tab scoreboard · Esc release mouse.
 
 ## Code layout
