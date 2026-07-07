@@ -5,7 +5,7 @@ import { pointHitsWorld, rand } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
-export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite'];
+export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor'];
 
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
@@ -17,9 +17,9 @@ export const WEAPONS = {
   pulsar:     { name: 'PULSATOR',     slot: 3, dmg: 7,  rof: 9,   speed: 75,  spread: 0.035,
                 pellets: 1, ammo: 0, pickupAmmo: 60, color: 0xb060ff, size: 0.1,
                 sound: 'pulsar' },
-  sidewinder: { name: 'SIDEWINDER',   slot: 4, dmg: 24, rof: 1.6, speed: 55,  spread: 0.01,
+  sidewinder: { name: 'SIDEWINDER',   slot: 4, dmg: 18, rof: 1.6, speed: 55,  spread: 0.01,
                 pellets: 1, ammo: 0, pickupAmmo: 10, color: 0x8aff30, size: 0.17,
-                disc: true, bounce: 6, sound: 'disc' },
+                disc: true, bounce: 6, bounceDmgGain: 5, sound: 'disc' },
   zooka:      { name: 'BALLZOOKA',    slot: 5, dmg: 42, rof: 0.8, speed: 38,  spread: 0.005,
                 pellets: 1, ammo: 0, pickupAmmo: 6, color: 0xffe040, size: 0.35,
                 splash: 5.5, splashDmg: 32, gravity: true, trail: true, sound: 'zooka' },
@@ -33,6 +33,10 @@ export const WEAPONS = {
                 pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
                 bounce: 1, split: 5, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
                 trail: true, sound: 'hyper' },
+  refractor:  { name: 'REFRACTOR',     slot: 9, dmg: 22, rof: 0.5, speed: 0,   spread: 0,
+                pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,
+                beam: true, beamBounces: 5, beamRange: 130, beamLife: 2.8, beamRetract: 0.9,
+                beamDamageInterval: 0.4, secretMapOnly: true, texture: 'refractor', sound: 'hyper' },
 };
 
 /* ---------------- procedural blaster models ----------------
@@ -149,7 +153,7 @@ export function buildBlaster(id) {
     add(geos, B(0.1, 0.06, 0.2), WHITE, 0, 0.09, 0.5);
     add(geos, B(0.12, 0.26, 0.15), DARK, 0, -0.2, 0.3, 0.3);
     add(glow, C(0.045, 0.045, 0.02), 0, 0, 0.18, 0.14, HPI);     // scope lens
-  } else { // parasite
+  } else if (id === 'parasite') {
     add(geos, B(0.18, 0.22, 0.68), SHELL, 0, 0, 0.06);
     add(geos, C(0.055, 0.045, 0.72), DARK, 0, 0.02, -0.56, HPI);
     add(geos, C(0.09, 0.075, 0.08), 0xff36b8, 0, 0.02, -0.94, HPI);
@@ -163,6 +167,17 @@ export function buildBlaster(id) {
     add(glow, C(0.115, 0.115, 0.035), 0, -0.13, 0.02, -0.16, HPI);
     add(glow, C(0.115, 0.115, 0.035), 0, 0.13, 0.02, -0.16, HPI);
     add(glow, B(0.14, 0.035, 0.35), 0, 0, 0.08, 0.18);
+  } else { // refractor
+    add(geos, B(0.13, 0.2, 0.72), SHELL, 0, 0, 0.08);
+    add(geos, B(0.22, 0.08, 0.4), WHITE, 0, 0.08, -0.3);
+    add(geos, C(0.045, 0.035, 0.88), DARK, 0, 0.03, -0.62, HPI);
+    add(geos, C(0.11, 0.11, 0.07), WHITE, 0, 0.03, -1.04, HPI);
+    add(geos, C(0.12, 0.12, 0.08), 0x7ffcff, -0.12, 0.08, 0.08, 0, HPI);
+    add(geos, C(0.12, 0.12, 0.08), 0xffe040, 0.12, 0.08, 0.08, 0, HPI);
+    add(geos, B(0.12, 0.26, 0.15), DARK, 0, -0.22, 0.25, 0.28);
+    add(geos, B(0.08, 0.07, 0.38), WHITE, 0, 0.18, 0.12);
+    add(glow, C(0.08, 0.08, 0.03), 0, 0, 0.03, -1.08, HPI);
+    add(glow, B(0.16, 0.035, 0.42), 0, 0, 0.1, -0.06);
   }
 
   const { body, energy } = blasterMats(w.color, w.texture);
@@ -180,8 +195,11 @@ export class ProjectileSystem {
     this.world = world;
     this.fx = fx;           // {spawnPuff(pos,color,scale), onDamage(target, dmg, attacker)}
     this.projectiles = [];
+    this.beams = [];
+    this.nextBeamId = 1;
     this.geoBall = new THREE.SphereGeometry(1, 8, 6);
     this.mats = {};
+    this.beamMats = {};
   }
 
   matFor(color) {
@@ -189,6 +207,113 @@ export class ProjectileSystem {
       this.mats[color] = new THREE.MeshBasicMaterial({ color });
     }
     return this.mats[color];
+  }
+
+  beamMatFor(color, alpha = 0.68) {
+    const key = `${color}:${alpha}`;
+    if (!this.beamMats[key]) {
+      this.beamMats[key] = new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: alpha, depthWrite: false,
+      });
+    }
+    return this.beamMats[key];
+  }
+
+  rayBox(origin, dir, box, maxDist) {
+    let tmin = -Infinity, tmax = Infinity;
+    const nmin = new THREE.Vector3();
+    const nmax = new THREE.Vector3();
+    const axes = [
+      ['x', new THREE.Vector3(-1, 0, 0), new THREE.Vector3(1, 0, 0)],
+      ['y', new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 1, 0)],
+      ['z', new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 1)],
+    ];
+    for (const [axis, lowNormal, highNormal] of axes) {
+      const o = origin[axis], d = dir[axis], mn = box.min[axis], mx = box.max[axis];
+      if (Math.abs(d) < 1e-6) {
+        if (o < mn || o > mx) return null;
+        continue;
+      }
+      let t1 = (mn - o) / d, t2 = (mx - o) / d;
+      let n1 = lowNormal, n2 = highNormal;
+      if (t1 > t2) {
+        [t1, t2] = [t2, t1];
+        [n1, n2] = [n2, n1];
+      }
+      if (t1 > tmin) { tmin = t1; nmin.copy(n1); }
+      if (t2 < tmax) { tmax = t2; nmax.copy(n2); }
+      if (tmin > tmax) return null;
+    }
+    const t = tmin > 0.03 ? tmin : tmax;
+    if (t <= 0.03 || t > maxDist) return null;
+    return { t, normal: (tmin > 0.03 ? nmin : nmax).clone() };
+  }
+
+  rayWorld(origin, dir, maxDist) {
+    let best = null;
+    for (const c of this.world.colliders || []) {
+      if (c.type !== 'box') continue;
+      const hit = this.rayBox(origin, dir, c, maxDist);
+      if (hit && (!best || hit.t < best.t)) best = hit;
+    }
+    return best;
+  }
+
+  makeBeamSegment(start, end, color) {
+    const len = start.distanceTo(end);
+    const g = new THREE.Group();
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1, 10), this.beamMatFor(color, 0.86));
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1, 10), this.beamMatFor(color, 0.18));
+    g.add(glow, core);
+    this.scene.add(g);
+    const seg = { group: g, start: start.clone(), end: end.clone(), len, activeStart: start.clone(), activeEnd: end.clone() };
+    this.placeBeamSegment(seg, start, end);
+    return seg;
+  }
+
+  placeBeamSegment(seg, start, end) {
+    const len = start.distanceTo(end);
+    seg.activeStart.copy(start);
+    seg.activeEnd.copy(end);
+    seg.group.visible = len > 0.05;
+    if (!seg.group.visible) return;
+    seg.group.position.copy(start).lerp(end, 0.5);
+    seg.group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
+    for (const m of seg.group.children) m.scale.y = len;
+  }
+
+  spawnBeam(owner, origin, dir, weapon) {
+    const points = [origin.clone()];
+    let pos = origin.clone();
+    let vel = dir.clone().normalize();
+    let remaining = weapon.beamRange || 120;
+    for (let i = 0; i <= (weapon.beamBounces || 0); i++) {
+      const hit = this.rayWorld(pos, vel, remaining);
+      if (!hit) {
+        points.push(pos.clone().addScaledVector(vel, remaining));
+        break;
+      }
+      const end = pos.clone().addScaledVector(vel, hit.t);
+      points.push(end);
+      remaining -= hit.t;
+      if (i >= (weapon.beamBounces || 0) || remaining <= 1) break;
+      vel.reflect(hit.normal).normalize();
+      pos.copy(end).addScaledVector(vel, 0.08);
+    }
+    if (points.length < 2) return;
+    const segments = [];
+    let totalLen = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const seg = this.makeBeamSegment(points[i], points[i + 1], weapon.color);
+      segments.push(seg);
+      totalLen += seg.len;
+    }
+    this.beams.push({
+      id: this.nextBeamId++, owner, weapon, segments, totalLen,
+      age: 0, life: weapon.beamLife || 2.5, retract: weapon.beamRetract || 0.8,
+      hitCooldowns: new Map(),
+    });
+    this.fx.spawnPuff(points[points.length - 1], weapon.color, 0.45);
   }
 
   spawnProjectile(owner, origin, dir, weapon, opts = {}) {
@@ -214,6 +339,11 @@ export class ProjectileSystem {
 
   fire(owner, origin, dir, weaponId) {
     const w = WEAPONS[weaponId];
+    if (w.beam) {
+      this.spawnBeam(owner, origin, dir, w);
+      sfx(w.sound, owner.isPlayer ? null : origin);
+      return;
+    }
     for (let i = 0; i < w.pellets; i++) {
       const d = dir.clone();
       d.x += rand(-w.spread, w.spread);
@@ -251,8 +381,60 @@ export class ProjectileSystem {
     }
   }
 
+  distancePointToSegment(point, a, b) {
+    const ab = b.clone().sub(a);
+    const d2 = ab.lengthSq();
+    if (d2 < 1e-6) return point.distanceTo(a);
+    const t = Math.max(0, Math.min(1, point.clone().sub(a).dot(ab) / d2));
+    return point.distanceTo(a.clone().addScaledVector(ab, t));
+  }
+
+  characterTouchesSegment(ch, a, b, pad = 0.25) {
+    const up = ch.up || new THREE.Vector3(0, 1, 0);
+    const samples = [0.35, 0.55, 0.8].map(f => ch.pos.clone().addScaledVector(up, ch.height * f));
+    const r = (ch.radius || 0.45) + pad;
+    return samples.some(p => this.distancePointToSegment(p, a, b) < r);
+  }
+
+  updateBeams(dt, characters) {
+    for (let bi = this.beams.length - 1; bi >= 0; bi--) {
+      const b = this.beams[bi];
+      b.age += dt;
+      const retractStart = Math.max(0.05, b.life - b.retract);
+      const tailDist = b.age <= retractStart ? 0 :
+        Math.min(b.totalLen, ((b.age - retractStart) / b.retract) * b.totalLen);
+      let cursor = 0;
+      for (const seg of b.segments) {
+        const segTail = Math.max(0, tailDist - cursor);
+        if (segTail >= seg.len) {
+          seg.group.visible = false;
+        } else {
+          const start = seg.start.clone().lerp(seg.end, segTail / seg.len);
+          this.placeBeamSegment(seg, start, seg.end);
+        }
+        cursor += seg.len;
+      }
+      for (const [ch, t] of b.hitCooldowns) b.hitCooldowns.set(ch, Math.max(0, t - dt));
+      for (const ch of characters) {
+        if (!ch.alive || ch === b.owner || ch.team === b.owner.team) continue;
+        if ((b.hitCooldowns.get(ch) || 0) > 0) continue;
+        if (b.segments.some(seg => seg.group.visible && this.characterTouchesSegment(ch, seg.activeStart, seg.activeEnd))) {
+          this.fx.onDamage(ch, b.weapon.dmg * b.owner.damageMult, b.owner);
+          const hitPos = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), ch.height * 0.55);
+          this.fx.spawnPuff(hitPos, b.weapon.color, 0.45);
+          b.hitCooldowns.set(ch, b.weapon.beamDamageInterval || 0.4);
+        }
+      }
+      if (b.age >= b.life) {
+        for (const seg of b.segments) this.scene.remove(seg.group);
+        this.beams.splice(bi, 1);
+      }
+    }
+  }
+
   // Characters: array of {pos, height, radius, alive, team, ...}
   update(dt, characters) {
+    this.updateBeams(dt, characters);
     const step = new THREE.Vector3();
     const prev = new THREE.Vector3();
     const probe = new THREE.Vector3();
@@ -306,6 +488,7 @@ export class ProjectileSystem {
             if (!hitAxis) p.vel.negate(); // cornered — bounce straight back
             p.vel.multiplyScalar(0.95);
             p.bounced++;
+            if (p.weapon.bounceDmgGain) p.damage += p.weapon.bounceDmgGain;
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.3);
           } else {
             dead = true;
@@ -343,6 +526,8 @@ export class ProjectileSystem {
   clear() {
     for (const p of this.projectiles) this.scene.remove(p.mesh);
     this.projectiles.length = 0;
+    for (const b of this.beams) for (const seg of b.segments) this.scene.remove(seg.group);
+    this.beams.length = 0;
   }
 }
 

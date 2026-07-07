@@ -1703,7 +1703,7 @@ document.addEventListener('keydown', (e) => {
   G.player.keys[e.code] = true;
   if (e.code === 'Space') { G.player.wantJump = true; e.preventDefault(); }
   if (e.code === 'Tab') { G.showBoard = true; e.preventDefault(); }
-  const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8'].indexOf(e.code);
+  const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'].indexOf(e.code);
   if (slot >= 0) G.player.switchWeapon(WEAPON_ORDER[slot]);
   if (e.code === 'KeyG') { // glow toggle for slower machines
     bloomPass.enabled = !bloomPass.enabled;
@@ -1986,7 +1986,7 @@ function step(dt) {
   updateDmgMarkers(dt);
   hud.update(dt, {
     player: G.player, mode: G.atrium ? 'atrium' : G.mode, scores: G.scores,
-    characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,
+    characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard, world: G.world,
   });
   sendHostSnapshot(dt);
 }
@@ -2057,7 +2057,7 @@ function stepMultiplayer(dt) {
   }
   hud.update(dt, {
     player: G.player, mode: 'ffa', scores: G.scores,
-    characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,
+    characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard, world: G.world,
   });
 }
 

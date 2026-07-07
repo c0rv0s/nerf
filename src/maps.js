@@ -90,7 +90,7 @@ const TEXES = { checker: texChecker, panel: texPanel, crate: texCrate, rock: tex
 // ---- AI texture set (textures/*.jpg/.png) — used when present, else canvas fallback ----
 // A normal map is derived from each image's luminance so surfaces catch light.
 const AI_TEX = {};
-const AI_TEX_SOURCES = { parasite: './textures/parasite.png' };
+const AI_TEX_SOURCES = { parasite: './textures/parasite.jpg', refractor: './textures/refractor.jpg' };
 function makeNormalMap(img) {
   const size = 256;
   const c = document.createElement('canvas');
@@ -134,7 +134,7 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'poster1', 'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite']
+   'poster1', 'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite', 'refractor']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -2758,6 +2758,7 @@ function buildPrism(scene) {
     gravity: 8, jumpVel: 7, playerSpeed: 11,        // very floaty — deep-space feel
     killY: -160, killYTop: 240, killCenter: V(0, CY, 0), killRadius: 240,
     waypointLinkDist: 16, waypointLinkDy: 3,
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor'],
   });
   scene.background = new THREE.Color(0x05030f);
   baseLighting(scene, 0xc8a8ff, 0x1a0f2e, [40, 90, -30], 110);
@@ -2894,12 +2895,14 @@ function buildPrism(scene) {
   pk(world, 'weapon', 23.4, 32, -8, { weapon: 'sidewinder' });
   pk(world, 'weapon', -9, 37.5, 0, { weapon: 'whomper' }); // upper inner ring
   pk(world, 'weapon', -23.4, 20, 0, { weapon: 'parasite' });   // mid on -X wall
+  pk(world, 'weapon', 0, 37.5, -23.4, { weapon: 'refractor' }); // secret-map beam gun
   pk(world, 'ammo', 0, 0.2, -20, { weapon: 'zooka' });
   pk(world, 'ammo', 17, 25.5, 0, { weapon: 'scatter' });
   pk(world, 'ammo', 0, 25.5, -12, { weapon: 'pulsar' });
   pk(world, 'ammo', 6, 46.6, 12, { weapon: 'hyper' });
   pk(world, 'ammo', 23.4, 26, -8, { weapon: 'sidewinder' });
   pk(world, 'ammo', -23.4, 26, 0, { weapon: 'parasite' });
+  pk(world, 'ammo', 0, 14, 23.4, { weapon: 'refractor' });
   pk(world, 'health', -20, 0.2, 8);
   pk(world, 'health', 20, 0.2, -8);
   pk(world, 'health', 0, 47.7, 12);                       // ceiling
@@ -3196,7 +3199,7 @@ export function buildAtrium(scene) {
     g.font = 'bold 27px Arial';
     g.fillStyle = '#dde2ff';
     const lines = ['WASD — move', 'Mouse — aim + shoot', 'Space — jump',
-      '1–8 / wheel — weapons', 'Tab — scoreboard', 'Esc — pause', 'G — toggle glow',
+      '1–9 / wheel — weapons', 'Tab — scoreboard', 'Esc — pause', 'G — toggle glow',
       '', 'Walk into a gate to play!'];
     lines.forEach((t, i) => g.fillText(t, 256, 128 + i * 42));
     const tex = new THREE.CanvasTexture(c);

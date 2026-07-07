@@ -23,7 +23,7 @@ export class HUD {
   show(on) { this.els.hud.classList.toggle('on', on); }
 
   update(dt, state) {
-    const { player, mode, scores, characters, timeLeft, showBoard } = state;
+    const { player, mode, scores, characters, timeLeft, showBoard, world } = state;
     const e = this.els;
     e.health.textContent = Math.max(0, Math.ceil(player.hp));
     e.shield.textContent = player.shield > 0 ? `+${Math.ceil(player.shield)} 🛡` : '';
@@ -33,9 +33,12 @@ export class HUD {
     e.ammo.textContent = player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] ?? 0;
 
     // weapon slots
-    if (!this._slotEls) {
+    const weaponOrder = world?.availableWeapons || WEAPON_ORDER.filter(id => !WEAPONS[id].secretMapOnly);
+    const slotKey = weaponOrder.join(',');
+    if (!this._slotEls || this._slotKey !== slotKey) {
       e.slots.innerHTML = '';
-      this._slotEls = WEAPON_ORDER.map((id) => {
+      this._slotKey = slotKey;
+      this._slotEls = weaponOrder.map((id) => {
         const d = document.createElement('div');
         d.className = 'wslot';
         d.textContent = WEAPONS[id].slot;
@@ -43,7 +46,7 @@ export class HUD {
         return d;
       });
     }
-    WEAPON_ORDER.forEach((id, i) => {
+    weaponOrder.forEach((id, i) => {
       // a dry gun stays in your inventory (dashed slot) — find ammo to reload it
       const has = id === 'blaster' || player.weapons[id];
       const loaded = id === 'blaster' || player.ammo[id] > 0;
