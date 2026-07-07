@@ -222,12 +222,18 @@ export class Player {
     this._speedRatio = Math.min(hs / speed, 1);
 
     const vine = env.vine;
+    const waterfall = env.waterfall;
     const water = env.water;
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
     if (vine) {
       this._applyVineMotion(dt, vine);
+      this.jumpBuffer = 0;
+      this.wantJump = false;
+      this.coyote = 0;
+    } else if (waterfall) {
+      this._applyWaterfallMotion(dt);
       this.jumpBuffer = 0;
       this.wantJump = false;
       this.coyote = 0;
@@ -345,8 +351,19 @@ export class Player {
       ) { lava = true; break; }
     }
 
-    let water = null;
+    let waterfall = null;
     if (!lava) {
+      for (const z of this.world.waterfallZones || []) {
+        if (
+          px >= z.minX && px <= z.maxX &&
+          pz >= z.minZ && pz <= z.maxZ &&
+          midY >= z.minY && midY <= z.maxY
+        ) { waterfall = z; break; }
+      }
+    }
+
+    let water = null;
+    if (!lava && !waterfall) {
       for (const z of this.world.waterZones || []) {
         if (
           px >= z.minX && px <= z.maxX &&
@@ -358,7 +375,7 @@ export class Player {
     }
 
     let foliage = false;
-    if (!lava && !water) {
+    if (!lava && !waterfall && !water) {
       for (const z of this.world.foliageZones || []) {
         if (z.r != null) {
           foliage = (px - z.x) * (px - z.x) +
@@ -385,11 +402,20 @@ export class Player {
 
     return {
       lava,
+      waterfall,
       water,
       foliage,
       vine,
-      speedMult: lava ? 0.34 : water ? 0.68 : foliage ? 0.84 : 1,
+      speedMult: lava ? 0.34 : waterfall ? 0.58 : water ? 0.68 : foliage ? 0.84 : 1,
     };
+  }
+
+  _applyWaterfallMotion(dt) {
+    this.vel.y = THREE.MathUtils.damp(this.vel.y, -7.5 + this.world.gravity * dt, 12, dt);
+    const drag = Math.exp(-4.2 * dt);
+    this.vel.x *= drag;
+    this.vel.z *= drag;
+    this._airJumped = false;
   }
 
   _applyWaterMotion(zone, dt) {

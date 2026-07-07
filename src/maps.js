@@ -337,6 +337,74 @@ function addWater(scene, world, x, y, z, w, d, depth = 4) {
   });
 }
 
+function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0) {
+  world.waterfallZones ||= [];
+  world.waterfallZones.push({
+    minX: x - w / 2, maxX: x + w / 2,
+    minZ: z - 1.35, maxZ: z + 1.35,
+    minY: bottomY - 0.4, maxY: topY + 0.4,
+  });
+
+  addBox(scene, world, x, topY + 0.3, z + flowZ * 0.5, w + 1.4, 0.6, 1.2, 0x4a7a52,
+    { tex: 'rock', repeat: [2, 1] });
+  const streams = [];
+  for (const [dx, dz, ww, opacity, phase] of [
+    [0, 0, w, 0.7, 0],
+    [-w * 0.18, flowZ * 0.2, w * 0.34, 0.46, 1.7],
+    [w * 0.2, flowZ * 0.36, w * 0.28, 0.38, 3.1],
+  ]) {
+    const n = waterNormalTex().clone();
+    n.needsUpdate = true;
+    n.repeat.set(Math.max(1, ww / 3), Math.max(3, h / 3.2));
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(ww, h),
+      new THREE.MeshStandardMaterial({
+        color: 0x55d8ff, transparent: true, opacity, roughness: 0.12,
+        metalness: 0.02, normalMap: n, normalScale: new THREE.Vector2(0.45, 1.55),
+        emissive: 0x0b5f86, emissiveIntensity: 0.36, depthWrite: false,
+        side: THREE.DoubleSide,
+      }));
+    m.position.set(x + dx, (bottomY + topY) / 2, z + dz);
+    scene.add(m);
+    streams.push({ n, m, phase });
+  }
+  world.anim.push((dt, t) => {
+    for (const s of streams) {
+      s.n.offset.set(Math.sin(t * 1.6 + s.phase) * 0.025, t * 2.1 + s.phase);
+      s.m.material.opacity = s.m.material.opacity * 0.92 + (0.42 + Math.sin(t * 5 + s.phase) * 0.1) * 0.08;
+    }
+  });
+
+  const foam = new THREE.Mesh(new THREE.PlaneGeometry(w + 2.2, 2.4),
+    new THREE.MeshBasicMaterial({ color: 0xd8fbff, transparent: true, opacity: 0.52, depthWrite: false, side: THREE.DoubleSide }));
+  foam.rotation.x = -Math.PI / 2;
+  foam.position.set(x, bottomY + 0.06, z + flowZ * 0.9);
+  scene.add(foam);
+  const spray = [];
+  for (let i = 0; i < 14; i++) {
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.05 + Math.random() * 0.05, 6, 4),
+      new THREE.MeshBasicMaterial({ color: 0xd8fbff, transparent: true, opacity: 0.7, depthWrite: false }));
+    scene.add(p);
+    spray.push({
+      p,
+      ox: (Math.random() - 0.5) * (w + 1),
+      oz: flowZ * (0.35 + Math.random() * 1.25),
+      phase: Math.random() * 2.5,
+      dur: 0.42 + Math.random() * 0.24,
+    });
+  }
+  world.anim.push((dt, t) => {
+    foam.scale.x = 1 + Math.sin(t * 5.5 + x) * 0.04;
+    foam.scale.y = 1 + Math.sin(t * 6.8 + z) * 0.08;
+    foam.material.opacity = 0.46 + Math.sin(t * 9.5 + z) * 0.12;
+    for (const s of spray) {
+      const k = ((t + s.phase) % s.dur) / s.dur;
+      s.p.position.set(x + s.ox * (1 + k * 0.25), bottomY + 0.1 + Math.sin(k * Math.PI) * 0.72, z + s.oz + flowZ * k * 0.9);
+      s.p.material.opacity = 0.7 * (1 - k);
+      s.p.scale.setScalar(1 + k * 1.8);
+    }
+  });
+}
+
 function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff, playersOnly = false) {
   world.jumpPads.push({ x, y, z, r: 1.7, vy, vx, vz, playersOnly });
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.1, 0.3, 20),
@@ -846,6 +914,10 @@ function buildFortress(scene) {
   addDecal(scene, 'hazard', 76.9, 5.5, 20, 8, -Math.PI / 2);
   addDecal(scene, 'poster1', -76.9, 5.5, -20, 8, Math.PI / 2);
   addDecal(scene, 'target', -9, 6, -3.06, 4, Math.PI);
+  addVine(scene, world, -55, -43.5, 0.2, 5.1, 0.95, 0, -0.25);
+  addVine(scene, world, 53, 43.5, 0.2, 5.1, 0.9, 0, 0.25);
+  addVine(scene, world, -34, -43.5, 0.2, 5.1, 0.85, 0, -0.25);
+  addVine(scene, world, 33, 43.5, 0.2, 5.1, 0.85, 0, 0.25);
   // ground variety: grass courtyards, dirt lanes
   addBox(scene, world, -45, 0.031, 30, 26, 0.06, 22, 0x6aa84f, { tex: 'grass', repeat: [5, 4] });
   addBox(scene, world, 45, 0.031, -30, 26, 0.06, 22, 0x6aa84f, { tex: 'grass', repeat: [5, 4] });
@@ -874,6 +946,9 @@ function buildFortress(scene) {
   addBox(scene, world, -11, 3.5, 26, 2, 7, 24, 0x8a5fd0, { tex: 'panel' });
   addBox(scene, world, 11, 3.5, 26, 2, 7, 24, 0x8a5fd0, { tex: 'panel' });
   addBox(scene, world, 0, 7.4, 26, 24, 0.8, 26, 0x6e4aa8, { tex: 'panel' }); // roof, top 7.8
+  addVine(scene, world, -5.5, 15, 0.2, 7.9, 0.85, 0, -0.2);
+  addVine(scene, world, 11, 22, 0.2, 7.9, 0.85, 0.25, 0);
+  addVine(scene, world, -11, 31, 0.2, 7.9, 0.85, -0.25, 0);
   const keepLight = new THREE.PointLight(0xffd23c, 40, 24);
   keepLight.position.set(0, 5, 26);
   scene.add(keepLight);
@@ -883,12 +958,16 @@ function buildFortress(scene) {
   // Climbable corner towers (NE + SW), decor towers (NW + SE)
   addBox(scene, world, 64, 3.5, 38, 9, 7, 9, 0x7a4fc0, { tex: 'panel' });
   addBox(scene, world, 64, 7.3, 38, 10, 0.6, 10, 0x9a6fe0);
+  addVine(scene, world, 59.5, 38, 0.2, 7.7, 0.85, -0.25, 0);
   addRamp(scene, world, { axis: 'x', minX: 46, maxX: 59.5, minZ: 35, maxZ: 41, h0: 0, h1: 7.6, color: 0x8a5fd0 });
   addBox(scene, world, -64, 3.5, -38, 9, 7, 9, 0x7a4fc0, { tex: 'panel' });
   addBox(scene, world, -64, 7.3, -38, 10, 0.6, 10, 0x9a6fe0);
+  addVine(scene, world, -59.5, -38, 0.2, 7.7, 0.85, 0.25, 0);
   addRamp(scene, world, { axis: 'x', minX: -59.5, maxX: -46, minZ: -41, maxZ: -35, h0: 7.6, h1: 0, color: 0x8a5fd0 });
-  addBox(scene, world, -64, 4, 38, 7, 8, 7, 0x5a4a78);
-  addBox(scene, world, 64, 4, -38, 7, 8, 7, 0x5a4a78);
+  addBox(scene, world, -64, 4, 38, 7, 8, 7, 0x5a4a78, { tex: 'panel' });
+  addBox(scene, world, 64, 4, -38, 7, 8, 7, 0x5a4a78, { tex: 'panel' });
+  addVine(scene, world, -60.5, 38, 0.2, 8.1, 0.85, 0.25, 0);
+  addVine(scene, world, 60.5, -38, 0.2, 8.1, 0.85, -0.25, 0);
 
   // Lane walls: split each field into corridors (doors at x ±36 and beside the keep)
   for (const zs of [1, -1]) {
@@ -897,6 +976,10 @@ function buildFortress(scene) {
     addBox(scene, world, 24, 3, 22 * zs, 16, 6, 1.5, 0x8a7248, { tex: 'panel' });
     addBox(scene, world, 51, 3, 22 * zs, 22, 6, 1.5, 0x8a7248, { tex: 'panel' });
   }
+  addVine(scene, world, -51, 21.2, 0.2, 6.2, 0.85, 0, -0.2);
+  addVine(scene, world, 24, -21.2, 0.2, 6.2, 0.85, 0, 0.2);
+  addVine(scene, world, -24, -21.2, 0.2, 6.2, 0.8, 0, 0.2);
+  addVine(scene, world, 51, -21.2, 0.2, 6.2, 0.85, 0, 0.2);
 
   // Battlement walkways along the north/south perimeter walls (top y=5)
   addBox(scene, world, -7.5, 4.7, 43.5, 125, 0.6, 3.5, 0x9a6fe0, { tex: 'panel' });  // north (x −70..55)
@@ -946,6 +1029,8 @@ function buildFortress(scene) {
     addBox(scene, world, x, 3, 25.5 * zs, 1.5, 6, 5, 0x8a7248, { tex: 'panel' });
     addBox(scene, world, x, 3, 36.5 * zs, 1.5, 6, 5, 0x8a7248, { tex: 'panel' });
   }
+  addVine(scene, world, -45, 36.5, 0.2, 6.2, 0.8, -0.18, 0.18);
+  addVine(scene, world, 45, -36.5, 0.2, 6.2, 0.8, 0.18, -0.18);
 
   // Cover
   const crate = (x, z, s = 2.4) => addBox(scene, world, x, s / 2, z, s, s, s, 0xb0763a, { tex: 'crate' });
@@ -1341,6 +1426,8 @@ function buildCanopy(scene) {
   riverSide(57.6);
   addWater(scene, world, -54, -0.55, 0, 7.8, 162, 5.4);
   addWater(scene, world, 54, -0.55, 0, 7.8, 162, 5.4);
+  addWaterfall(scene, world, -54, -79.86, 8.4, 28.6, -0.55, 28, 1);
+  addWaterfall(scene, world, 54, 79.86, 8.4, 28.6, -0.55, 28, -1);
   addBox(scene, world, 0, -5.3, 64, 108, 1, 8, 0x3f6e5e, { tex: 'rock', repeat: [12, 1] });   // underwater connector bed
   addBox(scene, world, 0, -2.45, 59.6, 108, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
   addBox(scene, world, 0, -2.45, 68.4, 108, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
@@ -1666,12 +1753,19 @@ function buildCity(scene) {
   // SUBWAY: two ramps into one sealed underground room. Keep the interiors
   // open; only perimeter walls seal the void.
   addRamp(scene, world, { axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2, h0: -6, h1: 0, color: 0x2f3542 });
-  addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: 2, maxZ: 12, h0: -6, h1: 0, color: 0x2f3542 });
-  addBox(scene, world, 1, -6.5, 0, 74, 1, 28, 0x2f3542, { tex: 'panel', repeat: [10, 4] });
+  addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: -1, maxZ: 13, h0: -6, h1: 0, color: 0x2f3542 });
+  addBox(scene, world, 1, -6.5, -6.8, 74, 1, 14.4, 0x2f3542, { tex: 'panel', repeat: [10, 2] });
+  addBox(scene, world, -32, -6.5, 7.2, 8, 1, 13.6, 0x2f3542, { tex: 'panel', repeat: [1, 2] });
+  addBox(scene, world, 36, -6.5, 7.2, 4, 1, 13.6, 0x2f3542, { tex: 'panel', repeat: [1, 2] });
   addBox(scene, world, 1, -3.55, -14.5, 74, 4.9, 1, 0x262b38, { tex: 'panel', repeat: [10, 1] });
   addBox(scene, world, 1, -3.55, 14.5, 74, 4.9, 1, 0x262b38, { tex: 'panel', repeat: [10, 1] });
   addBox(scene, world, -36.5, -3.55, 0, 1, 4.9, 28, 0x262b38, { tex: 'panel', repeat: [1, 4] });
   addBox(scene, world, 38.5, -3.55, 0, 1, 4.9, 28, 0x262b38, { tex: 'panel', repeat: [1, 4] });
+  addLava(scene, world, 3, 7.4, 62, 14, -6.89);
+  world.lavaZones[world.lavaZones.length - 1].maxY = -6.04;
+  for (const [x, z, w, d] of [[-22, 7, 6, 4.5], [-6, 7, 5, 4], [11, 7, 5, 4], [29, 5, 6, 5]]) {
+    addBox(scene, world, x, -6.22, z, w, 0.44, d, 0x4d5668, { tex: 'panel', repeat: [2, 1] });
+  }
   const tubeLight = new THREE.PointLight(0xffe040, 30, 34);
   tubeLight.position.set(0, -3, -7);
   scene.add(tubeLight);
@@ -1880,7 +1974,7 @@ function buildCity(scene) {
   addBox(scene, world, -12, 37, 44, 1, 6, 1, 0x8892a8, { collide: false });
   addBox(scene, world, -12, 40.5, 44, 1.8, 0.6, 1.8, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
   // lava pit in the SE corner — mind the glow, and mind the edge
-  addLava(scene, world, 56, -50, 8, 8, -1.1);
+  addLava(scene, world, 56, -50, 8, 8, -0.85);
   // ground variety: galleria plaza, crosswalk bands
   addBox(scene, world, -12, 0.031, 14, 30, 0.06, 14, 0x9088b0, { tex: 'arcade', repeat: [6, 3] });
   // floating platforms over the street + pads
@@ -1940,7 +2034,7 @@ function buildCity(scene) {
   pk(world, 'djump', -20, 0.2, 10);                      // galleria plaza edge
   pk(world, 'gold', -12, 34.2, 36);                        // tallest roof
   pk(world, 'silver', 32, 28.2, -35);
-  pk(world, 'weapon', 0, -5.8, -7, { weapon: 'whomper' }); // deep in the subway
+  pk(world, 'weapon', -6, -5.8, 7, { weapon: 'whomper' }); // subway lava island
   pk(world, 'weapon', -58, 24.2, 33, { weapon: 'sidewinder' });
   pk(world, 'weapon', -12, 20.2, -38, { weapon: 'hyper' });
   pk(world, 'weapon', 40, 0.2, 0, { weapon: 'zooka' });
@@ -2556,7 +2650,7 @@ function buildPrism(scene) {
 
 // Flat text sign mounted on a wall (canvas-textured plane, fixed yaw —
 // sprites clipped through the walls). Returns a redraw(text) function.
-function makeSign(scene, x, y, z, w, color, text, yaw = 0) {
+function makeSign(scene, x, y, z, w, color, text, yaw = 0, doubleFaced = false) {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
   const tex = new THREE.CanvasTexture(c);
@@ -2581,12 +2675,100 @@ function makeSign(scene, x, y, z, w, color, text, yaw = 0) {
     tex.needsUpdate = true;
   };
   draw(text);
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4),
+  const makeFace = () => new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  const m = makeFace();
+  const nX = Math.sin(yaw);
+  const nZ = Math.cos(yaw);
+  const faceOffset = doubleFaced ? 0.015 : 0;
   m.position.set(x, y, z);
+  m.position.x += nX * faceOffset;
+  m.position.z += nZ * faceOffset;
   m.rotation.y = yaw;
   scene.add(m);
+  if (doubleFaced) {
+    const back = makeFace();
+    back.position.set(x - nX * faceOffset, y, z - nZ * faceOffset);
+    back.rotation.y = yaw + Math.PI;
+    scene.add(back);
+  }
   return draw;
+}
+
+function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 512;
+  const g = c.getContext('2d');
+  const base = new THREE.Color(color);
+  const accent = base.clone().offsetHSL(0.12, 0.08, 0.16);
+  const colorCss = `#${base.getHexString()}`;
+  const accentCss = `#${accent.getHexString()}`;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const draw = (t) => {
+    g.clearRect(0, 0, c.width, c.height);
+    const bg = g.createLinearGradient(0, 0, 0, 512);
+    bg.addColorStop(0, accentCss);
+    bg.addColorStop(0.45, colorCss);
+    bg.addColorStop(1, '#151530');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, c.width, c.height);
+
+    g.globalCompositeOperation = 'source-over';
+    for (let layer = 0; layer < 3; layer++) {
+      const drift = t * (28 + layer * 13);
+      for (let i = 0; i < 28; i++) {
+        const x = (i * 71 + layer * 43 + Math.sin(t * 0.8 + i) * 34) % 330 - 36;
+        const y = (i * 53 + drift + Math.cos(t * 0.6 + i * 1.7) * 26) % 610 - 48;
+        const rx = 34 + ((i + layer * 5) % 6) * 12;
+        const ry = 20 + ((i + layer * 3) % 5) * 10;
+        const cloud = g.createRadialGradient(x, y, 3, x, y, Math.max(rx, ry));
+        cloud.addColorStop(0, layer === 0 ? 'rgba(255,255,255,0.36)' : `${accentCss}70`);
+        cloud.addColorStop(0.55, layer === 2 ? `${colorCss}44` : 'rgba(255,255,255,0.12)');
+        cloud.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = cloud;
+        g.beginPath();
+        g.ellipse(x, y, rx, ry, Math.sin(i + t) * 0.7, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+
+    g.globalCompositeOperation = 'lighter';
+    g.save();
+    g.translate(128, 256);
+    g.rotate(Math.sin(t * 0.45) * 0.18);
+    for (let band = 0; band < 4; band++) {
+      const yy = -190 + band * 120 + Math.sin(t * 0.9 + band) * 38;
+      g.beginPath();
+      for (let i = 0; i <= 24; i++) {
+        const x = -170 + i * 15;
+        const y = yy + Math.sin(i * 0.65 + t * 2.2 + band) * 18;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.strokeStyle = band % 2 ? `${accentCss}88` : 'rgba(255,255,255,0.34)';
+      g.lineWidth = band % 2 ? 12 : 8;
+      g.stroke();
+    }
+    g.restore();
+
+    g.globalCompositeOperation = 'source-over';
+    tex.needsUpdate = true;
+  };
+  draw(0);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({
+      map: tex, color: 0xffffff, transparent: false, opacity: 1,
+      depthWrite: true, side: THREE.DoubleSide,
+    }));
+  const nX = Math.sin(yaw);
+  const nZ = Math.cos(yaw);
+  m.position.set(x + nX * 0.04, y, z + nZ * 0.04);
+  m.rotation.y = yaw;
+  scene.add(m);
+  world.anim.push((dt, t) => draw(t));
+  return m;
 }
 
 export function buildAtrium(scene) {
@@ -2641,7 +2823,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 44, 3, 10.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });     // gate wall
   addBox(scene, world, 40.5, 6.1, 42, 15, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
   addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
-  addBox(scene, world, 44, 2.6, 10.9, 5, 4.4, 0.4, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.9 });
+  addMagicPortal(scene, world, 44, 3, 10.9, 5.7, 6.7, 0x8a5fff, 0);
   makeSign(scene, 44, 5.1, 11.2, 7, '#ff40e0', '? ? ?');
   const sancLight = new THREE.PointLight(0x8a5fff, 20, 16);
   sancLight.position.set(44, 3, 14);
@@ -2673,7 +2855,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 0, 4.9, 10, 6.8, 0.35, 0.35, 0xffd23c, {
     collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.2,
   });
-  makeSign(scene, 0, 6.2, 13.4, 12, '#ffd23c', 'MULTIPLAYER');
+  makeSign(scene, 0, 6.2, 13.4, 12, '#ffd23c', 'MULTIPLAYER', 0, true);
   world.multiplayerPortal = { x: 0, z: 10 };
   const mpLight = new THREE.PointLight(0xffd23c, 24, 24);
   mpLight.position.set(0, 4, 10);
@@ -2702,11 +2884,11 @@ export function buildAtrium(scene) {
     if (horiz) {
       P(-4, 0, 1.6, 7, 1.6); P(4, 0, 1.6, 7, 1.6);
       addBox(scene, world, px, 7.6, pz, 9.6, 1.4, 1.6, 0x4a4266, { tex: 'neonwall' });
-      addBox(scene, world, px, 3.2, pz + sgn * 0.9, 7, 6, 0.5, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
+      addMagicPortal(scene, world, px, 3.7, pz + sgn * 0.92, 7.8, 7.8, color, sgn === -1 ? 0 : Math.PI);
     } else {
       P(0, -4, 1.6, 7, 1.6); P(0, 4, 1.6, 7, 1.6);
       addBox(scene, world, px, 7.6, pz, 1.6, 1.4, 9.6, 0x4a4266, { tex: 'neonwall' });
-      addBox(scene, world, px + sgn * 0.9, 3.2, pz, 0.5, 6, 7, color, { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
+      addMagicPortal(scene, world, px + sgn * 0.92, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
     }
     // sign panel flat on the wall above the gate (inner faces: z ±48, x ±32)
     makeSign(scene, horiz ? px : sgn * 31.9, 9.6, horiz ? sgn * 47.95 : pz, 10,
@@ -2757,7 +2939,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 11, 0.66, 38, 2.6, 0.1, 2.6, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 0.9 });
   world.modePad = { x: 11, z: 38 };
   addBox(scene, world, 11, 1.6, 36.6, 0.3, 3.2, 0.3, 0x3a3452); // sign post at the pad's back edge
-  world.setModeSign = makeSign(scene, 11, 3.6, 36.8, 9, '#30e0ff', 'MODE: FREE FOR ALL');
+  world.setModeSign = makeSign(scene, 11, 3.6, 36.8, 9, '#30e0ff', 'MODE: FREE FOR ALL', 0, true);
 
   // a little clutter so it feels lived-in
   addBox(scene, world, -14, 1.2, 30, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });

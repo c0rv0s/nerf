@@ -527,6 +527,20 @@ export class Bot {
     if (!inFlight) {
       const ml = Math.hypot(moveX, moveZ);
       if (ml > 1) { moveX /= ml; moveZ /= ml; }
+      const lavaNow = this._inLava(this.pos.x, this.pos.y, this.pos.z);
+      const probeX = this.pos.x + moveX * 2.1;
+      const probeZ = this.pos.z + moveZ * 2.1;
+      if (this._inLava(probeX, this.pos.y, probeZ)) {
+        const away = this._lavaAvoidVector(probeX, probeZ);
+        moveX = away.x;
+        moveZ = away.z;
+        if (this.grounded && !lavaNow) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.55);
+      } else if (lavaNow) {
+        const away = this._lavaAvoidVector(this.pos.x, this.pos.z);
+        moveX = away.x;
+        moveZ = away.z;
+        if (this.grounded) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.75);
+      }
       const accel = this.grounded ? 8 : 1.5;
       this.vel.x += (moveX * speed - this.vel.x) * Math.min(1, accel * dt);
       this.vel.z += (moveZ * speed - this.vel.z) * Math.min(1, accel * dt);
@@ -575,9 +589,18 @@ export class Bot {
   }
 
   _waterZone() {
+    const falls = this.world.waterfallZones;
+    const midY = this.pos.y + this.height * 0.5;
+    for (const z of falls || []) {
+      if (
+        this.pos.x >= z.minX && this.pos.x <= z.maxX &&
+        this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
+        midY >= z.minY && midY <= z.maxY
+      ) return { ...z, waterfall: true, surfaceY: z.maxY };
+    }
+
     const zones = this.world.waterZones;
     if (!zones?.length) return null;
-    const midY = this.pos.y + this.height * 0.5;
     for (const z of zones) {
       if (
         this.pos.x >= z.minX && this.pos.x <= z.maxX &&
@@ -589,7 +612,39 @@ export class Bot {
     return null;
   }
 
+  _inLava(x, y, z) {
+    for (const l of this.world.lavaZones || []) {
+      if (x >= l.minX && x <= l.maxX && z >= l.minZ && z <= l.maxZ && y < l.maxY + 0.4) return true;
+    }
+    return false;
+  }
+
+  _lavaAvoidVector(x, z) {
+    let ax = 0, az = 0;
+    for (const l of this.world.lavaZones || []) {
+      if (x < l.minX || x > l.maxX || z < l.minZ || z > l.maxZ) continue;
+      const dl = Math.abs(x - l.minX), dr = Math.abs(l.maxX - x);
+      const db = Math.abs(z - l.minZ), dt = Math.abs(l.maxZ - z);
+      const m = Math.min(dl, dr, db, dt);
+      if (m === dl) ax -= 1;
+      else if (m === dr) ax += 1;
+      else if (m === db) az -= 1;
+      else az += 1;
+    }
+    const len = Math.hypot(ax, az) || 1;
+    return { x: ax / len, z: az / len };
+  }
+
   _applyWaterMotion(zone, dt) {
+    if (zone.waterfall) {
+      this.vel.y = THREE.MathUtils.damp(this.vel.y, -7 + this.world.gravity * dt, 12, dt);
+      const fallDrag = Math.exp(-4.2 * dt);
+      this.vel.x *= fallDrag;
+      this.vel.z *= fallDrag;
+      this.grounded = false;
+      return;
+    }
+
     const eyeY = this.pos.y + 1.55;
     let targetVy = eyeY < zone.surfaceY - 0.25 ? 1.05 : -0.25;
     const nearSurface = eyeY > zone.surfaceY - 0.35;
