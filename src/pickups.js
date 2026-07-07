@@ -87,16 +87,25 @@ function makeMesh(def) {
     g.add(star);
   } else { // gold / silver medal
     const color = def.kind === 'gold' ? 0xffd23c : 0xdcdce8;
+    const quietWaterMedal = def.quietWaterMedal === true;
     const medal = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.18, 20),
-      new THREE.MeshStandardMaterial({ color, metalness: 0.9, roughness: 0.25,
-        emissive: color, emissiveIntensity: 0.5 }));
+      new THREE.MeshStandardMaterial({
+        color,
+        metalness: quietWaterMedal ? 0.35 : 0.9,
+        roughness: quietWaterMedal ? 0.62 : 0.25,
+        envMapIntensity: quietWaterMedal ? 0.18 : 1,
+        emissive: color,
+        emissiveIntensity: quietWaterMedal ? 0.2 : 0.5,
+      }));
     medal.rotation.x = Math.PI / 2;
     g.add(medal);
-    const glow = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.15 }));
-    g.add(glow);
-    const light = new THREE.PointLight(color, 60, 16);
-    g.add(light);
+    if (!quietWaterMedal) {
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.15 }));
+      g.add(glow);
+      const light = new THREE.PointLight(color, 60, 16);
+      g.add(light);
+    }
   }
   return g;
 }

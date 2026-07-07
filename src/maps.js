@@ -620,11 +620,65 @@ function buildArena(scene) {
   scene.background = new THREE.Color(0x10142a);
   scene.fog = new THREE.Fog(0x10142a, 140, 380);
   baseLighting(scene, 0x8899ff, 0x332211, [50, 110, 30], 110);
+  const lavaRoomPits = [[-12, 50], [22, 36], [-12, -50], [22, -36]];
 
   // Floors: main level (west + atrium), sunken east basement (top −5)
-  addBox(scene, world, -24.5, -0.5, 0, 109, 1, 122, 0x2e6da0, { tex: 'checker', repeat: [14, 15] });
-  addBox(scene, world, 54.5, -5.5, 0, 49, 1, 122, 0x274f74, { tex: 'checker', repeat: [6, 15] });
-  // retaining wall top sits 0.1 below floor level — flush tops z-fight
+  // Main floor is split around inset lava basins.
+  for (const [x, z, w, d] of [
+    [-47.75, 0, 62.5, 122],
+    [0.25, 0, 15.5, 122],
+    [-12, -57.75, 9, 6.5],
+    [-12, -36.25, 9, 18.5],
+    [-12, 0, 9, 54],
+    [-12, 36.25, 9, 18.5],
+    [-12, 57.75, 9, 6.5],
+  ]) {
+    addBox(scene, world, x, -0.5, z, w, 1, d, 0x2e6da0, { tex: 'checker', repeat: [Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(d / 8))] });
+  }
+  for (const [x, z, w, d] of [
+    [23, -50.75, 14, 19.5],
+    [23, 0, 14, 63],
+    [23, 50.75, 14, 19.5],
+    [16.75, -36, 1.5, 9],
+    [28.25, -36, 3.5, 9],
+    [16.75, 36, 1.5, 9],
+    [28.25, 36, 3.5, 9],
+  ]) {
+    addBox(scene, world, x, -0.5, z, w, 1, d, 0x2e6da0, { tex: 'checker', repeat: [Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(d / 8))] });
+  }
+  addBox(scene, world, 12, -0.5, -54.5, 8, 1, 13, 0x2e6da0, { tex: 'checker', repeat: [1, 2] });
+  addBox(scene, world, 12, -0.5, -44, 8, 1, 8, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
+  addBox(scene, world, 12, -0.5, -17, 8, 1, 46, 0x2e6da0, { tex: 'checker', repeat: [1, 6] });
+  addBox(scene, world, 12, -0.5, 10, 8, 1, 8, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
+  addBox(scene, world, 12, -0.5, 37.5, 8, 1, 47, 0x2e6da0, { tex: 'checker', repeat: [1, 6] });
+  // East basement floor is paneled around the lazy-river cutouts.
+  for (const [x, z, w, d] of [
+    [36.5, 0, 13, 122], [78, 0, 2, 122],
+    [60, -55.5, 34, 11], [50, -43, 12, 10], [68, -39, 24, 18], [58, -16, 38, 8],
+    [55.5, -4, 23, 17], [42.5, 30, 25, 62], [73.5, 27, 11, 68],
+  ]) {
+    addBox(scene, world, x, -5.5, z, w, 1, d, 0x274f74, { tex: 'checker', repeat: [Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(d / 8))] });
+  }
+  // Extra seam-fill around the lazy-river ramp landings. These close the thin
+  // basement-floor strips that were exposing the void beside the water cuts.
+  for (const [x, z, w, d] of [
+    [60.5, -49, 33, 2],
+    [61.5, 51.5, 13, 19],
+    [43.5, -34, 1, 8],
+    [45.5, -25, 5, 9],
+    [43.5, -6.5, 1, 11],
+    [55.5, 29, 1, 26],
+    [43.5, -44, 1, 12],
+    [56.5, 14.75, 3, 2.5],
+    [67, 14.75, 2, 2.5],
+    [76.5, -26, 1, 7],
+  ]) {
+    addBox(scene, world, x, -5.5, z, w, 1, d, 0x274f74, { tex: 'checker', repeat: [Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(d / 8))] });
+  }
+  // Last-resort underside deck: intentional pools sit above this, but
+  // any accidental floor seam now lands on geometry instead of out-of-map void.
+  addBox(scene, world, 55, -9.25, 0, 50, 0.5, 118, 0x102033, { tex: 'panel', repeat: [6, 14] });
+  // Retaining wall top sits 0.1 below floor level; flush tops z-fight.
   addBox(scene, world, 29.6, -3.05, 0, 1.4, 5.9, 122, 0x8a5230, { tex: 'panel' });
 
   // Outer walls (drop below the basement floor)
@@ -636,16 +690,15 @@ function buildArena(scene) {
     addBox(scene, world, x, 7, z, w, 0.9, d, 0xffd23c, { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.2 });
   }
   // lamps sit 0.1 proud of the wall face — flush placement z-fights with the wall
-  for (const [x, z] of [[-50, -57.9], [0, -57.9], [50, -57.9], [-50, 57.9], [0, 57.9], [50, 57.9]]) {
+  for (const [x, z] of [[-30, -57.9], [0, -57.9], [30, -57.9], [-50, 57.9], [28, 57.9], [50, 57.9]]) {
     addBox(scene, world, x, 15, z, 3, 1.2, 2, 0xffffff, { collide: false, shadow: false, emissive: 0xeef4ff, emissiveIntensity: 2.2 });
   }
-  // wall art — the complex is a sports venue, let it look like one
-  // (bottoms sit above the y≈7 glow stripes — intersecting them glitched)
-  addDecal(scene, 'poster1', -50, 12.2, -56.9, 9, 0);
-  addDecal(scene, 'target', 50, 12.2, -56.9, 9, 0);
-  addDecal(scene, 'hazard', 0, 10.6, 56.9, 12, Math.PI, 6);
-  addDecal(scene, 'poster1', -76.9, 12.2, 30, 9, Math.PI / 2);
-  addDecal(scene, 'target', 76.9, 12.2, -30, 9, -Math.PI / 2);
+  // wall art — keep clear vertical separation from the y≈7 glow stripes.
+  addDecal(scene, 'poster1', -50, 13.5, -56.9, 9, 0);
+  addDecal(scene, 'target', 50, 13.5, -56.9, 9, 0);
+  addDecal(scene, 'hazard', 0, 12.2, 56.9, 12, Math.PI, 6);
+  addDecal(scene, 'poster1', -76.9, 13.5, 30, 9, Math.PI / 2);
+  addDecal(scene, 'target', 76.9, 13.5, -30, 9, -Math.PI / 2);
   // ground variety: an arcade-carpet lounge in the west wing
   addBox(scene, world, -52, 0.031, -30, 40, 0.06, 40, 0x9088b0, { tex: 'arcade', repeat: [8, 8] });
   addBox(scene, world, -52, 0.031, 30, 36, 0.06, 36, 0x7a94b0, { tex: 'grass', repeat: [7, 7] });
@@ -754,6 +807,107 @@ function buildArena(scene) {
   addBox(scene, world, 48, -2.5, 14, 20, 5, 1.5, 0x8a5230, { tex: 'panel' });
   addBox(scene, world, 68, -2.5, 14, 4, 5, 1.5, 0x8a5230, { tex: 'panel' });
   crate(50, -5, -36); crate(50, -5, -33.5); crate(66, -5, 33);
+  // Lazy river: swimmable water snakes through the east basement instead of
+  // flooding the whole floor. It dives under the main floor and resurfaces
+  // through two floor cuts reached by ramps.
+  const riverRects = [
+    [50, -33.5, 12, 9],
+    [62, -25, 28, 9],
+    [72, -8, 10, 28],
+    [62, 9, 28, 9],
+    [62, 16, 8, 6],
+    [62, 29, 12, 26],
+  ];
+  for (const [x, z, w, d] of riverRects) {
+    addBox(scene, world, x, -8.3, z, w, 1, d, 0x1f5f72, { tex: 'panel', repeat: [Math.max(1, Math.round(w / 6)), Math.max(1, Math.round(d / 6))] });
+    addWater(scene, world, x, -4.95, z, w, d, 3.0);
+  }
+  const riverBounds = riverRects.map(([x, z, w, d]) => ({
+    minX: x - w / 2, maxX: x + w / 2,
+    minZ: z - d / 2, maxZ: z + d / 2,
+  }));
+  const openIntervals = (min, max, cuts) => {
+    const clipped = cuts
+      .map(([a, b]) => [Math.max(min, a), Math.min(max, b)])
+      .filter(([a, b]) => b - a > 0.05)
+      .sort((a, b) => a[0] - b[0]);
+    const out = [];
+    let cursor = min;
+    for (const [a, b] of clipped) {
+      if (a - cursor > 0.05) out.push([cursor, a]);
+      cursor = Math.max(cursor, b);
+    }
+    if (max - cursor > 0.05) out.push([cursor, max]);
+    return out;
+  };
+  const addRiverWall = (x, z, w, d) => addBox(scene, world, x, -6.5, z, w, 2.8, d, 0x173548,
+    { tex: 'panel', repeat: [Math.max(1, Math.round(w / 6)), Math.max(1, Math.round(d / 6))] });
+  for (let i = 0; i < riverBounds.length; i++) {
+    const r = riverBounds[i];
+    for (const side of ['left', 'right']) {
+      const edgeX = side === 'left' ? r.minX : r.maxX;
+      const cuts = riverBounds
+        .filter((o, j) => j !== i && o.minX < edgeX && o.maxX > edgeX)
+        .map(o => [Math.max(r.minZ, o.minZ), Math.min(r.maxZ, o.maxZ)])
+        .filter(([a, b]) => b > a);
+      for (const [a, b] of openIntervals(r.minZ, r.maxZ, cuts)) {
+        addRiverWall(edgeX, (a + b) / 2, 0.5, b - a);
+      }
+    }
+    for (const side of ['near', 'far']) {
+      const edgeZ = side === 'near' ? r.minZ : r.maxZ;
+      const cuts = riverBounds
+        .filter((o, j) => j !== i && o.minZ < edgeZ && o.maxZ > edgeZ)
+        .map(o => [Math.max(r.minX, o.minX), Math.min(r.maxX, o.maxX)])
+        .filter(([a, b]) => b > a);
+      for (const [a, b] of openIntervals(r.minX, r.maxX, cuts)) {
+        addRiverWall((a + b) / 2, edgeZ, b - a, 0.5);
+      }
+    }
+  }
+  addBox(scene, world, 60, -0.95, 0, 22, 0.7, 28, 0x3a3358, { tex: 'panel' });
+  addRamp(scene, world, { axis: 'z', minX: 47, maxX: 53, minZ: -51, maxZ: -39, h0: 0, h1: -5, color: 0x3f8f8f });
+  addRamp(scene, world, { axis: 'z', minX: 59, maxX: 65, minZ: 39, maxZ: 51, h0: -5, h1: 0, color: 0x3f8f8f });
+  const addRiverTrim = (x, z, w, d) => addBox(scene, world, x, -4.72, z, w, 0.32, d, 0x30e0ff,
+    { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.0 });
+  for (let i = 0; i < riverBounds.length; i++) {
+    const r = riverBounds[i];
+    for (const side of ['left', 'right']) {
+      const edgeX = side === 'left' ? r.minX : r.maxX;
+      const cuts = riverBounds
+        .filter((o, j) => j !== i && o.minX < edgeX && o.maxX > edgeX)
+        .map(o => [Math.max(r.minZ, o.minZ), Math.min(r.maxZ, o.maxZ)])
+        .filter(([a, b]) => b > a);
+      for (const [a, b] of openIntervals(r.minZ, r.maxZ, cuts)) {
+        addRiverTrim(edgeX, (a + b) / 2, 0.32, b - a);
+      }
+    }
+    for (const side of ['near', 'far']) {
+      const edgeZ = side === 'near' ? r.minZ : r.maxZ;
+      const cuts = riverBounds
+        .filter((o, j) => j !== i && o.minZ < edgeZ && o.maxZ > edgeZ)
+        .map(o => [Math.max(r.minX, o.minX), Math.min(r.maxX, o.maxX)])
+        .filter(([a, b]) => b > a);
+      for (const [a, b] of openIntervals(r.minX, r.maxX, cuts)) {
+        addRiverTrim((a + b) / 2, edgeZ, b - a, 0.32);
+      }
+    }
+  }
+  for (const [x, z] of lavaRoomPits) {
+    addLava(scene, world, x, z, 9, 9, -1.1);
+    addBox(scene, world, x, -0.55, z - 4.65, 9.6, 1.1, 0.4, 0x3a2018, { tex: 'rock' });
+    addBox(scene, world, x, -0.55, z + 4.65, 9.6, 1.1, 0.4, 0x3a2018, { tex: 'rock' });
+    addBox(scene, world, x - 4.65, -0.55, z, 0.4, 1.1, 9.6, 0x3a2018, { tex: 'rock' });
+    addBox(scene, world, x + 4.65, -0.55, z, 0.4, 1.1, 9.6, 0x3a2018, { tex: 'rock' });
+    addBox(scene, world, x, 0.08, z - 4.65, 9.6, 0.16, 0.28, 0xff5a20,
+      { collide: false, shadow: false, emissive: 0xff5a20, emissiveIntensity: 1.1 });
+    addBox(scene, world, x, 0.08, z + 4.65, 9.6, 0.16, 0.28, 0xff5a20,
+      { collide: false, shadow: false, emissive: 0xff5a20, emissiveIntensity: 1.1 });
+    addBox(scene, world, x - 4.65, 0.08, z, 0.28, 0.16, 9.6, 0xff5a20,
+      { collide: false, shadow: false, emissive: 0xff5a20, emissiveIntensity: 1.1 });
+    addBox(scene, world, x + 4.65, 0.08, z, 0.28, 0.16, 9.6, 0xff5a20,
+      { collide: false, shadow: false, emissive: 0xff5a20, emissiveIntensity: 1.1 });
+  }
 
   // Spawns
   for (const [x, z] of [[-70, 30], [-60, 15], [-70, -30], [-60, -15], [-35, 30]]) {
@@ -820,6 +974,7 @@ function buildArena(scene) {
     [-15, 0, 42], [5, 0, 42], [20, 0, 42], [-15, 0, -42], [5, 0, -42], [20, 0, -42],
     [-8, 0, 28], [16, 0, 28], [-8, 0, -28], [16, 0, -28],
     [27, 0, 42], [27, 0, -42], [34, -5, 42], [34, -5, -42],
+    [50, 0, -51], [50, -2.5, -45], [62, 0, 51], [62, -2.5, 45],
     [-50, 0, 30],
     // tower: ramp mids, base ledge (corners route around the mid block), mid, top
     [-11.5, 2, 0], [15.5, 2, 0],
@@ -833,9 +988,9 @@ function buildArena(scene) {
     [40, 0, 0], [55, 0, 0], [66, 0, 0], [73, 0, 8], [73, 0, -8],
     // basement
     [37, -2.5, -26], [37, -2.5, 26],
-    [48, -5, -30], [64, -5, -30], [55, -5, -45], [72, -5, -45], [54, -5, -14],
-    [48, -5, 0], [64, -5, 0], [62, -5, 14],
-    [48, -5, 30], [64, -5, 30], [55, -5, 45], [72, -5, 45],
+    [50, -5, -45], [50, -5, -36], [62, -5, -25], [72, -5, -14], [72, -5, -4],
+    [62, -5, 9], [62, -5, 16], [62, -5, 24], [62, -5, 38],
+    [64, -5, -30], [72, -5, -45], [48, -5, 0], [64, -5, 0], [62, -5, 14], [64, -5, 30], [72, -5, 45],
   ];
   for (const [x, y, z] of wps) wp(world, x, y, z);
   world.manualLinks.push(
@@ -866,8 +1021,8 @@ function buildFortress(scene) {
   addBox(scene, world, 0, -4.5, 0, 154, 1, 14, 0x3f8f8f, { tex: 'panel', repeat: [20, 2] });
   // Trench side walls (full length — otherwise you can slip under the ground
   // slabs at the trench ends and fall out of the world)
-  addBox(scene, world, 0, -2.05, 7.5, 146, 3.9, 1, 0x8a7248);   // tops 0.1 below ground level
-  addBox(scene, world, 0, -2.05, -7.5, 146, 3.9, 1, 0x8a7248);
+  addBox(scene, world, 0, -2.1, 7.55, 146, 3.8, 0.9, 0x8a7248, { tex: 'panel', repeat: [20, 1] });   // tops 0.2 below ground level
+  addBox(scene, world, 0, -2.1, -7.55, 146, 3.8, 0.9, 0x8a7248, { tex: 'panel', repeat: [20, 1] });
 
   // Perimeter walls (extend below ground level)
   for (const [x, z, w, d] of [[0, -47, 162, 4], [0, 47, 162, 4], [-79, 0, 4, 98], [79, 0, 4, 98]]) {
@@ -883,31 +1038,51 @@ function buildFortress(scene) {
   addBox(scene, world, -75, -2.5, 0, 4, 5, 14, 0x9a8050, { tex: 'panel' });
   addBox(scene, world, 75, -2.5, 0, 4, 5, 14, 0x9a8050, { tex: 'panel' });
 
-  // Canal water — open to the sky mid-map; covered only near the end ramps
+  // Canal water
   addWater(scene, world, 0, -3.15, 0, 146, 12.6);
-  addBox(scene, world, -49, 1.2, 0, 12, 0.8, 14, 0x8a7248, { tex: 'panel' }); // covers to the end ramps
-  addBox(scene, world, 49, 1.2, 0, 12, 0.8, 14, 0x8a7248, { tex: 'panel' });
-  // raised bunker roofs over the end ramps (tall enough inside for the ramp
-  // exit; walk out the sides) + ramplets so the roof-walkway runs end to end
-  addBox(scene, world, -64, 2.8, 0, 18, 0.8, 14, 0x8a7248, { tex: 'panel' });
-  addBox(scene, world, 64, 2.8, 0, 18, 0.8, 14, 0x8a7248, { tex: 'panel' });
-  addRamp(scene, world, { axis: 'x', minX: -55, maxX: -51, minZ: -7, maxZ: 7, h0: 3.2, h1: 1.6, color: 0x9a8050 });
-  addRamp(scene, world, { axis: 'x', minX: 51, maxX: 55, minZ: -7, maxZ: 7, h0: 1.6, h1: 3.2, color: 0x9a8050 });
-  // full-height collars where hump meets cover — no slit, nothing gets underneath
-  addBox(scene, world, -56.5, 2.2, 0, 3, 2, 14, 0x8a7248, { tex: 'panel' });
-  addBox(scene, world, 56.5, 2.2, 0, 3, 2, 14, 0x8a7248, { tex: 'panel' });
 
   // Bridges: grand center bridge + two side bridges
   // decks sit 2cm below bank level — flush tops z-fight where they overlap
   addBox(scene, world, 0, -0.42, 0, 9, 0.8, 20, 0xc8461e, { tex: 'panel' });
   addBox(scene, world, -4.2, 0.7, 0, 0.6, 1.4, 20, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.35 });
   addBox(scene, world, 4.2, 0.7, 0, 0.6, 1.4, 20, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.35 });
-  addBox(scene, world, -40, -0.42, 0, 6, 0.8, 18, 0x8a7248);
-  addBox(scene, world, 40, -0.42, 0, 6, 0.8, 18, 0x8a7248);
+  addBox(scene, world, -40, -0.42, 0, 6, 0.8, 18, 0x8a7248, { tex: 'panel', repeat: [1, 3] });
+  addBox(scene, world, 40, -0.42, 0, 6, 0.8, 18, 0x8a7248, { tex: 'panel', repeat: [1, 3] });
+  // Castle bridge houses over the side crossings, replacing the old floating
+  // end-ramp covers with something anchored to the bridge geometry.
+  for (const cx of [-40, 40]) {
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      addBox(scene, world, cx + sx * 5.2, 2.8, sz * 10.2, 2.2, 5.6, 2.2, 0x7a4fc0, { tex: 'panel' });
+      addBox(scene, world, cx + sx * 5.2, 5.9, sz * 10.2, 2.8, 0.6, 2.8, 0x9a6fe0, { tex: 'panel' });
+    }
+    addBox(scene, world, cx, 6.1, 0, 13.5, 1.4, 23, 0x9a6fe0, { tex: 'panel', repeat: [2, 4] });
+    for (const z of [-9.6, 0, 9.6]) {
+      addBox(scene, world, cx - 4.1, 7.2, z, 2.3, 0.8, 2.1, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.25 });
+      addBox(scene, world, cx + 4.1, 7.2, z, 2.3, 0.8, 2.1, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.25 });
+    }
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      addBox(scene, world, cx + sx * 3.1, 8.7, sz * 4.8, 1.4, 3.8, 1.4, 0x7a4fc0, { tex: 'panel' });
+    }
+    addBox(scene, world, cx, 10.6, 0, 8.5, 0.8, 12, 0x9a6fe0, { tex: 'panel', repeat: [2, 2] });
+    for (const z of [-4.8, 0, 4.8]) {
+      addBox(scene, world, cx - 3.6, 11.35, z, 1.5, 0.7, 1.5, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.25 });
+      addBox(scene, world, cx + 3.6, 11.35, z, 1.5, 0.7, 1.5, 0xffd23c, { emissive: 0xffd23c, emissiveIntensity: 0.25 });
+    }
+  }
+  addRamp(scene, world, { axis: 'z', minX: -43.1, maxX: -36.9, minZ: 11.5, maxZ: 25, h0: 6.8, h1: 0, color: 0x8a5fd0 });
+  addRamp(scene, world, { axis: 'z', minX: 36.9, maxX: 43.1, minZ: -25, maxZ: -11.5, h0: 0, h1: 6.8, color: 0x8a5fd0 });
+  addRamp(scene, world, { axis: 'z', minX: -41.7, maxX: -38.3, minZ: -9, maxZ: -2, h0: 6.8, h1: 11, color: 0x8a5fd0 });
+  addRamp(scene, world, { axis: 'z', minX: 38.3, maxX: 41.7, minZ: 2, maxZ: 9, h0: 11, h1: 6.8, color: 0x8a5fd0 });
+  addVine(scene, world, -45.2, -10.2, 0.2, 6.9, 0.85, -0.24, 0);
+  addVine(scene, world, -34.8, -10.2, 0.2, 6.9, 0.85, 0.24, 0);
+  addVine(scene, world, 34.8, 10.2, 0.2, 6.9, 0.85, -0.24, 0);
+  addVine(scene, world, 45.2, 10.2, 0.2, 6.9, 0.85, 0.24, 0);
+  addVine(scene, world, -44.25, 4.8, 6.9, 11.1, 0.75, -0.2, 0);
+  addVine(scene, world, 44.25, -4.8, 6.9, 11.1, 0.75, 0.2, 0);
   // Gatehouse towers flanking the center bridge (decor + cover)
   addBox(scene, world, -9, 5, 0, 6, 10, 6, 0x7a4fc0, { tex: 'panel' });
   addBox(scene, world, 9, 5, 0, 6, 10, 6, 0x7a4fc0, { tex: 'panel' });
-  addBox(scene, world, 0, 10.8, 0, 24, 1.6, 6, 0x9a6fe0);   // arch overhead
+  addBox(scene, world, 0, 10.8, 0, 24, 1.6, 6, 0x9a6fe0, { tex: 'panel' });   // arch overhead
   // banners on the perimeter + a target on the west gatehouse tower
   addDecal(scene, 'target', -30, 6.5, -44.9, 7, 0);
   addDecal(scene, 'poster1', 30, 6.5, 44.9, 7, Math.PI);
@@ -935,9 +1110,15 @@ function buildFortress(scene) {
   pk(world, 'ammo', 30, 9.2, -30, { weapon: 'sidewinder' });
   wp(world, 39, 0, -30); wp(world, 30, 9, -30);
   world.manualLinks.push([39, 0, -30, 30, 9, -30, true]);
-  // glow strips along the trench lips
-  addBox(scene, world, 0, 0, 7.5, 146, 0.15, 0.3, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.3 });
-  addBox(scene, world, 0, 0, -7.5, 146, 0.15, 0.3, 0x30e0ff, { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.3 });
+  // Canal escape vines: climb from the trench floor back to the banks without
+  // forcing a long run to the end ramps.
+  for (const [x, z, leanZ] of [
+    [-58, 6.62, 0.26], [-28, -6.62, -0.26],
+    [-10, 6.62, 0.26], [18, -6.62, -0.26],
+    [46, 6.62, 0.26], [60, -6.62, -0.26],
+  ]) {
+    addVine(scene, world, x, z, -3.8, 0.55, 1.05, 0, leanZ);
+  }
 
   // THE KEEP (north-center): interior room w/ gold, walkable roof
   addBox(scene, world, 0, 3.5, 37, 22, 7, 2, 0x8a5fd0, { tex: 'panel' });   // north wall
@@ -957,11 +1138,11 @@ function buildFortress(scene) {
 
   // Climbable corner towers (NE + SW), decor towers (NW + SE)
   addBox(scene, world, 64, 3.5, 38, 9, 7, 9, 0x7a4fc0, { tex: 'panel' });
-  addBox(scene, world, 64, 7.3, 38, 10, 0.6, 10, 0x9a6fe0);
+  addBox(scene, world, 64, 7.3, 38, 10, 0.6, 10, 0x9a6fe0, { tex: 'panel' });
   addVine(scene, world, 59.5, 38, 0.2, 7.7, 0.85, -0.25, 0);
   addRamp(scene, world, { axis: 'x', minX: 46, maxX: 59.5, minZ: 35, maxZ: 41, h0: 0, h1: 7.6, color: 0x8a5fd0 });
   addBox(scene, world, -64, 3.5, -38, 9, 7, 9, 0x7a4fc0, { tex: 'panel' });
-  addBox(scene, world, -64, 7.3, -38, 10, 0.6, 10, 0x9a6fe0);
+  addBox(scene, world, -64, 7.3, -38, 10, 0.6, 10, 0x9a6fe0, { tex: 'panel' });
   addVine(scene, world, -59.5, -38, 0.2, 7.7, 0.85, 0.25, 0);
   addRamp(scene, world, { axis: 'x', minX: -59.5, maxX: -46, minZ: -41, maxZ: -35, h0: 7.6, h1: 0, color: 0x8a5fd0 });
   addBox(scene, world, -64, 4, 38, 7, 8, 7, 0x5a4a78, { tex: 'panel' });
@@ -1038,8 +1219,8 @@ function buildFortress(scene) {
   crate(24, -30); crate(21.5, -30); crate(24, -32.5);
   crate(-52, -28); crate(52, 28); crate(-14, -20); crate(14, 20);
   crate(-40, 16); crate(40, -16); crate(68, 10); crate(-68, -10);
-  addBox(scene, world, -28, 1, -12, 14, 2, 1.5, 0x8a7248);
-  addBox(scene, world, 28, 1, 12, 14, 2, 1.5, 0x8a7248);
+  addBox(scene, world, -28, 1, -12, 14, 2, 1.5, 0x8a7248, { tex: 'panel', repeat: [3, 1] });
+  addBox(scene, world, 28, 1, 12, 14, 2, 1.5, 0x8a7248, { tex: 'panel', repeat: [3, 1] });
 
   // Spawns
   for (const dz of [-30, -20, 14, 24, 34]) {
@@ -1077,7 +1258,7 @@ function buildFortress(scene) {
   pk(world, 'speed', -30, 0.2, 0);                       // west field
   pk(world, 'djump', 30, 0.2, 30);                       // NE courtyard
   pk(world, 'gold', 0, 0.2, 26);                       // inside the keep
-  pk(world, 'silver', 0, -3.8, 4);                     // under the center bridge
+  pk(world, 'silver', 0, -3.8, 4, { quietWaterMedal: true }); // under the center bridge
   pk(world, 'star', 8, 8.2, 36, { hidden: true });     // keep roof corner
   pk(world, 'star', 71, -0.2, 0, { hidden: true });    // top of the east canal ramp
   pk(world, 'star', -24, 2.6, 31, { hidden: true });   // atop crate cluster
@@ -1099,9 +1280,14 @@ function buildFortress(scene) {
     [-24, 0, 40], [24, 0, 40], [-45, 0, 40], [45, 0, 40], [0, 0, 42],
     // bridges
     [0, 0, 0], [-40, 0, 0], [40, 0, 0],
+    [-40, 3.4, 18], [-40, 6.8, 5], [-40, 8.9, -5.5], [-40, 11, 0],
+    [40, 3.4, -18], [40, 6.8, -5], [40, 8.9, 5.5], [40, 11, 0],
     // trench
     [-71, -0.5, 0], [-61, -2.5, 0], [-50, -4, 0], [-28, -4, 0], [-12, -4, 0],
     [0, -4, 0], [12, -4, 0], [28, -4, 0], [50, -4, 0], [61, -2.5, 0], [71, -0.5, 0],
+    [-58, -4, 7], [-58, 0, 11], [-28, -4, -7], [-28, 0, -11],
+    [-10, -4, 7], [-10, 0, 11], [18, -4, -7], [18, 0, -11],
+    [46, -4, 7], [46, 0, 11], [60, -4, -7], [60, 0, -11],
     // keep: door, interior, roof + ramp
     [0, 0, 11], [0, 0, 26], [9, 7.8, 27], [-5, 7.8, 26], [22, 3.9, 27], [34, 0, 27],
     // towers
@@ -1510,9 +1696,16 @@ function buildCanopy(scene) {
 
   // hedge lanes — break up the open lawn into corridors, plus a small maze
   // pocket in the SE quadrant (the pulsar sits inside it)
-  for (const [hx, hz, hw, hd] of [[-15, 60, 50, 2], [15, -60, 50, 2], [60, 15, 2, 50], [-60, -15, 2, 50],
-                                  [-30, 14, 2, 26], [30, -14, 2, 26],
-                                  [18, -33, 24, 2], [10, -22, 2, 20], [24, -40, 2, 12]]) {
+  for (const [hx, hz, hw, hd] of [
+    [-15, 60, 50, 2], [15, -60, 50, 2], [60, 15, 2, 50], [-60, -15, 2, 50],
+    [-30, 14, 2, 26], [30, -14, 2, 26],
+    [18, -33, 24, 2], [10, -22, 2, 20], [24, -40, 2, 12],
+    // tighter ground pockets around the tree room, hut, and log approaches
+    [-18, -9, 18, 2], [18, 9, 18, 2],
+    [14, 24, 18, 2], [38, 14, 2, 20],
+    [-18, 35, 2, 18], [2, 35, 18, 2],
+    [-39, -34, 18, 2], [-15, -16, 2, 18],
+  ]) {
     addBox(scene, world, hx, 1.75, hz, hw, 3.5, hd, 0x3a6b30, { tex: 'rock' });
     (world.foliageZones ||= []).push({
       minX: hx - hw / 2 - 0.45, maxX: hx + hw / 2 + 0.45,
@@ -1683,6 +1876,11 @@ function buildCanopy(scene) {
     // fallen log tunnel + SE hedge maze pocket
     [-27, 0, -24], [-20, 0, -24], [-34, 0, -24],
     [16, 0, -18], [16, 0, -29], [4, 0, -29], [28, 0, -37],
+    [-45, 0, -34], [-30, 0, -34], [-15, 0, -7], [-15, 0, -25],
+    // close-quarters hedge pockets around center tree, ranger hut, north lawn
+    [-26, 0, -9], [-10, 0, -9], [10, 0, 9], [26, 0, 9],
+    [5, 0, 24], [23, 0, 24], [38, 0, 4], [38, 0, 24],
+    [-18, 0, 25], [-18, 0, 44], [-7, 0, 35], [12, 0, 35],
     // river: bed line, flooded tunnels, exit-ramp mids, crossings on top
     [-54, -2.6, -20], [-54, -2.6, 4], [-54, -2.6, 24], [-54, -2.6, 40], [-54, -2.6, 56],
     [-53, -1.2, 30], [-55, -1.2, -50],
