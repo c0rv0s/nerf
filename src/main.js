@@ -1723,9 +1723,10 @@ function startCurrentMultiplayerMatch(mapId, force = false) {
   quitBtn.style.display = 'none';
   hud.els.board.style.display = 'none';
   const map = MAPS.find(m => m.id === mapId) || MAPS[0];
+  const endedMultiplayerMatch = !!(G?.over && (G.multiplayer || G.multiplayerHost));
   if (multiplayer.shouldHost()) {
-    if (force || !G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
-  } else if (force || !G?.multiplayer || G.mapDef?.id !== map.id) {
+    if (force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
+  } else if (force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id) {
     startMultiplayerMatch(map);
   }
 }
@@ -1775,7 +1776,7 @@ multiplayer.addEventListener('phase', (e) => {
 
 multiplayer.addEventListener('snapshot', (e) => {
   if (multiplayer.shouldHost()) return;
-  if (e.detail.phase === 'playing' && (!G || !G.multiplayer)) {
+  if (e.detail.phase === 'playing' && (!G || !G.multiplayer || G.over || G.mapDef?.id !== e.detail.mapId)) {
     const map = MAPS.find(m => m.id === e.detail.mapId) || MAPS[0];
     startMultiplayerMatch(map);
   }

@@ -62,9 +62,13 @@ function serveStatic(req, res) {
     res.end('Not found');
     return;
   }
+  const ext = extname(full).toLowerCase();
+  const cacheControl = file.endsWith('index.html') || ext === '.js'
+    ? 'no-store'
+    : 'public, max-age=3600';
   res.writeHead(200, {
-    'content-type': MIME[extname(full).toLowerCase()] || 'application/octet-stream',
-    'cache-control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=3600',
+    'content-type': MIME[ext] || 'application/octet-stream',
+    'cache-control': cacheControl,
   });
   createReadStream(full).pipe(res);
 }
