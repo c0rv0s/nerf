@@ -3033,7 +3033,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 0, 0.45, -34, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
   addBox(scene, world, -8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });
   addBox(scene, world, 8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });
-  addWater(scene, world, 0, 0.55, -28, 13.5, 10);
+  addWater(scene, world, 0, 0.55, -28, 14.2, 10.4);
   addBox(scene, world, 0, 1.6, -28, 0.7, 2.6, 0.7, 0x9fd8ff, { collide: false, shadow: false, emissive: 0x9fd8ff, emissiveIntensity: 1.2 }); // jet
   const fLight = new THREE.PointLight(0x9fd8ff, 25, 24);
   fLight.position.set(0, 3, -28);
