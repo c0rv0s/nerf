@@ -12,6 +12,7 @@ export class MultiplayerClient extends EventTarget {
     this.lobbyId = null;
     this.phase = null;
     this.mapId = null;
+    this.mode = 'ffa';
     this.phaseEndsAt = 0;
     this.isHost = false;
     this.hostId = null;
@@ -106,6 +107,10 @@ export class MultiplayerClient extends EventTarget {
     this.send({ type: 'voteMap', mapId });
   }
 
+  voteMode(mode) {
+    this.send({ type: 'voteMode', mode });
+  }
+
   leave() {
     this._clearReconnect();
     this.send({ type: 'leaveLobby' });
@@ -113,6 +118,7 @@ export class MultiplayerClient extends EventTarget {
     this.lobbyId = null;
     this.phase = null;
     this.mapId = null;
+    this.mode = 'ffa';
     this.phaseEndsAt = 0;
     this.isHost = false;
     this.hostId = null;
@@ -138,6 +144,7 @@ export class MultiplayerClient extends EventTarget {
       this.lobbyId = msg.lobbyId;
       this.phase = msg.phase;
       this.mapId = msg.mapId;
+      this.mode = msg.mode || 'ffa';
       this.phaseEndsAt = msg.phaseEndsAt;
       this.isHost = !!msg.isHost;
       this.hostId = msg.hostId || null;
@@ -157,14 +164,16 @@ export class MultiplayerClient extends EventTarget {
     } else if (msg.type === 'lobbyMeta') {
       this.phase = msg.phase;
       this.mapId = msg.mapId;
+      this.mode = msg.mode || this.mode || 'ffa';
       this.phaseEndsAt = msg.phaseEndsAt;
       this.hostId = msg.hostId || this.hostId;
       this.slots = msg.slots || this.slots;
-      this._renderPhase(msg.votes);
+      this._renderPhase(msg.votes, msg.modeVotes);
       this.dispatchEvent(new CustomEvent('meta', { detail: msg }));
     } else if (msg.type === 'phaseChanged') {
       this.phase = msg.phase;
       this.mapId = msg.mapId;
+      this.mode = msg.mode || this.mode || 'ffa';
       this.phaseEndsAt = msg.phaseEndsAt;
       this.hostId = msg.hostId || this.hostId;
       this.slots = msg.slots || this.slots;
@@ -179,6 +188,7 @@ export class MultiplayerClient extends EventTarget {
       this.lastSnapshotAt = performance.now();
       this.phase = msg.phase;
       this.mapId = msg.mapId;
+      this.mode = msg.mode || this.mode || 'ffa';
       this.phaseEndsAt = msg.phaseEndsAt;
       this.dispatchEvent(new CustomEvent('snapshot', { detail: msg }));
     } else if (msg.type === 'pong') {
@@ -236,7 +246,7 @@ export class MultiplayerClient extends EventTarget {
     for (const lobby of msg.lobbies) {
       const btn = document.createElement('button');
       btn.className = 'mp-row';
-      btn.innerHTML = `<span>${lobby.label}</span><small>${lobby.humans}/${lobby.max} humans · ${lobby.phase.toUpperCase()} · ${lobby.mapName}</small>`;
+      btn.innerHTML = `<span>${lobby.label}</span><small>${lobby.humans}/${lobby.max} humans · ${lobby.phase.toUpperCase()} · ${(lobby.mode || 'ffa').toUpperCase()} · ${lobby.mapName}</small>`;
       btn.disabled = lobby.humans >= lobby.max;
       btn.addEventListener('click', () => {
         this.send({ type: 'joinLobby', lobbyId: lobby.id });
@@ -247,19 +257,39 @@ export class MultiplayerClient extends EventTarget {
     this.status.textContent = msg.full ? 'Wait for a slot to open.' : '';
   }
 
-  _renderPhase(votes = {}) {
+  _renderPhase(votes = {}, modeVotes = null) {
     if (this.phase === 'voting') {
       this.overlay.hidden = false;
       this.panel.dataset.mode = 'vote';
-      this.title.textContent = 'Vote For Next Map';
+      this.title.textContent = 'Vote For Next Match';
       this.body.innerHTML = '';
+      const modes = [
+        ['ffa', 'FREE FOR ALL'],
+        ['tdm', 'TEAM DEATHMATCH'],
+      ];
+      const modeCounts = modeVotes || {};
+      const modeWrap = document.createElement('div');
+      modeWrap.className = 'mp-section';
+      modeWrap.innerHTML = '<h3>Mode</h3>';
+      for (const [mode, label] of modes) {
+        const btn = document.createElement('button');
+        btn.className = 'mp-map';
+        btn.innerHTML = `<span>${label}</span><small>${modeCounts[mode] || 0} votes</small>`;
+        btn.addEventListener('click', () => this.voteMode(mode));
+        modeWrap.append(btn);
+      }
+      this.body.append(modeWrap);
+      const mapWrap = document.createElement('div');
+      mapWrap.className = 'mp-section';
+      mapWrap.innerHTML = '<h3>Map</h3>';
       for (const map of MAPS) {
         const btn = document.createElement('button');
         btn.className = 'mp-map';
         btn.innerHTML = `<span>${map.emoji} ${map.name}</span><small>${votes[map.id] || 0} votes</small>`;
         btn.addEventListener('click', () => this.vote(map.id));
-        this.body.append(btn);
+        mapWrap.append(btn);
       }
+      this.body.append(mapWrap);
     } else if (this.phase === 'podium') {
       this.overlay.hidden = true;
     } else if (this.phase === 'playing') {
@@ -301,6 +331,8 @@ export class MultiplayerClient extends EventTarget {
       .mp-row,.mp-map{display:flex;align-items:center;justify-content:space-between;gap:18px}
       .mp-row:hover,.mp-map:hover{border-color:#ffd23c}
       .mp-row small,.mp-map small{font-family:Arial,sans-serif;color:#9fb0ff;font-weight:bold}
+      .mp-section{display:grid;gap:10px}
+      .mp-section h3{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#9fb0ff;margin:4px 0 0}
       #mpStatus{margin-top:12px;min-height:20px;text-align:center;color:#9fb0ff;font-family:Arial,sans-serif;font-weight:bold}
     `;
     document.head.append(style);

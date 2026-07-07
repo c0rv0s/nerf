@@ -134,7 +134,8 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'poster1', 'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite', 'refractor']
+   'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
+   'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite', 'refractor']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -422,36 +423,69 @@ function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff,
   });
 }
 
-function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0) {
-  (world.vineZones ||= []).push({ x, z, minY: Math.min(y0, y1), maxY: Math.max(y0, y1), r });
+function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exitX = 0, exitZ = 0, visualTopPad = 0.16) {
+  const zone = { x, z, minY: Math.min(y0, y1), maxY: Math.max(y0, y1), r, grabR: Math.max(r, 1.28) };
+  const exitLen = Math.hypot(exitX, exitZ);
+  if (exitLen > 0.001) {
+    zone.exitX = exitX / exitLen;
+    zone.exitZ = exitZ / exitLen;
+  }
+  (world.vineZones ||= []).push(zone);
   const h = Math.abs(y1 - y0);
-  const matVine = new THREE.MeshStandardMaterial({
-    color: 0x2d8a32, roughness: 0.9, metalness: 0,
-    emissive: 0x0b2a0f, emissiveIntensity: 0.08,
+  const bottomY = Math.min(y0, y1);
+  const topY = Math.max(y0, y1);
+  const leanLen = Math.hypot(leanX, leanZ);
+  const hookX = zone.exitX ?? (leanLen > 0.001 ? leanX / leanLen : 1);
+  const hookZ = zone.exitZ ?? (leanLen > 0.001 ? leanZ / leanLen : 0);
+  const vineTex = canvasTex('vine-sheet', (g) => {
+    g.clearRect(0, 0, 128, 256);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 8; x++) {
+        const keep = ((x * 7 + y * 5) % 11) < 8 || (x > 2 && x < 5);
+        if (!keep) continue;
+        const hue = 80 + ((x * 13 + y * 17) % 42);
+        const shade = 58 + ((x * 19 + y * 11) % 28);
+        g.fillStyle = `hsl(${hue}, ${shade}%, ${26 + ((x + y) % 4) * 6}%)`;
+        g.fillRect(x * 16, y * 16, 18, 18);
+      }
+    }
+    g.strokeStyle = 'rgba(20,90,18,.7)';
+    g.lineWidth = 4;
+    for (let x = 16; x < 128; x += 28) {
+      g.beginPath();
+      g.moveTo(x, 0);
+      for (let y = 0; y <= 256; y += 24) g.lineTo(x + Math.sin(y * 0.08 + x) * 7, y);
+      g.stroke();
+    }
   });
-  const matLeaf = new THREE.MeshStandardMaterial({ color: 0x57b33a, roughness: 0.85, metalness: 0 });
-  for (let i = 0; i < 5; i++) {
-    const a = i * 2.15;
-    const strand = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.055, h, 6), matVine);
-    strand.position.set(
-      x + Math.cos(a) * r * 0.22 + leanX * 0.5,
-      (y0 + y1) / 2,
-      z + Math.sin(a) * r * 0.22 + leanZ * 0.5,
-    );
-    strand.rotation.z = leanX * 0.035;
-    strand.rotation.x = -leanZ * 0.035;
-    strand.castShadow = strand.receiveShadow = true;
-    scene.add(strand);
-  }
-  for (let i = 0; i < Math.max(6, Math.floor(h * 1.3)); i++) {
-    const yy = Math.min(y0, y1) + 0.45 + (i / Math.max(1, Math.floor(h * 1.3))) * (h - 0.7);
-    const a = i * 2.4;
-    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.16 + (i % 3) * 0.035, 6, 4), matLeaf);
-    leaf.scale.set(1.25, 0.45, 0.75);
-    leaf.position.set(x + Math.cos(a) * r * 0.28, yy, z + Math.sin(a) * r * 0.28);
-    leaf.rotation.set(rand(-0.7, 0.7), rand(0, Math.PI), rand(-0.5, 0.5));
-    scene.add(leaf);
-  }
+  const map = vineTex.clone();
+  map.repeat.set(1, Math.max(1, h / 4));
+  map.needsUpdate = true;
+  const matVine = new THREE.MeshStandardMaterial({
+    map, color: 0x5fc84d, roughness: 0.95, metalness: 0,
+    transparent: false, alphaTest: 0.34, side: THREE.DoubleSide,
+    depthWrite: true,
+    emissive: 0x0b2a0f, emissiveIntensity: 0.04,
+  });
+  const quat = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(hookX, 0, hookZ).normalize(),
+  );
+  const visualTopY = topY - Math.min(visualTopPad, h * 0.18);
+  const visualBottomY = bottomY + Math.min(0.04, h * 0.02);
+  const stripH = Math.max(0.7, visualTopY - visualBottomY);
+  const width = Math.max(0.95, Math.min(1.45, zone.grabR * 1.05));
+  const leaf = new THREE.Mesh(new THREE.PlaneGeometry(width, stripH, 1, Math.max(1, Math.floor(stripH / 1.6))), matVine);
+  leaf.quaternion.copy(quat);
+  // Keep the sheet visibly on the outside face while the invisible climb zone
+  // remains round and forgiving.
+  leaf.position.set(
+    x - hookX * 0.14,
+    visualTopY - stripH / 2,
+    z - hookZ * 0.14,
+  );
+  leaf.castShadow = leaf.receiveShadow = true;
+  scene.add(leaf);
 }
 
 function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
@@ -970,8 +1004,9 @@ function buildArena(scene) {
     world.spawns.blue.push(V(x, 0.1, z));
   }
   world.spawns.red.push(V(72, 0.1, 6), V(72, 0.1, -6), V(65, -4.9, 30), V(65, -4.9, -30), V(50, -4.9, 0));
-  for (const [x, y, z] of [[25, 0.1, 45], [25, 0.1, -45], [-15, 0.1, 20], [-15, 0.1, -20],
-                           [-21.5, 5.1, 20], [-60, 5.1, 45], [-55, 0.1, -33], [55, -4.9, 26]]) {
+  for (const [x, y, z] of [[25, 0.1, 45], [25, 0.1, -45], [-15, 0.1, 20], [-15, 0.1, -24],
+                           [-21.5, 5.1, 20], [-50, 5.1, 45], [-55, 0.1, -33], [55, -4.9, 26],
+                           [-72, 0.1, 0], [72, 0.1, 0], [54, -4.9, -26], [2, 9.2, -4]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
@@ -1151,9 +1186,9 @@ function buildFortress(scene) {
   addBox(scene, world, 0, 10.8, 0, 24, 1.6, 6, 0x9a6fe0, { tex: 'panel' });   // arch overhead
   // banners on the perimeter + a target on the west gatehouse tower
   addDecal(scene, 'target', -30, 6.5, -44.9, 7, 0);
-  addDecal(scene, 'poster1', 30, 6.5, 44.9, 7, Math.PI);
+  addDecal(scene, 'poster2', 30, 6.5, 44.9, 7, Math.PI);
   addDecal(scene, 'hazard', 76.9, 5.5, 20, 8, -Math.PI / 2);
-  addDecal(scene, 'poster1', -76.9, 5.5, -20, 8, Math.PI / 2);
+  addDecal(scene, 'poster2', -76.9, 5.5, -20, 8, Math.PI / 2);
   addDecal(scene, 'target', -9, 6, -3.06, 4, Math.PI);
   addVine(scene, world, -55, -43.5, 0.2, 5.1, 0.95, 0, -0.25);
   addVine(scene, world, 53, 43.5, 0.2, 5.1, 0.9, 0, 0.25);
@@ -1183,7 +1218,7 @@ function buildFortress(scene) {
     [-10, 6.62, 0.26], [18, -6.62, -0.26],
     [46, 6.62, 0.26], [60, -6.62, -0.26],
   ]) {
-    addVine(scene, world, x, z, -3.8, 0.55, 1.05, 0, leanZ);
+    addVine(scene, world, x, z, -3.8, 0.55, 1.05, 0, leanZ, 0, 0, 0.68);
   }
 
   // THE KEEP (north-center): interior room w/ gold, walkable roof
@@ -1293,7 +1328,8 @@ function buildFortress(scene) {
     world.spawns.blue.push(V(-72, 0.1, dz));
     world.spawns.red.push(V(72, 0.1, dz));
   }
-  for (const [x, z] of [[-60, 30], [60, -30], [-60, -30], [60, 30], [0, -40], [0, 42], [-30, -40], [30, 40]]) {
+  for (const [x, z] of [[-60, 30], [60, -30], [-60, -30], [60, 30], [0, -40], [0, 42],
+                        [-30, -40], [30, 40], [-40, 0], [40, 0], [-72, 8], [72, 8]]) {
     world.spawns.ffa.push(V(x, 0.1, z));
   }
 
@@ -1542,6 +1578,7 @@ function buildAsteroids(scene) {
   addBox(scene, world, 0, 13.6, -6, 13, 1.2, 7, 0x8892a8);                       // core roof
   addBox(scene, world, -18, 8.4, 0, 8, 0.8, 8, 0x59657a, { tex: 'panel' });      // west wing
   addBox(scene, world, 18, 8.4, 0, 8, 0.8, 8, 0x59657a, { tex: 'panel' });       // east wing
+  addDecal(scene, 'poster3', 0, 11, -2.94, 4.5, 0);
   addBox(scene, world, 0, 12, 8, 1, 6, 1, 0x8892a8, { collide: false });         // antenna
   addBox(scene, world, 0, 15.2, 8, 1.6, 0.5, 1.6, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
   const stnLight = new THREE.PointLight(0x30e0ff, 60, 30);
@@ -1577,7 +1614,8 @@ function buildAsteroids(scene) {
     world.spawns.red.push(V(75 + dx, 14.2, dz));
   }
   for (const [x, y, z] of [[0, 12.4, -48], [-5.5, 2.4, 44], [-40, 8.4, -18], [40, 8.4, 18],
-                           [-44, 13.4, -46], [44, 0.4, 46], [52, 8.4, -38], [-52, -5.6, 38]]) {
+                           [-44, 13.4, -46], [44, 0.4, 46], [56, 8.4, -38], [-56, -5.6, 38],
+                           [-8, 9.3, -2], [20, -7.8, 72], [-10, 14.2, -64], [4, 16.7, -44]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
@@ -1607,7 +1645,7 @@ function buildAsteroids(scene) {
   pk(world, 'health', 16, -7.8, 72);
   pk(world, 'shield', -18, 9, 0);                        // station west wing
   pk(world, 'speed', 18, 9, 0);                          // station east wing
-  pk(world, 'djump', 0, 9.2, 4);                         // station center
+  pk(world, 'djump', 8, 9.2, -2);                         // station center
   // LAVA CRATER ROCK: walk the rim, fall in the heart, jump for your life
   addBox(scene, world, 40, 2.75, 60, 20, 2.5, 20, 0x8a7f72, { tex: 'rock' });  // body (top 4) + safe apron
   addBox(scene, world, 40, 4.55, 55, 16, 1.1, 6, 0x8a7f72, { tex: 'rock' });   // rim ring (top 5.1)
@@ -1717,7 +1755,7 @@ function buildCanopy(scene) {
   world.manualLinks.push([-44, 0, -60, -35, 12, -60, true]);
   // tournament banners on the hedges + the big tree
   addDecal(scene, 'target', -20, 8, -79.94, 10, 0);
-  addDecal(scene, 'poster1', 20, 9, 79.94, 10, Math.PI);
+  addDecal(scene, 'poster4', 20, 9, 79.94, 10, Math.PI);
   addDecal(scene, 'hazard', -79.94, 8, 20, 10, Math.PI / 2);
   addDecal(scene, 'target', 0, 12, -2.56, 4, Math.PI);
   for (const [x, z, w, d] of [[0, -83, 172, 6], [0, 83, 172, 6], [-83, 0, 6, 172], [83, 0, 6, 172]]) {
@@ -1833,26 +1871,26 @@ function buildCanopy(scene) {
   addBox(scene, world, 45, 19.48, 0, 3, 1, 78, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
   addBox(scene, world, 0, 9.48, -45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
   addBox(scene, world, 0, 9.48, 45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
-  addVine(scene, world, -45, -18, 0.2, 19.1, 1.05);  // hanging from west bridge
-  addVine(scene, world, 45, 16, 0.2, 19.1, 1.05);    // hanging from east bridge
-  addVine(scene, world, -45, 30, 0.2, 19.1, 1.0);    // west bridge south drop
-  addVine(scene, world, 45, -28, 0.2, 19.1, 1.0);    // east bridge north drop
-  addVine(scene, world, -18, -45, 0.2, 9.1, 0.95);   // north catwalk drop
-  addVine(scene, world, 20, 45, 0.2, 9.1, 0.95);     // south catwalk drop
-  addVine(scene, world, 34, -45, 0.2, 9.1, 0.9);     // north catwalk east drop
-  addVine(scene, world, -34, 45, 0.2, 9.1, 0.9);     // south catwalk west drop
-  addVine(scene, world, 7.8, 3, 0.2, 8.1, 0.85, -0.4, 0);     // center-tree wall growth
-  addVine(scene, world, 7.8, 7.2, 8.1, 16.1, 0.85, -0.35, 0.2); // center 8 → 16
-  addVine(scene, world, 3.6, -6.8, 16.1, 24.1, 0.8, 0.2, -0.25); // center 16 → 24
-  addVine(scene, world, -38.1, -45, 0.2, 20.1, 0.95, -0.2, 0); // SW hollow tree exterior
-  addVine(scene, world, -30, 15, 0.2, 4.1, 0.8, 0, -0.2);     // hedge-top shortcut
-  addVine(scene, world, 51.9, -45, 0.2, 19.1, 0.9, 0.2, 0);   // NE trunk side
-  addVine(scene, world, -51.9, 45, 0.2, 19.1, 0.9, -0.2, 0);  // NW trunk side
-  addVine(scene, world, 45, 51.9, 0.2, 19.1, 0.9, 0, 0.2);    // SE trunk side
-  addVine(scene, world, -2.8, -9.8, 0.2, 15.1, 0.85, 0, -0.25); // center tiers north face
-  addVine(scene, world, 30.9, 16, 0.2, 4.2, 0.75, 0.25, 0);   // ranger hut east wall
-  addVine(scene, world, -11, 60, 0.2, 3.8, 0.8, 0, 0.25);     // north hedge lane
-  addVine(scene, world, 60, -3, 0.2, 3.8, 0.8, 0.25, 0);      // east hedge lane
+  addVine(scene, world, -46.72, -18, 0.2, 19.1, 1.05, -0.18, 0, 1, 0);  // hanging from west bridge
+  addVine(scene, world, 46.72, 16, 0.2, 19.1, 1.05, 0.18, 0, -1, 0);    // hanging from east bridge
+  addVine(scene, world, -46.72, 30, 0.2, 19.1, 1.0, -0.18, 0, 1, 0);    // west bridge south drop
+  addVine(scene, world, 46.72, -28, 0.2, 19.1, 1.0, 0.18, 0, -1, 0);    // east bridge north drop
+  addVine(scene, world, -18, -46.72, 0.2, 9.1, 0.95, 0, -0.18, 0, 1);   // north catwalk drop
+  addVine(scene, world, 20, 46.72, 0.2, 9.1, 0.95, 0, 0.18, 0, -1);     // south catwalk drop
+  addVine(scene, world, 34, -46.72, 0.2, 9.1, 0.9, 0, -0.18, 0, 1);     // north catwalk east drop
+  addVine(scene, world, -34, 46.72, 0.2, 9.1, 0.9, 0, 0.18, 0, -1);     // south catwalk west drop
+  addVine(scene, world, 10.28, 3, 0.2, 8.1, 0.85, 0.22, 0, -1, 0);      // center-tree wall growth
+  addVine(scene, world, 7.28, 6.35, 8.1, 16.1, 0.85, 0.16, 0, -1, 0);   // center 8 -> 16
+  addVine(scene, world, 2.28, -4.75, 16.1, 24.1, 0.8, 0.16, 0, -1, 0);  // center 16 -> 24
+  addVine(scene, world, -37.72, -45, 0.2, 20.1, 0.95, 0.18, 0, -1, 0);  // SW hollow tree exterior
+  addVine(scene, world, -31.08, 15, 0.2, 4.1, 0.8, -0.14, 0, 1, 0);     // hedge-top shortcut
+  addVine(scene, world, 52.28, -45, 0.2, 19.1, 0.9, 0.18, 0, -1, 0);    // NE trunk side
+  addVine(scene, world, -52.28, 45, 0.2, 19.1, 0.9, -0.18, 0, 1, 0);    // NW trunk side
+  addVine(scene, world, 45, 52.28, 0.2, 19.1, 0.9, 0, 0.18, 0, -1);     // SE trunk side
+  addVine(scene, world, -2.8, -7.28, 0.2, 15.1, 0.85, 0, -0.16, 0, 1);  // center tiers north face
+  addVine(scene, world, 31.34, 16, 0.2, 4.2, 0.75, 0.16, 0, -1, 0);     // ranger hut east wall
+  addVine(scene, world, -11, 61.18, 0.2, 3.8, 0.8, 0, 0.16, 0, -1);     // north hedge lane
+  addVine(scene, world, 61.18, -3, 0.2, 3.8, 0.8, 0.16, 0, -1, 0);      // east hedge lane
 
   // Ramps: ground ↔ center deck 8; bridges ↔ center 16 / center 8
   addRamp(scene, world, { axis: 'x', minX: 12, maxX: 42, minZ: -2, maxZ: 2, h0: 8, h1: 0, color: 0x8a6a40 });
@@ -1886,8 +1924,9 @@ function buildCanopy(scene) {
   // Spawns
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.blue.push(V(-62, 0.1, dz));
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.red.push(V(62, 0.1, dz));
-  for (const [x, y, z] of [[-40, 10.2, -40], [40, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25],
-                           [-40, 20.2, 40], [40, 20.2, -40], [-30, 0.1, 0]]) {
+  for (const [x, y, z] of [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25],
+                           [-40, 20.2, 40], [40, 20.2, -40], [-30, 0.1, 0], [8, 10.2, 45],
+                           [-8, 10.2, -45], [-45, 0.1, 45], [45, 0.1, -45]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
@@ -1904,11 +1943,11 @@ function buildCanopy(scene) {
   pk(world, 'weapon', 30, 0.2, 24, { weapon: 'zooka' });
   pk(world, 'weapon', -25, 0.2, 25, { weapon: 'scatter' });
   pk(world, 'weapon', 25, 0.2, -25, { weapon: 'pulsar' });
-  pk(world, 'weapon', -20, 10.2, 0, { weapon: 'parasite' });     // west bridge deck
+  pk(world, 'weapon', -20, 6.1, 0, { weapon: 'parasite' });      // west ramp
   pk(world, 'ammo', 39, 20.2, 44, { weapon: 'whomper' });
   pk(world, 'ammo', 0, 0.2, -26, { weapon: 'sidewinder' });
   pk(world, 'ammo', -39, 20.2, -44, { weapon: 'hyper' });
-  pk(world, 'ammo', -28, 10.2, 0, { weapon: 'parasite' });
+  pk(world, 'ammo', -28, 3.9, 0, { weapon: 'parasite' });
   pk(world, 'ammo', 0, 10.2, -45, { weapon: 'zooka' });    // north bridge mid
   pk(world, 'ammo', 0, 10.2, 45, { weapon: 'scatter' });
   pk(world, 'ammo', -40, 10.2, 40, { weapon: 'pulsar' });
@@ -2259,10 +2298,10 @@ function buildCity(scene) {
   wp(world, -49, 0, 20); wp(world, -40, 10, 20);
   world.manualLinks.push([-49, 0, 20, -40, 10, 20, true]);
   // billboards — it's a city, sell something
-  addDecal(scene, 'poster1', -40, 14, -63.94, 14, 0);
+  addDecal(scene, 'poster5', -40, 14, -63.94, 14, 0);
   addDecal(scene, 'target', 40, 14, -63.94, 12, 0);
   addDecal(scene, 'hazard', 0, 12, 63.94, 16, Math.PI);
-  addDecal(scene, 'poster1', 84.94, 12, 20, 12, -Math.PI / 2);
+  addDecal(scene, 'poster5', 84.94, 12, 20, 12, -Math.PI / 2);
   addDecal(scene, 'target', -12, 29, 21.94, 8, Math.PI);
   addDecal(scene, 'hazard', -12, 15, -27.56, 9, Math.PI);
 
@@ -2294,7 +2333,8 @@ function buildCity(scene) {
   for (const dz of [-56, -20, 0, 8, 56]) world.spawns.blue.push(V(-76, 0.1, dz));
   for (const dz of [-38, -20, 0, 20, 56]) world.spawns.red.push(V(78, 0.1, dz));
   for (const [x, y, z] of [[-58, 12.2, -35], [32, 18.2, 34], [64, 10.2, 30], [0, 0.1, -56],
-                           [0, 0.1, 56], [-40, 0.1, 0], [40, 0.1, 0], [-12, 20.2, -38]]) {
+                           [0, 0.1, 56], [-40, 0.1, 0], [52, 0.1, 0], [-18, 20.2, -42],
+                           [-21, 8.2, 32], [-64, 24.2, 39], [8, 10.2, 5.3], [24, 28.2, -43]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
@@ -2328,7 +2368,7 @@ function buildCity(scene) {
   pk(world, 'star', -58, 0.2, 4, { hidden: true });        // under the west skybridge
   pk(world, 'star', 32, 23.2, 0, { hidden: true });        // east skybridge mid
   pk(world, 'health', -12, 0.2, 36);                       // galleria ground hall
-  pk(world, 'ammo', -21, 8.2, 40, { weapon: 'pulsar' });   // galleria mezzanine
+  pk(world, 'ammo', -21, 8.2, 44, { weapon: 'pulsar' });   // galleria mezzanine
   pk(world, 'ammo', -21, 24.2, 42, { weapon: 'whomper' }); // galleria top chamber
   pk(world, 'star', -22, 16.2, 30, { hidden: true });      // galleria window catwalk
   pk(world, 'health', -18, 0.2, -44);                      // arcade west room
@@ -2548,6 +2588,8 @@ function buildSanctum(scene) {
   for (const [x, z, w, d] of [[0, -50.5, 104, 3], [0, 50.5, 104, 3], [-50.5, 0, 3, 104], [50.5, 0, 3, 104]]) {
     addBox(scene, world, x, 6, z, w, 12, d, STONE, { tex: 'rock', repeat: [12, 2] });
   }
+  addDecal(scene, 'poster6', -18, 6, -48.94, 8, 0);
+  addDecal(scene, 'poster6', 18, 6, 48.94, 8, Math.PI);
   // (each half is split around a 9x9 lava-pit hole in its court)
   addBox(scene, world, -41.25, -0.5, 26, 17.5, 1, 48, FLOOR, { tex: 'panel', repeat: [2, 6] });
   addBox(scene, world, 13.25, -0.5, 26, 73.5, 1, 48, FLOOR, { tex: 'panel', repeat: [9, 6] });
@@ -2670,7 +2712,8 @@ function buildSanctum(scene) {
   // Spawns
   for (const dz of [-44, -20, 20, 44]) world.spawns.blue.push(V(-47, 0.1, dz));
   for (const dz of [-44, -20, 20, 44]) world.spawns.red.push(V(47, 0.1, dz));
-  for (const [x, z] of [[44, 44], [-44, 44], [44, -44], [-44, -44], [0, 35], [0, -35], [35, 6], [-35, 6]]) {
+  for (const [x, z] of [[44, 44], [-44, 44], [44, -44], [-44, -44], [0, 35], [0, -35],
+                        [35, 14], [-35, 6], [16, 22], [-16, 22], [22, -22], [-16, -22]]) {
     world.spawns.ffa.push(V(x, 0.1, z));
   }
 
@@ -2818,6 +2861,8 @@ function buildPrism(scene) {
     m.position.set(x, y, z);
     scene.add(m);
   }
+  addDecal(scene, 'poster7', 0, CY + 10, -23.94, 9, 0);
+  addDecal(scene, 'poster7', 23.94, CY + 10, 0, 9, -Math.PI / 2);
   // 12 neon edge bars (the tesseract wireframe)
   const EC = [0xff3050, 0x40ff60, 0x30e0ff, 0xffe030, 0xff40e0, 0xb060ff];
   let ei = 0;
@@ -2875,24 +2920,24 @@ function buildPrism(scene) {
   }
   world.spawns.ffa = spawns;
   world.playerSpawns = spawns;
-  world.spawns.blue = spawns.filter((_, i) => i % 2 === 0);
-  world.spawns.red = spawns.filter((_, i) => i % 2 === 1);
+  world.spawns.blue = spawns.filter(p => p.x < -0.5);
+  world.spawns.red = spawns.filter(p => p.x > 0.5);
 
   // Pickups over every surface + the lattice — reward exploring all of it
   pk(world, 'gold', 6, 46.6, 6);                          // ceiling
   pk(world, 'silver', 0, 25.5, 0);                        // centre of the lattice
-  pk(world, 'shield', 23.4, CY, 8);                       // +X wall
-  pk(world, 'speed', 8, CY, -23.4);                       // -Z wall
-  pk(world, 'djump', -23.4, CY, -8);                      // -X wall
+  pk(world, 'shield', 23.4, CY, 5);                       // +X wall
+  pk(world, 'speed', 5, CY, -23.4);                       // -Z wall
+  pk(world, 'djump', -23.4, CY, -5);                      // -X wall
   pk(world, 'star', -6, 46.6, -6, { hidden: true });      // ceiling
-  pk(world, 'star', -23.4, 35, 0, { hidden: true });      // high on the -X wall
+  pk(world, 'star', -23.4, 35, 5, { hidden: true });      // high on the -X wall
   pk(world, 'star', 17, 40, 17, { hidden: true });        // high on a corner pillar
   pk(world, 'star', 0, 13.5, 9, { hidden: true });        // lower inner ring
   pk(world, 'weapon', 0, 0.2, 20, { weapon: 'zooka' });   // floor
-  pk(world, 'weapon', 23.4, 14, 0, { weapon: 'scatter' }); // low on +X wall
+  pk(world, 'weapon', 23.4, 12, 0, { weapon: 'scatter' }); // low on +X wall
   pk(world, 'weapon', 0, 25.5, 12, { weapon: 'pulsar' });  // main ring
   pk(world, 'weapon', -6, 46.6, 12, { weapon: 'hyper' });  // ceiling
-  pk(world, 'weapon', 23.4, 32, -8, { weapon: 'sidewinder' });
+  pk(world, 'weapon', 23.4, 32, -5, { weapon: 'sidewinder' });
   pk(world, 'weapon', -9, 37.5, 0, { weapon: 'whomper' }); // upper inner ring
   pk(world, 'weapon', -23.4, 20, 0, { weapon: 'parasite' });   // mid on -X wall
   pk(world, 'weapon', 0, 37.5, -23.4, { weapon: 'refractor' }); // secret-map beam gun
@@ -2900,9 +2945,9 @@ function buildPrism(scene) {
   pk(world, 'ammo', 17, 25.5, 0, { weapon: 'scatter' });
   pk(world, 'ammo', 0, 25.5, -12, { weapon: 'pulsar' });
   pk(world, 'ammo', 6, 46.6, 12, { weapon: 'hyper' });
-  pk(world, 'ammo', 23.4, 26, -8, { weapon: 'sidewinder' });
+  pk(world, 'ammo', 23.4, 27, -5, { weapon: 'sidewinder' });
   pk(world, 'ammo', -23.4, 26, 0, { weapon: 'parasite' });
-  pk(world, 'ammo', 0, 14, 23.4, { weapon: 'refractor' });
+  pk(world, 'ammo', 4, 14, 23.4, { weapon: 'refractor' });
   pk(world, 'health', -20, 0.2, 8);
   pk(world, 'health', 20, 0.2, -8);
   pk(world, 'health', 0, 47.7, 12);                       // ceiling
@@ -2974,79 +3019,90 @@ function makeSign(scene, x, y, z, w, color, text, yaw = 0, doubleFaced = false) 
   return draw;
 }
 
-function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 512;
-  const g = c.getContext('2d');
+function portalMaterial(color) {
   const base = new THREE.Color(color);
   const accent = base.clone().offsetHSL(0.12, 0.08, 0.16);
-  const colorCss = `#${base.getHexString()}`;
-  const accentCss = `#${accent.getHexString()}`;
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  const draw = (t) => {
-    g.clearRect(0, 0, c.width, c.height);
-    const bg = g.createLinearGradient(0, 0, 0, 512);
-    bg.addColorStop(0, accentCss);
-    bg.addColorStop(0.45, colorCss);
-    bg.addColorStop(1, '#151530');
-    g.fillStyle = bg;
-    g.fillRect(0, 0, c.width, c.height);
-
-    g.globalCompositeOperation = 'source-over';
-    for (let layer = 0; layer < 3; layer++) {
-      const drift = t * (28 + layer * 13);
-      for (let i = 0; i < 28; i++) {
-        const x = (i * 71 + layer * 43 + Math.sin(t * 0.8 + i) * 34) % 330 - 36;
-        const y = (i * 53 + drift + Math.cos(t * 0.6 + i * 1.7) * 26) % 610 - 48;
-        const rx = 34 + ((i + layer * 5) % 6) * 12;
-        const ry = 20 + ((i + layer * 3) % 5) * 10;
-        const cloud = g.createRadialGradient(x, y, 3, x, y, Math.max(rx, ry));
-        cloud.addColorStop(0, layer === 0 ? 'rgba(255,255,255,0.36)' : `${accentCss}70`);
-        cloud.addColorStop(0.55, layer === 2 ? `${colorCss}44` : 'rgba(255,255,255,0.12)');
-        cloud.addColorStop(1, 'rgba(255,255,255,0)');
-        g.fillStyle = cloud;
-        g.beginPath();
-        g.ellipse(x, y, rx, ry, Math.sin(i + t) * 0.7, 0, Math.PI * 2);
-        g.fill();
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: base },
+      uAccent: { value: accent },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
-    }
+    `,
+    fragmentShader: `
+      precision mediump float;
+      varying vec2 vUv;
+      uniform float uTime;
+      uniform vec3 uColor;
+      uniform vec3 uAccent;
 
-    g.globalCompositeOperation = 'lighter';
-    g.save();
-    g.translate(128, 256);
-    g.rotate(Math.sin(t * 0.45) * 0.18);
-    for (let band = 0; band < 4; band++) {
-      const yy = -190 + band * 120 + Math.sin(t * 0.9 + band) * 38;
-      g.beginPath();
-      for (let i = 0; i <= 24; i++) {
-        const x = -170 + i * 15;
-        const y = yy + Math.sin(i * 0.65 + t * 2.2 + band) * 18;
-        if (i === 0) g.moveTo(x, y);
-        else g.lineTo(x, y);
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
       }
-      g.strokeStyle = band % 2 ? `${accentCss}88` : 'rgba(255,255,255,0.34)';
-      g.lineWidth = band % 2 ? 12 : 8;
-      g.stroke();
-    }
-    g.restore();
 
-    g.globalCompositeOperation = 'source-over';
-    tex.needsUpdate = true;
-  };
-  draw(0);
+      float puff(vec2 uv, vec2 c, vec2 r) {
+        vec2 d = (uv - c) / r;
+        return exp(-dot(d, d));
+      }
+
+      void main() {
+        vec2 uv = vUv;
+        vec3 dark = vec3(0.08, 0.08, 0.18);
+        vec3 col = mix(dark, uColor, smoothstep(0.0, 0.85, 1.0 - uv.y));
+        col = mix(col, uAccent, smoothstep(0.65, 1.0, 1.0 - uv.y) * 0.65);
+
+        float mist = 0.0;
+        for (int i = 0; i < 16; i++) {
+          float fi = float(i);
+          vec2 seed = vec2(fi * 17.23, fi * 9.41);
+          vec2 c = vec2(
+            fract(hash(seed) + sin(uTime * 0.19 + fi) * 0.08),
+            fract(hash(seed + 3.7) + uTime * (0.045 + hash(seed + 9.1) * 0.045))
+          );
+          vec2 r = vec2(0.14 + hash(seed + 1.0) * 0.18, 0.055 + hash(seed + 2.0) * 0.12);
+          mist += puff(uv, c, r) * (0.08 + hash(seed + 5.0) * 0.18);
+        }
+
+        vec2 p = uv - 0.5;
+        float angle = atan(p.y, p.x) + sin(uTime * 0.45) * 0.18;
+        float radius = length(p);
+        float bands = 0.0;
+        bands += smoothstep(0.93, 1.0, sin((uv.y + sin(uv.x * 18.0 + uTime * 2.1) * 0.025 + uTime * 0.16) * 26.0));
+        bands += smoothstep(0.94, 1.0, sin(angle * 5.0 + radius * 24.0 - uTime * 1.35));
+
+        float edge = smoothstep(0.5, 0.0, abs(uv.x - 0.5)) * smoothstep(0.0, 0.16, uv.y) * smoothstep(1.0, 0.84, uv.y);
+        col += uAccent * mist;
+        col += mix(vec3(1.0), uAccent, 0.55) * bands * edge * 0.32;
+        col += vec3(1.0) * pow(1.0 - radius, 3.0) * 0.08;
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+    fog: false,
+    toneMapped: false,
+  });
+}
+
+function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
+  const material = portalMaterial(color);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
-    new THREE.MeshBasicMaterial({
-      map: tex, color: 0xffffff, transparent: false, opacity: 1,
-      depthWrite: true, side: THREE.DoubleSide,
-    }));
+    material);
   const nX = Math.sin(yaw);
   const nZ = Math.cos(yaw);
   m.position.set(x + nX * 0.04, y, z + nZ * 0.04);
   m.rotation.y = yaw;
   scene.add(m);
-  world.anim.push((dt, t) => draw(t));
+  world.anim.push((dt, t) => {
+    material.uniforms.uTime.value = t;
+  });
   return m;
 }
 

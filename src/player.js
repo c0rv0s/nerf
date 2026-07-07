@@ -82,7 +82,10 @@ export class Player {
   // Gold/silver powerup skin on the gun in hand ('gold' | 'silver' | null)
   setSkin(kind) {
     const mat = blasterSkin(kind);
-    for (const m of Object.values(this.vmWeapons)) m.children[0].material = mat;
+    for (const m of Object.values(this.vmWeapons)) {
+      const shell = m.children[0];
+      shell.material = kind ? mat : (shell.userData.baseMaterial || mat);
+    }
   }
 
   spawn(pos) {
@@ -106,7 +109,7 @@ export class Player {
     this._airJumped = false;
     if (this.world.escher) {
       // spawn oriented to whatever surface you land on (floor, wall or ceiling)
-      const nf = this._nearestSurfaceUp();
+      const nf = this._nearestSurfaceUpAt(this.pos);
       if (nf) this.up.copy(nf);
       // a heading perpendicular to up (aim into the room)
       const ref = Math.abs(this.up.y) > 0.7 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0);
@@ -393,9 +396,10 @@ export class Player {
     let vine = null;
     if (!(this._vineExitT > 0)) {
       for (const z of this.world.vineZones || []) {
+        const grabR = z.grabR ?? z.r;
         if (
           midY >= z.minY - 0.5 && midY <= z.maxY + 2.0 &&
-          (px - z.x) * (px - z.x) + (pz - z.z) * (pz - z.z) < z.r * z.r
+          (px - z.x) * (px - z.x) + (pz - z.z) * (pz - z.z) < grabR * grabR
         ) { vine = z; break; }
       }
     }
@@ -439,8 +443,10 @@ export class Player {
     const midY = this.pos.y + this.height * 0.5;
     if (this.keys['Space'] && vine && midY > vine.maxY + 1.35) {
       const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-      this.vel.x += -sin * 4.5;
-      this.vel.z += -cos * 4.5;
+      const exitX = vine.exitX ?? -sin;
+      const exitZ = vine.exitZ ?? -cos;
+      this.vel.x += exitX * 4.5;
+      this.vel.z += exitZ * 4.5;
       this.vel.y = this.world.jumpVel * 1.12;
       this._vineExitT = 0.45;
       this._airJumped = false;
@@ -460,11 +466,15 @@ export class Player {
   // player — the direction that is "up" while standing on it.
   _nearestSurfaceUp() {
     const mid = this.pos.clone().addScaledVector(this.up, this.height * 0.5);
+    return this._nearestSurfaceUpAt(mid);
+  }
+
+  _nearestSurfaceUpAt(point) {
     let best = null, bd = Infinity;
     for (const c of this.world.colliders) {
       if (c.type !== 'box') continue;
-      const cx = clamp(mid.x, c.min.x, c.max.x), cy = clamp(mid.y, c.min.y, c.max.y), cz = clamp(mid.z, c.min.z, c.max.z);
-      const dx = mid.x - cx, dy = mid.y - cy, dz = mid.z - cz;
+      const cx = clamp(point.x, c.min.x, c.max.x), cy = clamp(point.y, c.min.y, c.max.y), cz = clamp(point.z, c.min.z, c.max.z);
+      const dx = point.x - cx, dy = point.y - cy, dz = point.z - cz;
       let d2 = dx * dx + dy * dy + dz * dz;
       if (d2 <= 1e-4) continue;
       // Hysteresis: the surface you're already aligned to is "cheaper", so you

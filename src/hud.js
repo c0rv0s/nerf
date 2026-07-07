@@ -3,6 +3,16 @@
 import { WEAPONS, WEAPON_ORDER } from './weapons.js';
 
 const $ = (id) => document.getElementById(id);
+const setText = (el, value) => {
+  const next = String(value);
+  if (el.textContent !== next) el.textContent = next;
+};
+const setStyle = (el, prop, value) => {
+  if (el.style[prop] !== value) el.style[prop] = value;
+};
+const setClass = (el, value) => {
+  if (el.className !== value) el.className = value;
+};
 
 export class HUD {
   constructor() {
@@ -18,6 +28,11 @@ export class HUD {
     this.msgTimer = 0;
     this.hitTimer = 0;
     this.vigTimer = 0;
+    this._top3Rows = [];
+    this._top3Key = '';
+    this._ranked = [];
+    this._rankKey = '';
+    this._boardKey = '';
   }
 
   show(on) { this.els.hud.classList.toggle('on', on); }
@@ -25,12 +40,12 @@ export class HUD {
   update(dt, state) {
     const { player, mode, scores, characters, timeLeft, showBoard, world } = state;
     const e = this.els;
-    e.health.textContent = Math.max(0, Math.ceil(player.hp));
-    e.shield.textContent = player.shield > 0 ? `+${Math.ceil(player.shield)} 🛡` : '';
-    e.fill.style.width = Math.max(0, player.hp) + '%';
+    setText(e.health, Math.max(0, Math.ceil(player.hp)));
+    setText(e.shield, player.shield > 0 ? `+${Math.ceil(player.shield)} 🛡` : '');
+    setStyle(e.fill, 'width', Math.max(0, player.hp) + '%');
     const w = WEAPONS[player.weapon];
-    e.wname.textContent = w.name;
-    e.ammo.textContent = player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] ?? 0;
+    setText(e.wname, w.name);
+    setText(e.ammo, player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] ?? 0);
 
     // weapon slots
     const weaponOrder = world?.availableWeapons || WEAPON_ORDER.filter(id => !WEAPONS[id].secretMapOnly);
@@ -50,60 +65,105 @@ export class HUD {
       // a dry gun stays in your inventory (dashed slot) — find ammo to reload it
       const has = id === 'blaster' || player.weapons[id];
       const loaded = id === 'blaster' || player.ammo[id] > 0;
-      this._slotEls[i].className = 'wslot' +
+      setClass(this._slotEls[i], 'wslot' +
         (has ? (loaded ? ' owned' : ' empty') : '') +
-        (player.weapon === id ? ' active' : '');
+        (player.weapon === id ? ' active' : ''));
     });
 
     // score bar + FFA top-3 leaderboard
     if (mode === 'atrium') {          // lobby: no scores, no leaderboard
-      e.top3.style.display = 'none';
+      setStyle(e.top3, 'display', 'none');
     } else if (mode === 'tdm') {
-      e.left.textContent = scores.blue;
-      e.left.style.color = '#5cb3ff';
-      e.right.textContent = scores.red;
-      e.right.style.color = '#ff5c5c';
-      e.top3.style.display = 'none';
+      setText(e.left, scores.blue);
+      setStyle(e.left, 'color', '#5cb3ff');
+      setText(e.right, scores.red);
+      setStyle(e.right, 'color', '#ff5c5c');
+      setStyle(e.top3, 'display', 'none');
     } else {
-      const ranked = [...characters].sort((a, b) => b.score - a.score);
+      const ranked = this.getRanked(characters);
       const rank = ranked.indexOf(player) + 1;
-      e.left.textContent = `YOU ${player.score}`;
-      e.left.style.color = '#ffd23c';
-      e.right.textContent = `#${rank}`;
-      e.right.style.color = rank === 1 ? '#ffd23c' : '#ccd';
-      e.top3.style.display = 'block';
-      e.top3.innerHTML = ranked.map((c, i) => `
-        <div class="t3row"><span><span class="t3rank">${i + 1}.</span>
-        <span style="color:${c.color}">${c.isPlayer ? 'YOU' : c.name}</span></span>
-        <span>${c.score}</span></div>`).join('');
+      setText(e.left, `YOU ${player.score}`);
+      setStyle(e.left, 'color', '#ffd23c');
+      setText(e.right, `#${rank}`);
+      setStyle(e.right, 'color', rank === 1 ? '#ffd23c' : '#ccd');
+      setStyle(e.top3, 'display', 'block');
+      this.updateTop3(ranked);
     }
     const m = Math.floor(Math.max(0, timeLeft) / 60), s = Math.floor(Math.max(0, timeLeft) % 60);
-    e.timer.textContent = `${m}:${String(s).padStart(2, '0')}`;
+    setText(e.timer, `${m}:${String(s).padStart(2, '0')}`);
 
     // powerup banner
     if (player.powerup) {
-      e.power.style.display = 'block';
-      e.power.className = 'panel ' + player.powerup.kind;
+      setStyle(e.power, 'display', 'block');
+      setClass(e.power, 'panel ' + player.powerup.kind);
       const label = player.powerup.kind === 'gold' ? 'GOLD NERF — 3× DAMAGE' : 'SILVER NERF — 2× DAMAGE';
-      e.power.textContent = `${label} · ${Math.ceil(player.powerup.timeLeft)}s`;
+      setText(e.power, `${label} · ${Math.ceil(player.powerup.timeLeft)}s`);
     } else {
-      e.power.style.display = 'none';
+      setStyle(e.power, 'display', 'none');
     }
 
     // fading elements
     this.msgTimer -= dt;
-    if (this.msgTimer <= 0) e.msg.style.opacity = 0;
+    if (this.msgTimer <= 0) setStyle(e.msg, 'opacity', '0');
     this.hitTimer -= dt;
-    e.hit.style.opacity = this.hitTimer > 0 ? 1 : 0;
+    setStyle(e.hit, 'opacity', this.hitTimer > 0 ? '1' : '0');
     this.vigTimer -= dt;
-    e.vignette.style.opacity = this.vigTimer > 0 ? 1 : 0;
+    setStyle(e.vignette, 'opacity', this.vigTimer > 0 ? '1' : '0');
 
     // scoreboard
-    e.board.style.display = showBoard ? 'block' : 'none';
+    setStyle(e.board, 'display', showBoard ? 'block' : 'none');
     if (showBoard) this.renderBoard(state);
   }
 
+  getRanked(characters) {
+    const key = characters.map((c) => [
+      c.name, c.color || '', c.isPlayer ? 1 : 0, c.score,
+    ].join('|')).join('\n');
+    if (key !== this._rankKey) {
+      this._rankKey = key;
+      this._ranked = [...characters].sort((a, b) => b.score - a.score);
+    }
+    return this._ranked;
+  }
+
+  updateTop3(ranked) {
+    const e = this.els;
+    const key = ranked.map((c) => `${c.isPlayer ? 'YOU' : c.name}|${c.color || ''}`).join('\n');
+    if (key !== this._top3Key) {
+      e.top3.textContent = '';
+      this._top3Key = key;
+      this._top3Rows = ranked.map((c, i) => {
+        const row = document.createElement('div');
+        row.className = 't3row';
+        const labelWrap = document.createElement('span');
+        const rank = document.createElement('span');
+        rank.className = 't3rank';
+        rank.textContent = `${i + 1}.`;
+        const name = document.createElement('span');
+        name.style.color = c.color || '#ccd';
+        name.textContent = c.isPlayer ? 'YOU' : c.name;
+        labelWrap.append(rank, ' ', name);
+        const score = document.createElement('span');
+        row.append(labelWrap, score);
+        e.top3.appendChild(row);
+        return { score };
+      });
+    }
+    ranked.forEach((c, i) => {
+      if (this._top3Rows[i]) setText(this._top3Rows[i].score, c.score);
+    });
+  }
+
   renderBoard({ characters, scores, mode }) {
+    const boardKey = [
+      mode, scores.blue, scores.red,
+      characters.map((c) => [
+        c.name, c.color || '', c.isPlayer ? 1 : 0, c.score, c.kills, c.deaths,
+      ].join('|')).join('\n'),
+    ].join('\n');
+    if (boardKey === this._boardKey) return;
+    this._boardKey = boardKey;
+
     const rows = [...characters].sort((a, b) => b.score - a.score)
       .map(c => `<tr>
         <td style="color:${c.color}">${c.name}${c.isPlayer ? ' ◄' : ''}</td>
@@ -112,14 +172,15 @@ export class HUD {
       ? `<h3><span style="color:#5cb3ff">BLUE ${scores.blue}</span> —
           <span style="color:#ff5c5c">${scores.red} RED</span></h3>`
       : `<h3 style="color:#ffd23c">FREE FOR ALL</h3>`;
-    this.els.board.innerHTML = `${head}
+    const html = `${head}
       <table><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr>${rows}</table>`;
+    if (this.els.board.innerHTML !== html) this.els.board.innerHTML = html;
   }
 
   message(text, color = '#ffd23c') {
-    this.els.msg.textContent = text;
-    this.els.msg.style.color = color;
-    this.els.msg.style.opacity = 1;
+    setText(this.els.msg, text);
+    setStyle(this.els.msg, 'color', color);
+    setStyle(this.els.msg, 'opacity', '1');
     this.msgTimer = 2.2;
   }
 
@@ -136,7 +197,7 @@ export class HUD {
   damageFlash() { this.vigTimer = 0.35; }
 
   showRespawn(on, secs = 0) {
-    this.els.respawn.style.display = on ? 'flex' : 'none';
-    if (on) this.els.respawnCount.textContent = `Respawning in ${Math.ceil(secs)}…`;
+    setStyle(this.els.respawn, 'display', on ? 'flex' : 'none');
+    if (on) setText(this.els.respawnCount, `Respawning in ${Math.ceil(secs)}…`);
   }
 }

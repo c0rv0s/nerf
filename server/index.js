@@ -21,6 +21,9 @@ const EMPTY_LOBBY_GRACE_MS = 60 * 1000;
 const HOST_SNAPSHOT_TIMEOUT_MS = 5000;
 const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
 const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
+const MODES = ['ffa', 'tdm'];
+const DEFAULT_MODE = 'ffa';
+const TEAM_COLORS = { blue: '#5cb3ff', red: '#ff5c5c' };
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
@@ -63,7 +66,7 @@ function serveStatic(req, res) {
     return;
   }
   const ext = extname(full).toLowerCase();
-  const cacheControl = file.endsWith('index.html') || ext === '.js'
+  const cacheControl = file.endsWith('index.html') || ext === '.js' || file.startsWith('/textures/')
     ? 'no-store'
     : 'public, max-age=3600';
   res.writeHead(200, {
@@ -193,6 +196,11 @@ function handleMessage(conn, msg) {
     if (!lobby || lobby.phase !== 'voting' || !MAPS.some(m => m.id === msg.mapId)) return;
     lobby.votes.set(conn.id, msg.mapId);
     broadcastLobbyMeta(lobby);
+  } else if (msg.type === 'voteMode') {
+    const lobby = lobbies.get(conn.lobbyId);
+    if (!lobby || lobby.phase !== 'voting' || !MODES.includes(msg.mode)) return;
+    lobby.modeVotes.set(conn.id, msg.mode);
+    broadcastLobbyMeta(lobby);
   } else if (msg.type === 'input') {
     const lobby = lobbies.get(conn.lobbyId);
     const slot = lobby?.slots.find(s => s.connId === conn.id);
@@ -278,8 +286,11 @@ function createLobby() {
     phase: 'voting',
     phaseEndsAt: Date.now() + VOTE_TIME * 1000,
     map: MAPS[0],
+    mode: DEFAULT_MODE,
     votes: new Map(),
+    modeVotes: new Map(),
     latestRanked: null,
+    latestScores: { blue: 0, red: 0 },
     lastHostSnapshotAt: Date.now(),
     slots: [],
     hostConnId: null,
@@ -288,20 +299,30 @@ function createLobby() {
     lastTick: Date.now(),
     humanCount() { return this.slots.filter(s => s.human).length; },
   };
-  for (let i = 0; i < SLOTS; i++) lobby.slots.push(makeBotSlot(i, lobby.map));
+  for (let i = 0; i < SLOTS; i++) lobby.slots.push(makeBotSlot(i, lobby.map, null, lobby.mode));
   lobbies.set(id, lobby);
   startLobbyTimers(lobby);
   return lobby;
 }
 
-function makeBotSlot(i, map, previousSpawnIndex = null) {
+function teamForSlot(i, mode) {
+  return mode === 'tdm' ? (i % 2 === 0 ? 'blue' : 'red') : `slot-${i}`;
+}
+
+function colorForSlot(i, team, mode) {
+  return mode === 'tdm' ? TEAM_COLORS[team] : COLORS[i % COLORS.length];
+}
+
+function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE) {
   const spawn = chooseSpawn(map, previousSpawnIndex);
+  const team = teamForSlot(i, mode);
   const s = {
     id: `slot-${i}`,
     human: false,
     connId: null,
     name: BOT_NAMES[i % BOT_NAMES.length],
-    color: COLORS[i % COLORS.length],
+    team,
+    color: colorForSlot(i, team, mode),
     pos: spawn.pos,
     lastSpawnIndex: spawn.index,
     yaw: Math.random() * Math.PI * 2,
@@ -316,11 +337,15 @@ function makeBotSlot(i, map, previousSpawnIndex = null) {
 }
 
 function resetSlotForHuman(slot, conn, lobby) {
+  const idx = Number(slot.id.split('-')[1]) || 0;
   const spawn = chooseSpawn(lobby.map, slot.lastSpawnIndex);
+  const team = teamForSlot(idx, lobby.mode);
   Object.assign(slot, {
     human: true,
     connId: conn.id,
     name: conn.name,
+    team,
+    color: colorForSlot(idx, team, lobby.mode),
     pos: spawn.pos,
     lastSpawnIndex: spawn.index,
     yaw: 0,
@@ -335,7 +360,7 @@ function resetSlotForHuman(slot, conn, lobby) {
 
 function convertToBot(slot, lobby) {
   const idx = Number(slot.id.split('-')[1]) || 0;
-  Object.assign(slot, makeBotSlot(idx, lobby.map, slot.lastSpawnIndex), { id: slot.id, color: slot.color });
+  Object.assign(slot, makeBotSlot(idx, lobby.map, slot.lastSpawnIndex, lobby.mode), { id: slot.id });
 }
 
 function joinLobby(conn, lobbyId) {
@@ -364,6 +389,7 @@ function joinLobby(conn, lobbyId) {
     isHost: lobby.hostConnId === conn.id,
     phase: lobby.phase,
     mapId: lobby.map.id,
+    mode: lobby.mode,
     phaseEndsAt: lobby.phaseEndsAt,
     maps: MAPS.map(({ id, name }) => ({ id, name })),
     slots: publicSlots(lobby),
@@ -424,6 +450,7 @@ function lobbyList() {
     phase: l.phase,
     mapId: l.map.id,
     mapName: l.map.name,
+    mode: l.mode,
     phaseEndsAt: l.phaseEndsAt,
     hostId: l.hostConnId,
   }));
@@ -432,12 +459,16 @@ function lobbyList() {
 function broadcastLobbyMeta(lobby) {
   const counts = Object.fromEntries(MAPS.map(m => [m.id, 0]));
   for (const mapId of lobby.votes.values()) counts[mapId] = (counts[mapId] || 0) + 1;
+  const modeCounts = Object.fromEntries(MODES.map(mode => [mode, 0]));
+  for (const mode of lobby.modeVotes.values()) modeCounts[mode] = (modeCounts[mode] || 0) + 1;
   broadcast(lobby, {
     type: 'lobbyMeta',
     lobby: lobbyList().find(l => l.id === lobby.id),
     votes: counts,
     phase: lobby.phase,
     mapId: lobby.map.id,
+    mode: lobby.mode,
+    modeVotes: modeCounts,
     phaseEndsAt: lobby.phaseEndsAt,
     hostId: lobby.hostConnId,
     slots: publicSlots(lobby),
@@ -474,6 +505,7 @@ function publicSlots(lobby) {
     human: s.human,
     name: s.name,
     color: s.color,
+    team: s.team,
     connId: s.human ? s.connId : null,
   }));
 }
@@ -487,27 +519,44 @@ function chooseVotedMap(lobby) {
   return MAPS.find(m => m.id === tied[Math.floor(Math.random() * tied.length)]) || MAPS[0];
 }
 
+function chooseVotedMode(lobby) {
+  const counts = new Map();
+  for (const mode of lobby.modeVotes.values()) counts.set(mode, (counts.get(mode) || 0) + 1);
+  if (counts.size === 0) return DEFAULT_MODE;
+  const max = Math.max(...counts.values());
+  const tied = [...counts.entries()].filter(([, c]) => c === max).map(([mode]) => mode);
+  return tied[Math.floor(Math.random() * tied.length)] || DEFAULT_MODE;
+}
+
 function setPhase(lobby, phase) {
   lobby.phase = phase;
   const now = Date.now();
   if (phase === 'voting') {
+    lobby.mode = DEFAULT_MODE;
     lobby.phaseEndsAt = now + VOTE_TIME * 1000;
     lobby.votes.clear();
+    lobby.modeVotes.clear();
     lobby.latestRanked = null;
+    lobby.latestScores = { blue: 0, red: 0 };
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
-      if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map, s.lastSpawnIndex), { id: s.id, color: s.color });
+      if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map, s.lastSpawnIndex, lobby.mode), { id: s.id });
     }
   } else if (phase === 'playing') {
     lobby.map = chooseVotedMap(lobby);
+    lobby.mode = chooseVotedMode(lobby);
     lobby.phaseEndsAt = now + MATCH_TIME * 1000;
     lobby.latestRanked = null;
+    lobby.latestScores = { blue: 0, red: 0 };
     lobby.lastHostSnapshotAt = now;
     const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
       const spawn = chooseSpawn(lobby.map, s.lastSpawnIndex, usedSpawns);
+      const team = teamForSlot(i, lobby.mode);
       usedSpawns.add(spawn.index);
+      s.team = team;
+      s.color = colorForSlot(i, team, lobby.mode);
       s.pos = spawn.pos;
       s.lastSpawnIndex = spawn.index;
       s.hp = 100;
@@ -525,8 +574,10 @@ function setPhase(lobby, phase) {
     type: 'phaseChanged',
     phase: lobby.phase,
     mapId: lobby.map.id,
+    mode: lobby.mode,
     phaseEndsAt: lobby.phaseEndsAt,
     ranked: phase === 'podium' && lobby.latestRanked ? lobby.latestRanked : ranked(lobby),
+    scores: lobby.latestScores,
     hostId: lobby.hostConnId,
     slots: publicSlots(lobby),
   });
@@ -579,7 +630,7 @@ function promoteHostIfStale(lobby, now = Date.now()) {
 
 function ranked(lobby) {
   return [...lobby.slots].sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths)
-    .map(s => ({ id: s.id, name: s.name, score: s.score, kills: s.kills, deaths: s.deaths, color: s.color, human: s.human }));
+    .map(s => ({ id: s.id, name: s.name, team: s.team, score: s.score, kills: s.kills, deaths: s.deaths, color: s.color, human: s.human }));
 }
 
 function sanitizeHostSnapshot(snapshot, lobby) {
@@ -592,6 +643,7 @@ function sanitizeHostSnapshot(snapshot, lobby) {
       id,
       name: cleanName(p.name || id),
       human: !!p.human,
+      team: String(p.team || id).slice(0, 32),
       color: /^#[0-9a-f]{6}$/i.test(String(p.color || '')) ? p.color : COLORS[i % COLORS.length],
       pos,
       yaw: finite(p.yaw, 0),
@@ -608,12 +660,19 @@ function sanitizeHostSnapshot(snapshot, lobby) {
   const ranked = Array.isArray(snapshot.ranked) ? snapshot.ranked.slice(0, SLOTS).map((r, i) => ({
     id: String(r.id || `slot-${i}`).slice(0, 32),
     name: cleanName(r.name || r.id || `slot-${i}`),
+    team: String(r.team || r.id || `slot-${i}`).slice(0, 32),
     score: Math.max(0, Math.floor(finite(r.score, 0))),
     kills: Math.max(0, Math.floor(finite(r.kills, 0))),
     deaths: Math.max(0, Math.floor(finite(r.deaths, 0))),
     color: /^#[0-9a-f]{6}$/i.test(String(r.color || '')) ? r.color : COLORS[i % COLORS.length],
     human: !!r.human,
   })) : sanitizedPlayers;
+  const scores = snapshot.scores && typeof snapshot.scores === 'object'
+    ? {
+        blue: Math.max(0, Math.floor(finite(snapshot.scores.blue, 0))),
+        red: Math.max(0, Math.floor(finite(snapshot.scores.red, 0))),
+      }
+    : { blue: 0, red: 0 };
   const events = Array.isArray(snapshot.events) ? snapshot.events.slice(0, 32).map(sanitizeEvent).filter(Boolean) : [];
   const drops = Array.isArray(snapshot.drops) ? snapshot.drops.slice(0, 32).map(d => sanitizeDrop(d, lobby)).filter(Boolean) : [];
   return {
@@ -621,6 +680,8 @@ function sanitizeHostSnapshot(snapshot, lobby) {
     phase: lobby.phase,
     phaseEndsAt: lobby.phaseEndsAt,
     mapId: lobby.map.id,
+    mode: lobby.mode,
+    scores,
     ranked,
     players: sanitizedPlayers,
     events,
@@ -655,12 +716,15 @@ function mergeHostSnapshot(lobby, snap) {
     slot.pitch = p.pitch;
     slot.hp = p.hp;
     slot.alive = p.alive;
+    slot.team = p.team;
+    slot.color = p.color;
     slot.respawn = p.respawn;
     slot.score = p.score;
     slot.kills = p.kills;
     slot.deaths = p.deaths;
   }
   lobby.latestRanked = snap.ranked || ranked(lobby);
+  lobby.latestScores = snap.scores || lobby.latestScores;
 }
 
 function sanitizeEvent(ev) {

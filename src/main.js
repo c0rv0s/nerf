@@ -12,7 +12,7 @@ import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
 import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx, setListener } from './audio.js';
+import { sfx, setListener, setMasterVolume } from './audio.js';
 import { multiplayer } from './multiplayer.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
@@ -27,32 +27,105 @@ const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9
 const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
 const WATER = { name: 'Water', color: '#3fcfff', isPlayer: false, kills: 0, team: 'water' };
 
-// Soundtrack — matches only, never the lobby. Alternates tracks per match.
-const MUSIC = ['./music/track1.mp3', './music/track2.mp3'];
+function setText(el, value) {
+  if (!el) return;
+  const next = String(value);
+  if (el.textContent !== next) el.textContent = next;
+}
+
+function setStyle(el, prop, value) {
+  if (!el) return;
+  const next = value == null ? '' : String(value);
+  if (el.style[prop] !== next) el.style[prop] = next;
+}
+
+// Soundtrack — matches only, never the lobby.
+const MUSIC = [
+  { title: 'Foam Dart Rumble', src: './music/track1.mp3' },
+  { title: 'Neon Foam Frenzy', src: './music/track2.mp3' },
+  { title: 'Photon Draft', src: './music/photon-draft.mp3' },
+  { title: 'Pixel Rush', src: './music/pixel-rush.mp3' },
+  { title: 'Pixel Arena', src: './music/pixel-arena.mp3' },
+  { title: 'Blaster Circuit', src: './music/blaster-circuit.mp3' },
+  { title: 'Pixel Blast', src: './music/pixel-blast.mp3' },
+];
+const MUSIC_BASE_VOLUME = 0.3;
 let musicEl = null;
 let musicIdx = Math.floor(Math.random() * MUSIC.length);
+let currentTrackTitle = '';
+
+function updateTrackTitle() {
+  const el = document.getElementById('tracktitle');
+  setText(el, currentTrackTitle || 'No track playing');
+}
+
+function nextMusicIndex() {
+  if (MUSIC.length <= 1) return 0;
+  let next = Math.floor(Math.random() * MUSIC.length);
+  while (next === musicIdx) next = Math.floor(Math.random() * MUSIC.length);
+  return next;
+}
+
+function playMusicIndex(idx) {
+  const track = MUSIC[idx];
+  if (!track || !musicEl) return;
+  musicIdx = idx;
+  currentTrackTitle = track.title;
+  updateTrackTitle();
+  musicEl.src = track.src;
+  musicEl.play().catch(() => {}); // blocked until a user gesture — fine
+}
+
 function musicPlay() {
   if (!musicEl) {
     musicEl = new Audio();
-    musicEl.volume = 0.3;
+    musicEl.volume = MUSIC_BASE_VOLUME * gameVolume;
     musicEl.addEventListener('ended', () => {
-      musicIdx = (musicIdx + 1) % MUSIC.length;
-      musicEl.src = MUSIC[musicIdx];
-      musicEl.play().catch(() => {});
+      playMusicIndex(nextMusicIndex());
     });
   }
-  musicIdx = (musicIdx + 1) % MUSIC.length;
-  musicEl.src = MUSIC[musicIdx];
-  musicEl.play().catch(() => {}); // blocked until a user gesture — fine
+  playMusicIndex(nextMusicIndex());
 }
 function musicStop() { musicEl?.pause(); }
+
+const volumeStorageKey = 'nerf-arena-volume-v2';
+let gameVolume = 1;
+try {
+  const storedVolume = Number(localStorage.getItem(volumeStorageKey));
+  if (Number.isFinite(storedVolume)) gameVolume = Math.max(0, Math.min(1, storedVolume));
+} catch { /* localStorage may be unavailable */ }
+setMasterVolume(gameVolume);
+
+const ua = navigator.userAgent || '';
+const isSafari = /\bSafari\//.test(ua) && !/\b(Chrome|Chromium|CriOS|FxiOS|Edg|OPR)\//.test(ua);
+const searchParams = new URLSearchParams(location.search);
+const requestedQuality = searchParams.get('quality');
+const lowQuality = requestedQuality === 'low';
+const performanceProfile = {
+  safari: isSafari,
+  pixelRatioCap: lowQuality ? 1 : 1.35,
+  msaaSamples: lowQuality ? 0 : 2,
+  shadows: !lowQuality,
+  postprocessing: !lowQuality,
+};
+
+function setGameVolume(value, persist = true) {
+  gameVolume = Math.max(0, Math.min(1, Number(value) || 0));
+  setMasterVolume(gameVolume);
+  if (musicEl) musicEl.volume = MUSIC_BASE_VOLUME * gameVolume;
+  if (volumeSlider) volumeSlider.value = String(Math.round(gameVolume * 100));
+  setText(volumeValue, `${Math.round(gameVolume * 100)}%`);
+  if (persist) {
+    try { localStorage.setItem(volumeStorageKey, String(gameVolume)); } catch { /* ignore */ }
+  }
+}
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 // Post-processing multiplies per-pixel cost — cap the internal resolution.
 // (1.35× CSS pixels + 2× MSAA looks nearly identical to 2×/4× at half the GPU load.)
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.35));
-renderer.shadowMap.enabled = true;
+renderer.setPixelRatio(Math.min(devicePixelRatio, performanceProfile.pixelRatioCap));
+renderer.shadowMap.enabled = performanceProfile.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
@@ -60,9 +133,13 @@ const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 900);
 
 // Post-processing: MSAA render target → bloom on emissives → tonemap/output
 const composer = new EffectComposer(renderer,
-  new THREE.WebGLRenderTarget(1, 1, { samples: 2, type: THREE.HalfFloatType }));
+  new THREE.WebGLRenderTarget(1, 1, {
+    samples: performanceProfile.msaaSamples,
+    type: performanceProfile.postprocessing ? THREE.HalfFloatType : THREE.UnsignedByteType,
+  }));
 const renderPass = new RenderPass(new THREE.Scene(), camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.35, 0.5, 0.9);
+bloomPass.enabled = performanceProfile.postprocessing;
 composer.addPass(renderPass);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -80,6 +157,15 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+function usesLightRenderPath() {
+  return lowQuality;
+}
+
+function syncRenderQuality() {
+  renderer.shadowMap.enabled = !usesLightRenderPath();
+  bloomPass.enabled = performanceProfile.postprocessing && !usesLightRenderPath();
+}
+
 const hud = new HUD();
 const underwaterFx = document.getElementById('underwaterFx');
 const foliageFx = document.getElementById('foliageFx');
@@ -89,6 +175,7 @@ let selectedMode = 'ffa';
 let openingMultiplayer = false;
 let multiplayerVotingTimer = 0;
 const lastSpawnByKey = new Map();
+const lastSpawnFaceByKey = new Map();
 
 setInterval(() => {
   if (!G?.multiplayerHost || multiplayer.phase !== 'playing' || G.over) return;
@@ -101,7 +188,7 @@ setInterval(() => {
 }, 100);
 
 document.getElementById('againbtn').addEventListener('click', () => {
-  document.getElementById('endscreen').style.display = 'none';
+  setStyle(document.getElementById('endscreen'), 'display', 'none');
   endMatch(true);
 });
 
@@ -123,13 +210,29 @@ function teardown() {
   }
   camera.remove(G.player.viewmodel);
   hud.els.hud.classList.remove('endboard');
-  hud.els.board.style.display = 'none';
-  hud.els.board.style.top = '';
-  hud.els.board.style.zIndex = '';
-  hud.els.board.style.background = '';
+  setStyle(hud.els.board, 'display', 'none');
+  setStyle(hud.els.board, 'top', '');
+  setStyle(hud.els.board, 'zIndex', '');
+  setStyle(hud.els.board, 'background', '');
   G.scene.clear();
   dmgMarkers = [];
   G = null;
+}
+
+function uniqueSpawnPoints(spawns) {
+  const seen = new Set();
+  const out = [];
+  for (const p of spawns || []) {
+    const key = spawnCoordKey(p);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+
+function spawnCoordKey(p) {
+  return `${Math.round(p.x * 10)}:${Math.round(p.y * 10)}:${Math.round(p.z * 10)}`;
 }
 
 function cameraUnderwater() {
@@ -148,28 +251,40 @@ function updateUnderwaterFx(dt, forceClear = false) {
   const target = !forceClear && cameraUnderwater() ? 1 : 0;
   G.underwaterMix = forceClear ? 0 : THREE.MathUtils.damp(G.underwaterMix || 0, target, 10, dt);
   const mix = G.underwaterMix;
-  if (underwaterFx) underwaterFx.style.opacity = mix > 0.01 ? String(0.78 * mix) : '0';
+  const active = mix > 0.01;
+  setStyle(underwaterFx, 'opacity', active ? String(0.78 * mix) : '0');
 
   const scene = G.scene;
   if (!scene) return;
-  if (!G.baseFog) {
+  if (!G.baseFogCaptured) {
     G.baseFog = scene.fog ? {
       color: scene.fog.color.clone(),
       near: scene.fog.near,
       far: scene.fog.far,
     } : null;
+    G.baseFogCaptured = true;
   }
-  if (mix > 0.01) {
+
+  if (!active) {
+    if (target === 0 && G.underwaterFogActive) {
+      if (G.baseFog) {
+        scene.fog.color.copy(G.baseFog.color);
+        scene.fog.near = G.baseFog.near;
+        scene.fog.far = G.baseFog.far;
+      } else {
+        scene.fog = null;
+      }
+      G.underwaterFogActive = false;
+    }
+    return;
+  }
+
+  if (active) {
     if (!scene.fog) scene.fog = new THREE.Fog(0x0a7aa0, 8, 70);
     scene.fog.color.set(0x0a7aa0);
     scene.fog.near = THREE.MathUtils.lerp(G.baseFog?.near ?? 120, 5, mix);
     scene.fog.far = THREE.MathUtils.lerp(G.baseFog?.far ?? 340, 42, mix);
-  } else if (G.baseFog) {
-    scene.fog.color.copy(G.baseFog.color);
-    scene.fog.near = G.baseFog.near;
-    scene.fog.far = G.baseFog.far;
-  } else {
-    scene.fog = null;
+    G.underwaterFogActive = true;
   }
 }
 
@@ -194,7 +309,7 @@ function updateFoliageFx(dt, forceClear = false) {
   const target = !forceClear && cameraInFoliage() ? 1 : 0;
   G.foliageMix = forceClear ? 0 : THREE.MathUtils.damp(G.foliageMix || 0, target, 18, dt);
   const mix = G.foliageMix;
-  if (foliageFx) foliageFx.style.opacity = mix > 0.01 ? String(0.72 * mix) : '0';
+  setStyle(foliageFx, 'opacity', mix > 0.01 ? String(0.72 * mix) : '0');
 }
 
 function updateDeathCamera(dt) {
@@ -273,6 +388,7 @@ function startAtrium() {
     padCooldown: 0,
     lastT: performance.now(),
   };
+  syncRenderQuality();
   const perch = world.spawns.ffa[0].clone();
   perch.y += 2.6;                  // float above the floor; you drop in on the first click
   player.spawn(perch);
@@ -281,9 +397,9 @@ function startAtrium() {
   renderer.compile(scene, camera);
 
   hud.show(true);
-  document.getElementById('scores').style.display = 'none';
-  document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
-  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
+  setStyle(document.getElementById('scores'), 'display', 'none');
+  setText(document.getElementById('catchtitle'), 'CLICK TO PLAY');
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   requestPointerLock();
   hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
   cancelAnimationFrame(rafId);
@@ -299,7 +415,7 @@ function startMatch(mapDef, mode = 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
-  world.spawnsAll = [...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])];
+  world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
   buildWaypointGraph(world);
   scene.add(camera);
   renderPass.scene = scene;
@@ -359,10 +475,13 @@ function startMatch(mapDef, mode = 'ffa') {
     showBoard: false,
     lastT: performance.now(),
   };
+  syncRenderQuality();
 
   G.spawnBatchUsed = new Map();
+  G.spawnBatchUsedFaces = new Map();
   for (const ch of characters) respawnCharacter(ch, true);
   G.spawnBatchUsed = null;
+  G.spawnBatchUsedFaces = null;
 
   // Pre-warm every shader (incl. hidden viewmodels, powerup skins, projectile
   // and puff materials) so nothing compiles mid-match and causes a hitch.
@@ -379,15 +498,40 @@ function startMatch(mapDef, mode = 'ffa') {
 
   player.update(0, () => {});      // camera on the spawn point before the first tick
   hud.show(true);
-  document.getElementById('scores').style.display = '';
-  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
+  setStyle(document.getElementById('scores'), 'display', '');
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   requestPointerLock();
   musicPlay();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
 }
 
-function startMultiplayerMatch(mapDef) {
+function multiplayerSlotById(id = multiplayer.slotId) {
+  return (multiplayer.slots || []).find(s => s.id === id) || null;
+}
+
+function multiplayerTeamForSlot(slot, mode = multiplayer.mode || 'ffa') {
+  if (!slot) return mode === 'tdm' ? 'blue' : (multiplayer.slotId || 'you');
+  return mode === 'tdm' ? (slot.team || 'blue') : slot.id;
+}
+
+function multiplayerColorForTeam(team, fallback = '#ffffff') {
+  if (team === 'blue') return '#5cb3ff';
+  if (team === 'red') return '#ff5c5c';
+  return fallback;
+}
+
+function addTeamMarker(ch) {
+  if (!ch?.mesh || ch._teamMarker || ch.team !== 'blue') return;
+  const m = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.42, 6),
+    new THREE.MeshBasicMaterial({ color: 0x5cb3ff }));
+  m.position.y = 2.4;
+  m.rotation.x = Math.PI;
+  ch.mesh.add(m);
+  ch._teamMarker = m;
+}
+
+function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   teardown();
   camera.fov = 75;
   camera.near = 0.1;
@@ -396,16 +540,18 @@ function startMultiplayerMatch(mapDef) {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
-  world.spawnsAll = [...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])];
+  world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
   buildWaypointGraph(world);
   scene.add(camera);
   renderPass.scene = scene;
 
   const fxPool = new FXPool(scene);
   const player = new Player(camera, world);
+  const playerSlot = multiplayerSlotById();
+  const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
   player.id = multiplayer.slotId;
-  player.color = '#ffd23c';
-  player.team = multiplayer.slotId || 'you';
+  player.color = multiplayerColorForTeam(playerTeam, '#ffd23c');
+  player.team = playerTeam;
   player.name = multiplayer.name || 'YOU';
   player.score = 0;
 
@@ -420,7 +566,7 @@ function startMultiplayerMatch(mapDef) {
   world.getPickups = () => pickups.items;
 
   G = {
-    multiplayer: true, atrium: false, mapDef, mode: 'ffa', scene, world, player, characters,
+    multiplayer: true, atrium: false, mapDef, mode, scene, world, player, characters,
     projectiles, pickups, fxPool,
     remoteSlots: new Map(),
     mpDropIds: new Set(),
@@ -436,36 +582,40 @@ function startMultiplayerMatch(mapDef) {
     mpSyncedSelf: false,
     mpSawSelfSnapshot: false,
   };
+  syncRenderQuality();
 
   respawnCharacter(player, true);
   renderer.compile(scene, camera);
   player.update(0, () => {});
   hud.show(true);
-  document.getElementById('scores').style.display = '';
-  document.getElementById('endscreen').style.display = 'none';
-  document.getElementById('catchtitle').textContent = 'CLICK TO RESUME';
-  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
+  setStyle(document.getElementById('scores'), 'display', '');
+  setStyle(document.getElementById('endscreen'), 'display', 'none');
+  setText(document.getElementById('catchtitle'), 'CLICK TO RESUME');
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   requestPointerLock();
   musicPlay();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
 }
 
-function startMultiplayerHostMatch(mapDef) {
-  startMatch(mapDef, 'ffa');
+function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa') {
+  startMatch(mapDef, mode);
   if (!G) return;
+  const playerSlot = multiplayerSlotById();
+  const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
   G.multiplayerHost = true;
   G.mpSnapshotT = 0;
   G.mpEvents = [];
   G.remoteInputs = new Map();
   G.remoteHumans = new Map();
   G.paused = false;
-  document.getElementById('catchtitle').textContent = 'CLICK TO RESUME';
-  clickcatch.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
+  setText(document.getElementById('catchtitle'), 'CLICK TO RESUME');
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   G.player.id = multiplayer.slotId;
   G.player.name = multiplayer.name || 'YOU';
-  G.player.color = '#ffd23c';
-  G.player.team = multiplayer.slotId || 'host';
+  G.player.color = multiplayerColorForTeam(playerTeam, '#ffd23c');
+  G.player.team = playerTeam;
+  addTeamMarker(G.player);
   let botIdx = 0;
   for (const ch of G.characters) {
     if (ch === G.player) continue;
@@ -490,20 +640,24 @@ function syncRemoteHumans() {
 
 function ensureHostRemoteHuman(slot) {
   if (G.remoteHumans.has(slot.id)) return G.remoteHumans.get(slot.id);
-  const bot = G.characters.find(ch => !ch.isPlayer && !ch.remoteHuman);
+  const team = multiplayerTeamForSlot(slot, G.mode);
+  const color = multiplayerColorForTeam(team, slot.color || '#ffffff');
+  const bot = G.characters.find(ch => !ch.isPlayer && !ch.remoteHuman && (G.mode !== 'tdm' || ch.team === team)) ||
+    G.characters.find(ch => !ch.isPlayer && !ch.remoteHuman);
   if (bot) removeCharacter(bot);
-  const color = parseInt(String(slot.color || '#ffffff').replace('#', ''), 16) || 0xffffff;
-  const remote = new Bot(G.scene, G.world, slot.id, slot.name || 'Player', color);
+  const remote = new Bot(G.scene, G.world, team, slot.name || 'Player',
+    parseInt(String(color).replace('#', ''), 16) || 0xffffff);
   remote.id = slot.id;
   remote.remoteHuman = true;
   remote.human = true;
-  remote.team = slot.id;
+  remote.team = team;
   remote.name = slot.name || 'Player';
-  remote.color = slot.color || '#ffffff';
+  remote.color = color;
   remote.score = 0;
   remote.kills = 0;
   remote.deaths = 0;
   G.characters.push(remote);
+  addTeamMarker(remote);
   respawnCharacter(remote, true);
   remote.remoteNet = makeRemoteNet(remote.pos);
   setNameTag(remote, remote.name, remote.color);
@@ -522,12 +676,21 @@ function removeCharacter(ch) {
 function addReplacementBot() {
   if (!G?.multiplayerHost || G.characters.length >= 8) return;
   const i = G.characters.filter(ch => !ch.isPlayer && !ch.remoteHuman).length;
-  const bot = new Bot(G.scene, G.world, `ffa-bot-${i}`, BOT_NAMES[i % BOT_NAMES.length],
-    parseInt(FFA_COLORS[i % FFA_COLORS.length].slice(1), 16));
+  let team = `ffa-bot-${i}`;
+  let color = FFA_COLORS[i % FFA_COLORS.length];
+  if (G.mode === 'tdm') {
+    const blue = G.characters.filter(ch => ch.team === 'blue').length;
+    const red = G.characters.filter(ch => ch.team === 'red').length;
+    team = blue <= red ? 'blue' : 'red';
+    color = multiplayerColorForTeam(team);
+  }
+  const bot = new Bot(G.scene, G.world, team, BOT_NAMES[i % BOT_NAMES.length],
+    parseInt(color.slice(1), 16));
   bot.id = `bot-${i}`;
-  bot.color = FFA_COLORS[i % FFA_COLORS.length];
+  bot.color = color;
   bot.score = 0;
   G.characters.push(bot);
+  addTeamMarker(bot);
   respawnCharacter(bot, true);
   setNameTag(bot, bot.name, bot.color);
 }
@@ -704,7 +867,7 @@ function ensureRemoteSlot(state) {
     pos: new THREE.Vector3(),
     targetPos: new THREE.Vector3(),
     mesh: group,
-    team: state.id,
+    team: state.team || state.id,
     radius: 0.45,
     height: 1.8,
     hp: 100,
@@ -728,6 +891,8 @@ function ensureRemoteSlot(state) {
 
 function applyMultiplayerSnapshot(snap) {
   if (!G?.multiplayer) return;
+  G.mode = snap.mode || G.mode || 'ffa';
+  if (snap.scores) G.scores = { blue: snap.scores.blue || 0, red: snap.scores.red || 0 };
   G.timeLeft = Math.max(0, (snap.phaseEndsAt - Date.now()) / 1000);
   const seen = new Set();
   for (const state of snap.players || []) {
@@ -740,6 +905,7 @@ function applyMultiplayerSnapshot(snap) {
       }
       G.player.name = state.name;
       G.player.color = state.color || G.player.color;
+      G.player.team = state.team || G.player.team;
       const previousScore = G.player.score || 0;
       G.player.score = state.score || 0;
       if (G.mpSawSelfSnapshot && G.player.score > previousScore) {
@@ -768,6 +934,7 @@ function applyMultiplayerSnapshot(snap) {
     const remote = ensureRemoteSlot(state);
     remote.name = state.name;
     remote.color = state.color;
+    remote.team = state.team || remote.team;
     remote.human = state.human;
     remote.hp = state.hp;
     remote.alive = state.alive;
@@ -980,7 +1147,36 @@ function sphereOverlapsBox(pos, radius, box) {
   return dx * dx + dy * dy + dz * dz < radius * radius;
 }
 
+function nearestEscherSpawnUp(pos) {
+  let best = null, bd = Infinity;
+  for (const c of G.world.colliders) {
+    if (c.type !== 'box') continue;
+    const cx = Math.max(c.min.x, Math.min(c.max.x, pos.x));
+    const cy = Math.max(c.min.y, Math.min(c.max.y, pos.y));
+    const cz = Math.max(c.min.z, Math.min(c.max.z, pos.z));
+    const dx = pos.x - cx, dy = pos.y - cy, dz = pos.z - cz;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 <= 1e-6 || d2 > 1.1 * 1.1 || d2 >= bd) continue;
+    const ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
+    if (ax >= ay && ax >= az) best = new THREE.Vector3(Math.sign(dx), 0, 0);
+    else if (ay >= az) best = new THREE.Vector3(0, Math.sign(dy), 0);
+    else best = new THREE.Vector3(0, 0, Math.sign(dz));
+    bd = d2;
+  }
+  return best;
+}
+
+function spawnSurfaceKey(pos) {
+  if (!G.world.escher) return 'flat';
+  const up = nearestEscherSpawnUp(pos);
+  if (!up) return 'unknown';
+  if (Math.abs(up.x) > 0.5) return up.x > 0 ? '+x' : '-x';
+  if (Math.abs(up.y) > 0.5) return up.y > 0 ? '+y' : '-y';
+  return up.z > 0 ? '+z' : '-z';
+}
+
 function spawnHasSupport(pos, ch) {
+  if (G.world.escher) return !!nearestEscherSpawnUp(pos);
   const footSlack = 0.45;
   const sideSlack = ch.radius * 0.45;
   for (const c of G.world.colliders) {
@@ -1001,10 +1197,12 @@ function spawnHasSupport(pos, ch) {
 
 function spawnIsClear(pos, ch) {
   const probe = new THREE.Vector3();
+  const up = G.world.escher ? (nearestEscherSpawnUp(pos) || ch.up || new THREE.Vector3(0, 1, 0)) : null;
   const sphereYs = [ch.radius, ch.height * 0.5, ch.height - ch.radius];
   for (const c of G.world.colliders) {
     for (const sy of sphereYs) {
-      probe.set(pos.x, pos.y + sy, pos.z);
+      if (up) probe.copy(pos).addScaledVector(up, sy);
+      else probe.set(pos.x, pos.y + sy, pos.z);
       if (c.type === 'box') {
         if (sphereOverlapsBox(probe, ch.radius, c)) return false;
       } else if (c.type === 'sphere' && probe.distanceToSquared(c.center) < (ch.radius + c.radius) ** 2) {
@@ -1024,48 +1222,82 @@ function safeSpawnPoint(base, ch) {
   return null;
 }
 
-function spawnKey(ch) {
+function spawnPoolKey(poolKey) {
   const map = G.mapDef?.id || 'atrium';
-  const identity = ch.isPlayer ? 'human' : ch.name || ch.team || 'bot';
-  return `${map}:${G.mode}:${identity}`;
+  return `${map}:${G.mode}:${poolKey}`;
 }
 
 function pickSpawnPoint(spawns, ch, poolKey) {
-  const key = spawnKey(ch);
-  const last = ch._lastSpawnIndex ?? lastSpawnByKey.get(key);
+  const key = spawnPoolKey(poolKey);
+  const last = lastSpawnByKey.get(key);
+  const lastFace = G.world.escher ? lastSpawnFaceByKey.get(key) : null;
   const indices = spawns.map((_, i) => i);
   for (let i = indices.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [indices[i], indices[j]] = [indices[j], indices[i]];
   }
   const used = G.spawnBatchUsed?.get(poolKey);
-  let ordered = indices.length > 1 ? indices.filter(i => i !== last).concat(indices.filter(i => i === last)) : indices;
+  const usedFaces = G.spawnBatchUsedFaces?.get(poolKey);
+  let ordered = indices;
   if (used && used.size < spawns.length) {
-    const unused = ordered.filter(i => !used.has(i));
+    const unused = ordered.filter(i => !used.has(spawnCoordKey(spawns[i])));
     if (unused.length) ordered = unused;
   }
+  if (G.world.escher && usedFaces) {
+    const unusedFaces = ordered.filter(i => !usedFaces.has(spawnSurfaceKey(spawns[i])));
+    if (unusedFaces.length) ordered = unusedFaces;
+  }
+  if (spawns.length > 1) {
+    ordered = ordered.filter(i => spawnCoordKey(spawns[i]) !== last)
+      .concat(ordered.filter(i => spawnCoordKey(spawns[i]) === last));
+  }
+  if (G.world.escher && lastFace && new Set(ordered.map(i => spawnSurfaceKey(spawns[i]))).size > 1) {
+    ordered = ordered.filter(i => spawnSurfaceKey(spawns[i]) !== lastFace)
+      .concat(ordered.filter(i => spawnSurfaceKey(spawns[i]) === lastFace));
+  }
+  const awayFromPlayers = [];
+  const nearPlayers = [];
   for (const idx of ordered) {
     const p = safeSpawnPoint(spawns[idx], ch);
     if (!p) continue;
-    ch._lastSpawnIndex = idx;
-    lastSpawnByKey.set(key, idx);
-    used?.add(idx);
+    const crowded = G.characters?.some(other => {
+      if (other === ch || !other.alive) return false;
+      const dy = Math.abs((other.pos.y || 0) - p.y);
+      return dy < 8 && other.pos.distanceToSquared(p) < 10 * 10;
+    });
+    (crowded ? nearPlayers : awayFromPlayers).push([idx, p]);
+  }
+  const picked = awayFromPlayers[0] || nearPlayers[0];
+  if (picked) {
+    const [idx, p] = picked;
+    const coordKey = spawnCoordKey(spawns[idx]);
+    lastSpawnByKey.set(key, coordKey);
+    if (G.world.escher) lastSpawnFaceByKey.set(key, spawnSurfaceKey(spawns[idx]));
+    used?.add(coordKey);
+    usedFaces?.add(spawnSurfaceKey(spawns[idx]));
     return p;
   }
   const fallbackIdx = ordered[0] ?? 0;
-  ch._lastSpawnIndex = fallbackIdx;
-  lastSpawnByKey.set(key, fallbackIdx);
-  used?.add(fallbackIdx);
+  const fallbackKey = spawnCoordKey(spawns[fallbackIdx]);
+  lastSpawnByKey.set(key, fallbackKey);
+  if (G.world.escher) lastSpawnFaceByKey.set(key, spawnSurfaceKey(spawns[fallbackIdx]));
+  used?.add(fallbackKey);
+  usedFaces?.add(spawnSurfaceKey(spawns[fallbackIdx]));
   return spawns[fallbackIdx].clone();
 }
 
 function respawnCharacter(ch, initial = false) {
-  // the player can spawn on any surface (PRISM RUN); bots stay on the floor
-  const spawns = (ch.isPlayer && G.world.playerSpawns) ? G.world.playerSpawns
-    : G.mode === 'tdm' ? G.world.spawns[ch.team] : G.world.spawnsAll;
-  const poolKey = G.mode === 'tdm' ? `team:${ch.team}` : 'all';
+  const useTeamStart = initial && G.mode === 'tdm';
+  const baseSpawns = useTeamStart ? G.world.spawns[ch.team] : G.world.spawnsAll;
+  const spawns = (ch.isPlayer && G.world.playerSpawns && !useTeamStart) ? G.world.playerSpawns : baseSpawns;
+  const poolKey = useTeamStart ? `start:${ch.team}` : 'all';
   if (G.spawnBatchUsed && !G.spawnBatchUsed.has(poolKey)) G.spawnBatchUsed.set(poolKey, new Set());
+  if (G.spawnBatchUsedFaces && !G.spawnBatchUsedFaces.has(poolKey)) G.spawnBatchUsedFaces.set(poolKey, new Set());
   const p = pickSpawnPoint(spawns, ch, poolKey);
+  if (useTeamStart) {
+    lastSpawnByKey.set(spawnPoolKey('all'), spawnCoordKey(p));
+    if (G.world.escher) lastSpawnFaceByKey.set(spawnPoolKey('all'), spawnSurfaceKey(p));
+  }
   ch.spawn(p);
   if (ch.remoteHuman) {
     ch.remoteNet = makeRemoteNet(ch.pos);
@@ -1319,11 +1551,12 @@ function showVictoryPodium(result) {
   G.showBoard = false;
   hud.show(false);
   hud.els.hud.classList.add('endboard');
-  hud.els.board.style.display = 'none';
+  setStyle(hud.els.board, 'display', 'none');
   hud.showRespawn(false);
-  clickcatch.style.display = 'none';
-  quitBtn.style.display = 'none';
-  document.getElementById('scores').style.display = 'none';
+  setStyle(clickcatch, 'display', 'none');
+  setStyle(quitBtn, 'display', 'none');
+  setStyle(volumeControl, 'display', 'none');
+  setStyle(document.getElementById('scores'), 'display', 'none');
 
   for (const marker of dmgMarkers) {
     oldScene.remove(marker.sprite);
@@ -1343,10 +1576,10 @@ function showVictoryPodium(result) {
   renderPass.scene = podiumScene;
 
   const end = document.getElementById('endscreen');
-  document.getElementById('endtitle').textContent = result.title;
-  document.getElementById('endtitle').style.color = result.color;
-  document.getElementById('endstats').textContent = result.stats;
-  end.style.display = 'flex';
+  setText(document.getElementById('endtitle'), result.title);
+  setStyle(document.getElementById('endtitle'), 'color', result.color);
+  setText(document.getElementById('endstats'), result.stats);
+  setStyle(end, 'display', 'flex');
   document.exitPointerLock?.();
   sfx('powerup');
 }
@@ -1356,10 +1589,10 @@ function updateVictoryPodium(dt) {
   if (!end) return;
   end.t += dt;
   const t = end.t;
-  hud.els.board.style.top = '';
-  hud.els.board.style.zIndex = '';
-  hud.els.board.style.background = '';
-  hud.els.board.style.display = G.showBoard ? 'block' : 'none';
+  setStyle(hud.els.board, 'top', '');
+  setStyle(hud.els.board, 'zIndex', '');
+  setStyle(hud.els.board, 'background', '');
+  setStyle(hud.els.board, 'display', G.showBoard ? 'block' : 'none');
   if (G.showBoard) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
   const anchor = end.anchor || new THREE.Vector3();
   camera.position.copy(anchor).add(new THREE.Vector3(
@@ -1638,9 +1871,20 @@ function onPickup(ch, def) {
 
 /* ---------------- input ---------------- */
 const clickcatch = document.getElementById('clickcatch');
+const volumeControl = document.getElementById('pausevolume');
+const volumeSlider = document.getElementById('volumeslider');
+const volumeValue = document.getElementById('volumevalue');
+setGameVolume(gameVolume, false);
+updateTrackTitle();
 
 function requestPointerLock() {
-  canvas.requestPointerLock?.();
+  if (!canvas.requestPointerLock) return;
+  try {
+    const request = canvas.requestPointerLock({ unadjustedMovement: true });
+    request?.catch?.(() => canvas.requestPointerLock());
+  } catch {
+    canvas.requestPointerLock();
+  }
 }
 
 const quitBtn = document.getElementById('quitbtn');
@@ -1650,34 +1894,40 @@ document.addEventListener('pointerlockchange', () => {
     const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
     const multiplayerPanelOpen = multiplayer.overlay && !multiplayer.overlay.hidden;
     G.paused = multiplayerMatch ? false : !locked;
-    clickcatch.style.display = (locked || multiplayerPanelOpen) ? 'none' : 'flex';
-    document.getElementById('catchtitle').textContent =
-      locked ? '' : (multiplayerMatch ? 'CLICK TO RESUME' : '⏸ PAUSED — CLICK TO RESUME');
+    setStyle(clickcatch, 'display', (locked || multiplayerPanelOpen) ? 'none' : 'flex');
+    setText(document.getElementById('catchtitle'),
+      locked ? '' : (multiplayerMatch ? 'CLICK TO RESUME' : '⏸ PAUSED — CLICK TO RESUME'));
     // pause menu extras (matches only): live scoreboard + quit
     const showPause = !locked && !G.atrium && !multiplayerPanelOpen;
-    quitBtn.style.display = showPause ? '' : 'none';
-    quitBtn.textContent = multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM';
+    setStyle(quitBtn, 'display', showPause ? '' : 'none');
+    setStyle(volumeControl, 'display', showPause ? 'block' : 'none');
+    setText(quitBtn, multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM');
     const board = hud.els.board;
-    board.style.display = showPause ? 'block' : 'none';
-    board.style.top = showPause ? '27%' : '';    // scoreboard on top, resume mid, quit bottom
-    board.style.zIndex = showPause ? 3 : '';     // above the pause overlay
-    board.style.background = showPause ? 'rgba(10,12,30,.96)' : ''; // solid — the tint washed it out
+    setStyle(board, 'display', showPause ? 'block' : 'none');
+    setStyle(board, 'top', showPause ? '27%' : '');    // scoreboard on top, resume mid, quit bottom
+    setStyle(board, 'zIndex', showPause ? 3 : '');     // above the pause overlay
+    setStyle(board, 'background', showPause ? 'rgba(10,12,30,.96)' : ''); // solid — the tint washed it out
     if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
   } else {
-    clickcatch.style.display = 'none';
-    quitBtn.style.display = 'none';
+    setStyle(clickcatch, 'display', 'none');
+    setStyle(quitBtn, 'display', 'none');
+    setStyle(volumeControl, 'display', 'none');
   }
 });
 clickcatch.addEventListener('click', requestPointerLock);
+volumeControl.addEventListener('click', (e) => e.stopPropagation());
+volumeControl.addEventListener('pointerdown', (e) => e.stopPropagation());
+volumeSlider.addEventListener('input', () => setGameVolume(Number(volumeSlider.value) / 100));
 quitBtn.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();               // don't let the overlay re-lock the pointer
   e.stopImmediatePropagation();
-  quitBtn.style.display = 'none';
-  clickcatch.style.display = 'none';
+  setStyle(quitBtn, 'display', 'none');
+  setStyle(volumeControl, 'display', 'none');
+  setStyle(clickcatch, 'display', 'none');
   multiplayer.closeOverlay?.();
-  hud.els.board.style.display = 'none';
-  document.getElementById('catchtitle').textContent = 'CLICK TO PLAY';
+  setStyle(hud.els.board, 'display', 'none');
+  setText(document.getElementById('catchtitle'), 'CLICK TO PLAY');
   const exitingMultiplayer = !!(G?.multiplayer || G?.multiplayerHost);
   if (exitingMultiplayer) multiplayer.leave();
   document.exitPointerLock?.();
@@ -1706,8 +1956,12 @@ document.addEventListener('keydown', (e) => {
   const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'].indexOf(e.code);
   if (slot >= 0) G.player.switchWeapon(WEAPON_ORDER[slot]);
   if (e.code === 'KeyG') { // glow toggle for slower machines
-    bloomPass.enabled = !bloomPass.enabled;
-    hud.message(bloomPass.enabled ? 'GLOW ON' : 'GLOW OFF', '#7fd0ff');
+    if (!performanceProfile.postprocessing) {
+      hud.message('GLOW OFF FOR SAFARI PERFORMANCE', '#7fd0ff');
+    } else {
+      bloomPass.enabled = !bloomPass.enabled;
+      hud.message(bloomPass.enabled ? 'GLOW ON' : 'GLOW OFF', '#7fd0ff');
+    }
   }
 });
 document.addEventListener('keyup', (e) => {
@@ -1716,18 +1970,21 @@ document.addEventListener('keyup', (e) => {
   if (e.code === 'Tab') G.showBoard = false;
 });
 
-function startCurrentMultiplayerMatch(mapId, force = false) {
+function startCurrentMultiplayerMatch(mapId, force = false, mode = multiplayer.mode || 'ffa') {
   clearTimeout(multiplayerVotingTimer);
-  document.getElementById('endscreen').style.display = 'none';
-  clickcatch.style.display = 'none';
-  quitBtn.style.display = 'none';
-  hud.els.board.style.display = 'none';
+  setStyle(document.getElementById('endscreen'), 'display', 'none');
+  setStyle(clickcatch, 'display', 'none');
+  setStyle(quitBtn, 'display', 'none');
+  setStyle(volumeControl, 'display', 'none');
+  setStyle(hud.els.board, 'display', 'none');
   const map = MAPS.find(m => m.id === mapId) || MAPS[0];
   const endedMultiplayerMatch = !!(G?.over && (G.multiplayer || G.multiplayerHost));
   if (multiplayer.shouldHost()) {
-    if (force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id) startMultiplayerHostMatch(map);
-  } else if (force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id) {
-    startMultiplayerMatch(map);
+    if (force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id || G.mode !== mode) {
+      startMultiplayerHostMatch(map, mode);
+    }
+  } else if (force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id || G.mode !== mode) {
+    startMultiplayerMatch(map, mode);
   }
 }
 
@@ -1735,7 +1992,7 @@ multiplayer.addEventListener('joined', (e) => {
   if (e.detail.phase === 'playing') {
     const slotChanged = !!G?.player?.id && G.player.id !== e.detail.slotId;
     const roleMismatch = multiplayer.shouldHost() ? !G?.multiplayerHost : !G?.multiplayer;
-    startCurrentMultiplayerMatch(e.detail.mapId, slotChanged || roleMismatch);
+    startCurrentMultiplayerMatch(e.detail.mapId, slotChanged || roleMismatch, e.detail.mode || multiplayer.mode || 'ffa');
   } else if (G?.multiplayer || G?.multiplayerHost) {
     hud.message('MULTIPLAYER LOBBY REJOINED', '#ffd23c');
     endMatch(true);
@@ -1743,9 +2000,9 @@ multiplayer.addEventListener('joined', (e) => {
 });
 
 multiplayer.addEventListener('phase', (e) => {
-  const { phase, mapId, ranked } = e.detail;
+  const { phase, mapId, ranked, scores } = e.detail;
   if (phase === 'playing') {
-    startCurrentMultiplayerMatch(mapId);
+    startCurrentMultiplayerMatch(mapId, false, e.detail.mode || multiplayer.mode || 'ffa');
   } else if (phase === 'podium' && (G?.multiplayer || G?.multiplayerHost)) {
     clearTimeout(multiplayerVotingTimer);
     G.mpPodiumStartedAt = performance.now();
@@ -1755,18 +2012,26 @@ multiplayer.addEventListener('phase', (e) => {
       return Object.assign(ch || {}, r);
     }) || rankedCharacters();
     const winner = currentRanked[0];
+    const mode = e.detail.mode || G.mode || multiplayer.mode || 'ffa';
+    const teamScores = scores || G.scores || { blue: 0, red: 0 };
+    const teamTitle = teamScores.blue === teamScores.red ? 'DRAW!'
+      : teamScores.blue > teamScores.red ? 'BLUE TEAM WINS!' : 'RED TEAM WINS!';
     showVictoryPodium({
       ranked: currentRanked,
-      title: winner ? `${winner.name.toUpperCase()} WINS!` : 'MATCH COMPLETE',
-      color: winner?.color || '#ffd23c',
-      stats: winner ? `Winner: ${winner.name} with ${winner.score} · Next vote starts automatically` : 'Next vote starts automatically',
+      title: mode === 'tdm' ? teamTitle : (winner ? `${winner.name.toUpperCase()} WINS!` : 'MATCH COMPLETE'),
+      color: mode === 'tdm'
+        ? (teamScores.blue === teamScores.red ? '#ffd23c' : teamScores.blue > teamScores.red ? '#5cb3ff' : '#ff5c5c')
+        : (winner?.color || '#ffd23c'),
+      stats: mode === 'tdm'
+        ? `BLUE ${teamScores.blue} - ${teamScores.red} RED · Next vote starts automatically`
+        : (winner ? `Winner: ${winner.name} with ${winner.score} · Next vote starts automatically` : 'Next vote starts automatically'),
     });
   } else if (phase === 'voting') {
     const startedAt = G?.mpPodiumStartedAt || 0;
     const wait = startedAt ? Math.max(0, MULTIPLAYER_PODIUM_HOLD_MS - (performance.now() - startedAt)) : 0;
     clearTimeout(multiplayerVotingTimer);
     multiplayerVotingTimer = setTimeout(() => {
-      document.getElementById('endscreen').style.display = 'none';
+      setStyle(document.getElementById('endscreen'), 'display', 'none');
       if (!G?.atrium) startAtrium();
       document.exitPointerLock?.();
       if (G) G.paused = true;
@@ -1778,7 +2043,7 @@ multiplayer.addEventListener('snapshot', (e) => {
   if (multiplayer.shouldHost()) return;
   if (e.detail.phase === 'playing' && (!G || !G.multiplayer || G.over || G.mapDef?.id !== e.detail.mapId)) {
     const map = MAPS.find(m => m.id === e.detail.mapId) || MAPS[0];
-    startMultiplayerMatch(map);
+    startMultiplayerMatch(map, e.detail.mode || multiplayer.mode || 'ffa');
   }
   applyMultiplayerSnapshot(e.detail);
 });
@@ -1793,9 +2058,9 @@ multiplayer.addEventListener('hostChanged', () => {
   if (multiplayer.phase !== 'playing') return;
   const map = MAPS.find(m => m.id === multiplayer.mapId) || MAPS[0];
   if (multiplayer.shouldHost()) {
-    if (!G?.multiplayerHost) startMultiplayerHostMatch(map);
+    if (!G?.multiplayerHost) startMultiplayerHostMatch(map, multiplayer.mode || 'ffa');
   } else if (G?.multiplayerHost) {
-    startMultiplayerMatch(map);
+    startMultiplayerMatch(map, multiplayer.mode || 'ffa');
   }
 });
 
@@ -1830,13 +2095,18 @@ function tick(now) {
   updateDeathCamera(dt);
   updateUnderwaterFx(dt);
   updateFoliageFx(dt);
-  composer.render();
+  renderFrame();
   if (G.pendingMap) { // walked into a lobby gate — swap to that arena
     const map = G.pendingMap;
     startMatch(map, selectedMode);
     return; // startMatch scheduled its own loop
   }
   rafId = requestAnimationFrame(tick);
+}
+
+function renderFrame() {
+  if (performanceProfile.postprocessing && !usesLightRenderPath()) composer.render();
+  else renderer.render(renderPass.scene, camera);
 }
 
 // Lobby-only logic: gate triggers and the mode toggle pad
@@ -1848,8 +2118,9 @@ function stepAtrium(dt) {
     openingMultiplayer = true;
     document.exitPointerLock?.();
     multiplayer.open();
-    clickcatch.style.display = 'none';
-    quitBtn.style.display = 'none';
+    setStyle(clickcatch, 'display', 'none');
+    setStyle(quitBtn, 'display', 'none');
+    setStyle(volumeControl, 'display', 'none');
     hud.message('JOINING MULTIPLAYER', '#ffd23c');
     setTimeout(() => { openingMultiplayer = false; }, 1500);
     return;
@@ -1996,6 +2267,7 @@ function serializeCharacter(ch, i) {
     id: ch.id || (ch.isPlayer ? multiplayer.slotId : `bot-${i}`),
     name: ch.isPlayer ? (multiplayer.name || ch.name || 'YOU') : ch.name,
     human: !!(ch.isPlayer || ch.remoteHuman),
+    team: ch.team || ch.id || `bot-${i}`,
     color: ch.color || '#ffffff',
     pos: { x: ch.pos.x, y: ch.pos.y, z: ch.pos.z },
     yaw: ch.yaw ?? ch.aimYaw ?? 0,
@@ -2031,6 +2303,7 @@ function sendHostSnapshot(dt) {
   const players = G.characters.map((ch, i) => serializeCharacter(ch, i));
   multiplayer.sendHostSnapshot({
     players,
+    scores: G.scores,
     ranked: players.slice().sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths),
     events: G.mpEvents?.splice(0, 32) || [],
     drops: serializeDrops(),
@@ -2056,7 +2329,7 @@ function stepMultiplayer(dt) {
     multiplayer.sendInput(G.player);
   }
   hud.update(dt, {
-    player: G.player, mode: 'ffa', scores: G.scores,
+    player: G.player, mode: G.mode, scores: G.scores,
     characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard, world: G.world,
   });
 }
@@ -2079,13 +2352,16 @@ window.__mp = () => ({
 window.__bench = (frames = 60) => {
   renderer.info.autoReset = false;
   renderer.info.reset();
-  composer.render();
+  renderFrame();
   const calls = renderer.info.render.calls, tris = renderer.info.render.triangles;
   renderer.info.autoReset = true;
   const t0 = performance.now();
-  for (let i = 0; i < frames; i++) composer.render();
+  for (let i = 0; i < frames; i++) renderFrame();
   return { msPerFrame: +((performance.now() - t0) / frames).toFixed(2),
-    drawCalls: calls, triangles: tris, bloom: bloomPass.enabled };
+    drawCalls: calls, triangles: tris, bloom: bloomPass.enabled, safari: performanceProfile.safari,
+    shadows: renderer.shadowMap.enabled, pixelRatio: renderer.getPixelRatio(),
+    postprocessing: performanceProfile.postprocessing && !usesLightRenderPath(),
+    lightRenderPath: usesLightRenderPath() };
 };
 window.__step = (seconds) => {
   if (!G) return 'no game';

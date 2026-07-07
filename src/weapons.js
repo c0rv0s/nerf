@@ -183,6 +183,7 @@ export function buildBlaster(id) {
   const { body, energy } = blasterMats(w.color, w.texture);
   const g = new THREE.Group();
   const shellMesh = new THREE.Mesh(mergeGeometries(geos.map(x => x.toNonIndexed()), false), body);
+  shellMesh.userData.baseMaterial = body;
   shellMesh.castShadow = true;
   g.add(shellMesh);
   if (glow.length) g.add(new THREE.Mesh(mergeGeometries(glow.map(x => x.toNonIndexed()), false), energy));

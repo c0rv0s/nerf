@@ -66,6 +66,9 @@ export class Bot {
     this.avoid = null;                  // pickup we gave up on (proved unreachable)
     this.avoidT = 0;
     this._vineExitT = 0;
+    this._vineStallT = 0;
+    this._vineStallY = null;
+    this._vineStallZone = null;
     this._waterRecoveryT = 0;
     this._waterRecoveryPath = false;
 
@@ -111,6 +114,9 @@ export class Bot {
     this.avoidT = 0;
     this._roam = null;
     this._vineExitT = 0;
+    this._vineStallT = 0;
+    this._vineStallY = null;
+    this._vineStallZone = null;
     this._waterRecoveryT = 0;
     this._waterRecoveryPath = false;
     this._drownT = 0;
@@ -119,7 +125,7 @@ export class Bot {
     if (this.world.escher) {
       this.up = this.up || new THREE.Vector3(0, 1, 0);
       this.up.set(0, 1, 0);
-      const nf = this._nearSurf();
+      const nf = this._nearSurfAt(this.pos);
       if (nf) this.up.copy(nf);
     }
     this.mesh.visible = true;
@@ -266,11 +272,15 @@ export class Bot {
   // biased toward the current up so it doesn't flip-flop between two surfaces.
   _nearSurf() {
     const mid = this.pos.clone().addScaledVector(this.up, this.height * 0.5);
+    return this._nearSurfAt(mid);
+  }
+
+  _nearSurfAt(point) {
     let best = null, bd = Infinity;
     for (const c of this.world.colliders) {
       if (c.type !== 'box') continue;
-      const cx = clamp(mid.x, c.min.x, c.max.x), cy = clamp(mid.y, c.min.y, c.max.y), cz = clamp(mid.z, c.min.z, c.max.z);
-      const dx = mid.x - cx, dy = mid.y - cy, dz = mid.z - cz;
+      const cx = clamp(point.x, c.min.x, c.max.x), cy = clamp(point.y, c.min.y, c.max.y), cz = clamp(point.z, c.min.z, c.max.z);
+      const dx = point.x - cx, dy = point.y - cy, dz = point.z - cz;
       let d2 = dx * dx + dy * dy + dz * dz;
       if (d2 <= 1e-4) continue;
       const n = cardinal(new THREE.Vector3(dx, dy, dz));
@@ -472,10 +482,11 @@ export class Bot {
       if (fd < maxD && Math.abs(lp.y - this.pos.y) < maxDy) wpTarget = lp;
     }
 
-    // If a bot is in drowning danger, survival overrides fighting and shopping:
-    // climb a vine first, otherwise follow the waypoint graph toward dry ground.
+    // Water is a navigation hazard for bots: normal combat/loot steering can
+    // keep them swimming in place, so route out immediately instead of waiting
+    // for drowning to become dangerous.
     let waterRecoveryGoal = null;
-    if (water && (this._drownT || 0) > 30) {
+    if (water) {
       waterRecoveryGoal = this._waterRecoveryGoal(water, dt);
       if (waterRecoveryGoal) wpTarget = waterRecoveryGoal;
     }
@@ -584,6 +595,8 @@ export class Bot {
     else if (water) this._applyWaterMotion(water, dt);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
+    if (vine) this._trackVineStall(vine, dt, moveX, moveZ, wpTarget);
+    else this._resetVineStall();
     if (lowGrav && wasAirborne && this.grounded) {
       // kill landing momentum so we don't skid off the asteroid's curve
       this.vel.x *= 0.15; this.vel.z *= 0.15;
@@ -654,10 +667,11 @@ export class Bot {
     if (!zones?.length) return null;
     const midY = this.pos.y + this.height * 0.5;
     for (const z of zones) {
+      const grabR = z.grabR ?? z.r;
       if (
         midY >= z.minY - 0.5 && midY <= z.maxY + 2.0 &&
         (this.pos.x - z.x) * (this.pos.x - z.x) +
-          (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r
+          (this.pos.z - z.z) * (this.pos.z - z.z) < grabR * grabR
       ) return z;
     }
     return null;
@@ -695,7 +709,7 @@ export class Bot {
       let recoveryPath = null;
       const ranked = this.world.waypoints
         .map((w, i) => {
-          const dry = !this._pointInWater(w.pos, zone) || w.pos.y > zone.surfaceY + 0.55;
+          const dry = !this._pointInAnyWater(w.pos);
           if (!dry) return null;
           const d = w.pos.distanceTo(this.pos);
           const upBias = w.pos.y < this.pos.y ? 8 : 0;
@@ -726,6 +740,13 @@ export class Bot {
       pos.z >= zone.minZ && pos.z <= zone.maxZ &&
       pos.y < zone.surfaceY + 0.35 &&
       pos.y > (zone.bottomY ?? zone.surfaceY - 4) - 0.6;
+  }
+
+  _pointInAnyWater(pos) {
+    for (const zone of this.world.waterZones || []) {
+      if (this._pointInWater(pos, zone)) return true;
+    }
+    return false;
   }
 
   _nearestWaterEdgeGoal(zone) {
@@ -792,12 +813,13 @@ export class Bot {
     this.grounded = false;
   }
 
-  _applyVineMotion(vine, dt, moveX, moveZ, wpTarget) {
-    const midY = this.pos.y + this.height * 0.5;
+  _vineExitVector(vine, moveX = 0, moveZ = 0, wpTarget = null) {
     let exitX = moveX;
     let exitZ = moveZ;
-    const exitLen = Math.hypot(exitX, exitZ);
-    if (exitLen < 0.2 && wpTarget) {
+    if (vine?.exitX != null && vine?.exitZ != null) {
+      exitX = vine.exitX;
+      exitZ = vine.exitZ;
+    } else if (Math.hypot(exitX, exitZ) < 0.2 && wpTarget) {
       exitX = wpTarget.x - this.pos.x;
       exitZ = wpTarget.z - this.pos.z;
     }
@@ -814,13 +836,54 @@ export class Bot {
     }
     exitX /= len;
     exitZ /= len;
+    return { x: exitX, z: exitZ };
+  }
+
+  _resetVineStall() {
+    this._vineStallT = 0;
+    this._vineStallY = null;
+    this._vineStallZone = null;
+  }
+
+  _trackVineStall(vine, dt, moveX, moveZ, wpTarget) {
+    if (this._vineStallZone !== vine || this._vineStallY == null) {
+      this._vineStallZone = vine;
+      this._vineStallY = this.pos.y;
+      this._vineStallT = 0;
+      return;
+    }
+
+    if (this.pos.y > this._vineStallY + 0.035) {
+      this._vineStallY = this.pos.y;
+      this._vineStallT = 0;
+      return;
+    }
+
+    this._vineStallT += dt;
+    if (this._vineStallT < 3.0) return;
+
+    const exit = this._vineExitVector(vine, moveX, moveZ, wpTarget);
+    this.vel.x += exit.x * 5.2;
+    this.vel.z += exit.z * 5.2;
+    this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.9);
+    this.pos.x += exit.x * 0.18;
+    this.pos.z += exit.z * 0.18;
+    this._vineExitT = 0.75;
+    this.grounded = false;
+    this._resetVineStall();
+  }
+
+  _applyVineMotion(vine, dt, moveX, moveZ, wpTarget) {
+    const midY = this.pos.y + this.height * 0.5;
+    const exit = this._vineExitVector(vine, moveX, moveZ, wpTarget);
 
     if (midY > vine.maxY + 1.2) {
-      this.vel.x += exitX * 4.2;
-      this.vel.z += exitZ * 4.2;
+      this.vel.x += exit.x * 4.2;
+      this.vel.z += exit.z * 4.2;
       this.vel.y = this.world.jumpVel * 1.05;
       this._vineExitT = 0.45;
       this.grounded = false;
+      this._resetVineStall();
       return;
     }
 

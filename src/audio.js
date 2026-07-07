@@ -1,6 +1,7 @@
 // Tiny procedural sound effects — no assets needed.
 let ctx = null;
 let masterBus = null;
+let masterVolume = 1;
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') ctx.resume();
@@ -17,11 +18,20 @@ function bus(a) {
     comp.attack.value = 0.002;
     comp.release.value = 0.12;
     masterBus = a.createGain();
-    masterBus.gain.value = 0.8;
+    masterBus.gain.value = 0.8 * masterVolume;
     masterBus.connect(comp);
     comp.connect(a.destination);
   }
   return masterBus;
+}
+
+export function setMasterVolume(value) {
+  masterVolume = Math.max(0, Math.min(1, Number(value) || 0));
+  if (masterBus) masterBus.gain.value = 0.8 * masterVolume;
+}
+
+export function getMasterVolume() {
+  return masterVolume;
 }
 
 // Distance attenuation: sfx(name, at) scales volume by how far `at` is from
