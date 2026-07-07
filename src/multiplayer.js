@@ -1,4 +1,5 @@
 import { MAPS } from './maps.js';
+import * as THREE from 'three';
 
 const WS_PATH = '/ws';
 
@@ -89,12 +90,16 @@ export class MultiplayerClient extends EventTarget {
 
   sendInput(player) {
     if (!player || !this.connected || !this.slotId) return;
+    const aim = new THREE.Vector3(0, 0, -1);
+    player.camera?.getWorldDirection?.(aim);
     this.seq++;
     this.send({
       type: 'input',
       seq: this.seq,
       yaw: player.yaw || 0,
       pitch: player.pitch || 0,
+      up: player.up ? { x: player.up.x, y: player.up.y, z: player.up.z } : { x: 0, y: 1, z: 0 },
+      aim: { x: aim.x, y: aim.y, z: aim.z },
       firing: !!player.firing,
       weapon: player.weapon || 'blaster',
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
@@ -124,6 +129,12 @@ export class MultiplayerClient extends EventTarget {
     this.hostId = null;
     this.slots = [];
     this.lastSnapshot = null;
+  }
+
+  exitLobby() {
+    this.leave();
+    this.closeOverlay();
+    this.dispatchEvent(new CustomEvent('exit'));
   }
 
   _closeForPageHide() {
@@ -263,6 +274,11 @@ export class MultiplayerClient extends EventTarget {
       this.panel.dataset.mode = 'vote';
       this.title.textContent = 'Vote For Next Match';
       this.body.innerHTML = '';
+      const humans = (this.slots || []).filter(s => s.human).length;
+      const summary = document.createElement('div');
+      summary.className = 'mp-lobby-summary';
+      summary.textContent = `${humans}/${this.slots.length || 8} human players in lobby`;
+      this.body.append(summary);
       const modes = [
         ['ffa', 'FREE FOR ALL'],
         ['tdm', 'TEAM DEATHMATCH'],
@@ -290,6 +306,11 @@ export class MultiplayerClient extends EventTarget {
         mapWrap.append(btn);
       }
       this.body.append(mapWrap);
+      const exit = document.createElement('button');
+      exit.className = 'mp-exit';
+      exit.textContent = 'EXIT MULTIPLAYER';
+      exit.addEventListener('click', () => this.exitLobby());
+      this.body.append(exit);
     } else if (this.phase === 'podium') {
       this.overlay.hidden = true;
     } else if (this.phase === 'playing') {
@@ -333,6 +354,9 @@ export class MultiplayerClient extends EventTarget {
       .mp-row small,.mp-map small{font-family:Arial,sans-serif;color:#9fb0ff;font-weight:bold}
       .mp-section{display:grid;gap:10px}
       .mp-section h3{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#9fb0ff;margin:4px 0 0}
+      .mp-lobby-summary{font-family:Arial,sans-serif;font-weight:900;text-align:center;color:#c9d2ff;background:rgba(80,100,180,.18);border:1px solid rgba(159,176,255,.35);border-radius:8px;padding:9px 12px}
+      .mp-exit{font:inherit;cursor:pointer;border-radius:8px;border:2px solid rgba(255,92,92,.65);background:rgba(120,20,32,.72);color:#fff;padding:12px 14px;text-align:center;margin-top:4px}
+      .mp-exit:hover{border-color:#ffd23c;background:rgba(160,34,42,.85)}
       #mpStatus{margin-top:12px;min-height:20px;text-align:center;color:#9fb0ff;font-family:Arial,sans-serif;font-weight:bold}
     `;
     document.head.append(style);

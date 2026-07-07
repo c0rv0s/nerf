@@ -5,6 +5,21 @@ import { WEAPONS, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
 const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45 };
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+function pickupUp(def) {
+  return def.up || WORLD_UP;
+}
+
+function pickupFloatHeight(def) {
+  return def.kind === 'points' ? 1.75 : 1.0;
+}
+
+function placePickupMesh(mesh, def, t = 0, phase = 0) {
+  const up = pickupUp(def);
+  const height = pickupFloatHeight(def) + Math.sin(t * 2 + phase) * 0.18;
+  mesh.position.copy(def.pos).addScaledVector(up, height);
+}
 
 // Neon point-value badges (canvas sprites, cached per value)
 const POINT_COLORS = { 1000: '#ffd23c', 750: '#ff9c40', 500: '#c86aff', 250: '#4dffd2' };
@@ -58,7 +73,13 @@ function makeMesh(def) {
     }
   } else if (def.kind === 'points') {
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: pointBadge(def.amount), transparent: true, depthWrite: false }));
+      map: pointBadge(def.amount),
+      transparent: true,
+      alphaTest: 0.04,
+      depthWrite: false,
+      depthTest: true,
+    }));
+    sprite.renderOrder = 30;
     sprite.scale.setScalar(1.7);
     g.add(sprite);
   } else if (def.kind === 'shield') {
@@ -117,7 +138,7 @@ export class PickupManager {
     this.hooks = hooks;
     this.items = defs.map(def => {
       const mesh = makeMesh(def);
-      mesh.position.copy(def.pos).y += 1.0;
+      placePickupMesh(mesh, def);
       scene.add(mesh);
       // Detach lights from the toggled group: removing a light from the render
       // list changes the scene's light count and forces a full shader
@@ -141,7 +162,7 @@ export class PickupManager {
   // No respawn — despawns after 30s if nobody grabs it.
   addDrop(def) {
     const mesh = makeMesh(def);
-    mesh.position.copy(def.pos).y += 1.0;
+    placePickupMesh(mesh, def);
     this.scene.add(mesh);
     this.items.push({ def, mesh, lights: [], active: true, temporary: true, ttl: 30, timer: 0, phase: Math.random() * 6 });
   }
@@ -167,19 +188,16 @@ export class PickupManager {
         }
         continue;
       }
-      it.mesh.rotation.y += dt * 2;
-      it.mesh.position.x = it.def.pos.x;
-      it.mesh.position.z = it.def.pos.z;
-      it.mesh.position.y = it.def.pos.y + 1.0 + Math.sin(this.t * 2 + it.phase) * 0.18;
+      if (it.def.kind !== 'points') it.mesh.rotation.y += dt * 2;
+      placePickupMesh(it.mesh, it.def, this.t, it.phase);
       for (const L of it.lights) L.position.copy(it.mesh.position);
       if (it.hostMirror) continue;
 
       for (const ch of characters) {
         if (!ch.alive) continue;
-        const dx = ch.pos.x - it.def.pos.x;
-        const dy = (ch.pos.y + 0.9) - (it.def.pos.y + 1.0);
-        const dz = ch.pos.z - it.def.pos.z;
-        if (dx * dx + dz * dz < 2.6 && Math.abs(dy) < 2.2) {
+        const pickupCenter = it.def.pos.clone().addScaledVector(pickupUp(it.def), pickupFloatHeight(it.def));
+        const charCenter = ch.pos.clone().addScaledVector(ch.up || WORLD_UP, ch.height * 0.5);
+        if (charCenter.distanceToSquared(pickupCenter) < 5.2) {
           if (this.hooks.onPickup(ch, it.def)) {
             it.active = false;
             it.mesh.visible = false;

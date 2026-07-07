@@ -1,7 +1,7 @@
 // Weapon definitions + shared projectile system (used by player and bots).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { pointHitsWorld, rand } from './engine.js';
+import { pointHitsWorld, rand, shellInnerNormal } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
@@ -259,11 +259,30 @@ export class ProjectileSystem {
     return { t, normal: (tmin > 0.03 ? nmin : nmax).clone() };
   }
 
+  rayShell(origin, dir, box, maxDist) {
+    const normal = shellInnerNormal(box, this.world, new THREE.Vector3());
+    if (!normal) return null;
+    const axis = Math.abs(normal.x) > 0.5 ? 'x' : Math.abs(normal.y) > 0.5 ? 'y' : 'z';
+    const sign = normal[axis];
+    const plane = sign > 0 ? box.max[axis] : box.min[axis];
+    const signedDist = (origin[axis] - plane) * sign;
+    const approach = dir[axis] * sign;
+    if (approach >= -1e-6) return null;
+    const t = -signedDist / approach;
+    if (t <= 0.03 || t > maxDist) return null;
+    for (const other of ['x', 'y', 'z']) {
+      if (other === axis) continue;
+      const v = origin[other] + dir[other] * t;
+      if (v < box.min[other] - 0.03 || v > box.max[other] + 0.03) return null;
+    }
+    return { t, normal: normal.clone() };
+  }
+
   rayWorld(origin, dir, maxDist) {
     let best = null;
     for (const c of this.world.colliders || []) {
       if (c.type !== 'box') continue;
-      const hit = this.rayBox(origin, dir, c, maxDist);
+      const hit = c.shell ? this.rayShell(origin, dir, c, maxDist) : this.rayBox(origin, dir, c, maxDist);
       if (hit && (!best || hit.t < best.t)) best = hit;
     }
     return best;
@@ -406,6 +425,14 @@ export class ProjectileSystem {
     return samples.some(p => this.distancePointToSegment(p, a, b) < r);
   }
 
+  projectileTouchesCharacter(ch, p) {
+    const up = ch.up || new THREE.Vector3(0, 1, 0);
+    const radius = (ch.radius || 0.45) + (p.weapon.size || 0.12) * 0.6 + 0.35;
+    const foot = ch.pos.clone().addScaledVector(up, ch.radius || 0.45);
+    const head = ch.pos.clone().addScaledVector(up, Math.max(ch.height - (ch.radius || 0.45), ch.height * 0.55));
+    return this.distancePointToSegment(p.pos, foot, head) < radius;
+  }
+
   updateBeams(dt, characters) {
     for (let bi = this.beams.length - 1; bi >= 0; bi--) {
       const b = this.beams[bi];
@@ -469,10 +496,7 @@ export class ProjectileSystem {
         for (const ch of characters) {
           if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
               p.pierced?.has(ch) || p.ignore?.has(ch)) continue;
-          const dx = p.pos.x - ch.pos.x;
-          const dy = p.pos.y - (ch.pos.y + ch.height * 0.55);
-          const dz = p.pos.z - ch.pos.z;
-          if (dx * dx + dz * dz < 0.85 && Math.abs(dy) < ch.height * 0.65) {
+          if (this.projectileTouchesCharacter(ch, p)) {
             this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner);
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
             if (p.weapon.split && !p.noSplit) {
@@ -549,7 +573,7 @@ export class FXPool {
     this.geo = new THREE.SphereGeometry(1, 8, 6);
   }
   spawnPuff(pos, color, scale = 1) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false });
     const m = new THREE.Mesh(this.geo, mat);
     m.position.copy(pos);
     m.scale.setScalar(scale * 0.3);

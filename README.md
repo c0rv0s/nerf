@@ -5,6 +5,8 @@ against NPC bots, built with Three.js. Solo play is still plain ES modules
 with Three.js loaded from a CDN; multiplayer runs through the included Node
 WebSocket server.
 
+Live: https://nerf-arena-blast-revival.up.railway.app/
+
 ## Run it
 
 For single-player only, any static file server works (ES modules can't load

@@ -250,16 +250,22 @@ function mergeStatic(scene, world) {
 }
 
 // Walkable slope. Rises along `axis` from h0 (at min end) to h1 (at max end).
-function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color }) {
+function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color, visualInset = 0 }) {
   world.ramps.push({ axis, minX, maxX, minZ, maxZ, h0, h1 });
   const len = axis === 'x' ? maxX - minX : maxZ - minZ;
   const width = axis === 'x' ? maxZ - minZ : maxX - minX;
   const dh = h1 - h0;
-  const slopeLen = Math.hypot(len, dh);
+  const safeInset = Math.max(0, Math.min(visualInset, len * 0.45));
+  const vLen = len - safeInset * 2;
+  const t0 = safeInset / len;
+  const t1 = 1 - t0;
+  const vh0 = h0 + dh * t0;
+  const vh1 = h0 + dh * t1;
+  const slopeLen = Math.hypot(vLen, vh1 - vh0);
   const geo = new THREE.BoxGeometry(
     axis === 'x' ? slopeLen : width, 0.4, axis === 'x' ? width : slopeLen);
   const m = new THREE.Mesh(geo, mat(color, { tex: 'panel', repeat: [Math.max(1, slopeLen / 5), Math.max(1, width / 5)] }));
-  m.position.set((minX + maxX) / 2, (h0 + h1) / 2 - 0.2, (minZ + maxZ) / 2);
+  m.position.set((minX + maxX) / 2, (vh0 + vh1) / 2 - 0.2, (minZ + maxZ) / 2);
   const ang = Math.atan2(dh, len);
   // rising along +x tilts the box by +ang about z; rising along +z by −ang about x
   if (axis === 'x') m.rotation.z = ang; else m.rotation.x = -ang;
@@ -716,21 +722,28 @@ function buildArena(scene) {
     minZ: z - d / 2, maxZ: z + d / 2,
   });
   const riverCuts = lazyRiverRects.map(rectBounds);
+  const subwayFlatEntryCut = { minX: 30, maxX: 30.55, minZ: -4.25, maxZ: 4.25 };
   const basementBounds = { minX: 30, maxX: 79, minZ: -61, maxZ: 61 };
   const uniqueSorted = (values) => [...new Set(values.map(v => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
-  const floorXs = uniqueSorted([basementBounds.minX, basementBounds.maxX, ...riverCuts.flatMap(r => [r.minX, r.maxX])]);
-  const floorZs = uniqueSorted([basementBounds.minZ, basementBounds.maxZ, ...riverCuts.flatMap(r => [r.minZ, r.maxZ])]);
+  const floorXs = uniqueSorted([basementBounds.minX, basementBounds.maxX, subwayFlatEntryCut.maxX, ...riverCuts.flatMap(r => [r.minX, r.maxX])]);
+  const floorZs = uniqueSorted([basementBounds.minZ, basementBounds.maxZ, subwayFlatEntryCut.minZ, subwayFlatEntryCut.maxZ, ...riverCuts.flatMap(r => [r.minZ, r.maxZ])]);
   const isRiverCell = (minX, maxX, minZ, maxZ) => {
     const x = (minX + maxX) / 2;
     const z = (minZ + maxZ) / 2;
     return riverCuts.some(r => x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ);
+  };
+  const isSubwayFlatEntryCell = (minX, maxX, minZ, maxZ) => {
+    const x = (minX + maxX) / 2;
+    const z = (minZ + maxZ) / 2;
+    return x > subwayFlatEntryCut.minX && x < subwayFlatEntryCut.maxX &&
+      z > subwayFlatEntryCut.minZ && z < subwayFlatEntryCut.maxZ;
   };
   for (let zi = 0; zi < floorZs.length - 1; zi++) {
     const minZ = floorZs[zi], maxZ = floorZs[zi + 1];
     let runStart = null, runEnd = null;
     for (let xi = 0; xi < floorXs.length - 1; xi++) {
       const minX = floorXs[xi], maxX = floorXs[xi + 1];
-      const dry = !isRiverCell(minX, maxX, minZ, maxZ);
+      const dry = !isRiverCell(minX, maxX, minZ, maxZ) && !isSubwayFlatEntryCell(minX, maxX, minZ, maxZ);
       if (dry && runStart == null) runStart = minX;
       if (dry) runEnd = maxX;
       if ((!dry || xi === floorXs.length - 2) && runStart != null) {
@@ -881,9 +894,25 @@ function buildArena(scene) {
   // flooding the whole floor. It dives under the main floor and resurfaces
   // through two floor cuts reached by ramps.
   const riverRects = lazyRiverRects;
-  for (const [x, z, w, d] of riverRects) {
-    addBox(scene, world, x, -8.3, z, w, 1, d, 0x1f5f72, { tex: 'panel', repeat: [Math.max(1, Math.round(w / 6)), Math.max(1, Math.round(d / 6))] });
-    addWater(scene, world, x, -4.95, z, w, d, 3.0);
+  for (let zi = 0; zi < floorZs.length - 1; zi++) {
+    const minZ = floorZs[zi], maxZ = floorZs[zi + 1];
+    let runStart = null, runEnd = null;
+    for (let xi = 0; xi < floorXs.length - 1; xi++) {
+      const minX = floorXs[xi], maxX = floorXs[xi + 1];
+      const wet = isRiverCell(minX, maxX, minZ, maxZ);
+      if (wet && runStart == null) runStart = minX;
+      if (wet) runEnd = maxX;
+      if ((!wet || xi === floorXs.length - 2) && runStart != null) {
+        const w = runEnd - runStart;
+        const d = maxZ - minZ;
+        const x = (runStart + runEnd) / 2;
+        const z = (minZ + maxZ) / 2;
+        addBox(scene, world, x, -8.3, z, w, 1, d, 0x1f5f72,
+          { tex: 'panel', repeat: [Math.max(1, Math.round(w / 6)), Math.max(1, Math.round(d / 6))] });
+        addWater(scene, world, x, -4.95, z, w, d, 3.0);
+        runStart = null; runEnd = null;
+      }
+    }
   }
   const riverBounds = riverRects.map(rectBounds);
   const openIntervals = (min, max, cuts) => {
@@ -956,9 +985,13 @@ function buildArena(scene) {
   // Subway-style under-map tunnel. It begins at the lower east retaining-wall
   // doorway, then runs west beneath the main floor with ramp exits back up.
   addBox(scene, world, -13.75, -5.5, 0, 88.5, 1, 8, 0x2f3542, { tex: 'panel', repeat: [12, 1] });
-  addRamp(scene, world, { axis: 'x', minX: -72, maxX: -58, minZ: -4, maxZ: 4, h0: 0, h1: -5, color: 0x2f3542 });
-  addRamp(scene, world, { axis: 'z', minX: 2, maxX: 8, minZ: 4.5, maxZ: 22, h0: -5, h1: 0, color: 0x2f3542 });
-  addRamp(scene, world, { axis: 'z', minX: -35, maxX: -29, minZ: -22, maxZ: -4.5, h0: 0, h1: -5, color: 0x2f3542 });
+  addRamp(scene, world, { axis: 'x', minX: -72, maxX: -58, minZ: -4, maxZ: 4, h0: 0, h1: -5, color: 0x2f3542, visualInset: 0.25 });
+  addRamp(scene, world, { axis: 'z', minX: 2, maxX: 8, minZ: 4.5, maxZ: 22, h0: -5, h1: 0, color: 0x2f3542, visualInset: 0.25 });
+  addRamp(scene, world, { axis: 'z', minX: -35, maxX: -29, minZ: -22, maxZ: -4.5, h0: 0, h1: -5, color: 0x2f3542, visualInset: 0.25 });
+  // Raised threshold plates hide the floor/ramp lip where coplanar slab edges shimmer.
+  addBox(scene, world, -72, 0.035, 0, 0.65, 0.07, 8.4, 0x202638, { collide: false, shadow: false, tex: 'panel', repeat: [1, 1] });
+  addBox(scene, world, 5, 0.035, 22, 6.4, 0.07, 0.65, 0x202638, { collide: false, shadow: false, tex: 'panel', repeat: [1, 1] });
+  addBox(scene, world, -32, 0.035, -22, 6.4, 0.07, 0.65, 0x202638, { collide: false, shadow: false, tex: 'panel', repeat: [1, 1] });
   addBox(scene, world, -28, -2.85, 4.5, 60, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [8, 1] });
   addBox(scene, world, 18.3, -2.85, 4.5, 20.6, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [3, 1] });
   addBox(scene, world, -46.5, -2.85, -4.5, 23, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [3, 1] });
@@ -2882,7 +2915,21 @@ function buildPrism(scene) {
      walk into any beam and you run up it; gravity pulls you to the nearest
      surface so you can hop between beams and never fall out. ---- */
   const IC = 0x2a2352, iw = { tex: 'neonwall' };
-  const beam = (x, y, z, w, h, d) => addBox(scene, world, x, y, z, w, h, d, IC, iw);
+  const beamVisualDims = (w, h, d) => {
+    const shrink = 0.08;
+    if (w >= h && w >= d) return [Math.max(0.1, w - shrink), 2.86, 2.74];
+    if (h >= d) return [3.08, Math.max(0.1, h - shrink), 2.92];
+    return [2.96, 3.14, Math.max(0.1, d - shrink)];
+  };
+  const beam = (x, y, z, w, h, d) => {
+    world.colliders.push({
+      type: 'box',
+      min: V(x - w / 2, y - h / 2, z - d / 2),
+      max: V(x + w / 2, y + h / 2, z + d / 2),
+    });
+    const [vw, vh, vd] = beamVisualDims(w, h, d);
+    addBox(scene, world, x, y, z, vw, vh, vd, IC, { ...iw, collide: false });
+  };
   // central 3D cross: one beam per axis, meeting in the middle → run from any
   // face, through the centre, out to any other face
   beam(0, CY, 0, 48, 3, 3);   // X: -X wall ↔ +X wall
@@ -3164,13 +3211,14 @@ export function buildAtrium(scene) {
   sancLight.position.set(44, 3, 14);
   scene.add(sancLight);
 
-  // grass boulevard + fountain
+  // grass boulevard + fountain. End rim slabs own the corners; side slabs stop
+  // between them so their top faces never overlap and shimmer.
   addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 9] });
   addBox(scene, world, 0, 0.45, -22, 16, 0.9, 2, 0x555a74, { tex: 'panel' });   // pool rim
   addBox(scene, world, 0, 0.45, -34, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
-  addBox(scene, world, -8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });
-  addBox(scene, world, 8, 0.45, -28, 2, 0.9, 14, 0x555a74, { tex: 'panel' });
-  addWater(scene, world, 0, 0.55, -28, 14.2, 10.4);
+  addBox(scene, world, -8, 0.45, -28, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
+  addBox(scene, world, 8, 0.45, -28, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
+  addWater(scene, world, 0, 0.55, -28, 13.6, 10.0);
   addBox(scene, world, 0, 1.6, -28, 0.7, 2.6, 0.7, 0x9fd8ff, { collide: false, shadow: false, emissive: 0x9fd8ff, emissiveIntensity: 1.2 }); // jet
   const fLight = new THREE.PointLight(0x9fd8ff, 25, 24);
   fLight.position.set(0, 3, -28);

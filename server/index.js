@@ -209,6 +209,8 @@ function handleMessage(conn, msg) {
       seq: Number(msg.seq || 0),
       yaw: finite(msg.yaw, slot.yaw),
       pitch: finite(msg.pitch, slot.pitch),
+      up: sanitizeUnitVec(msg.up, slot.up || { x: 0, y: 1, z: 0 }),
+      aim: sanitizeUnitVec(msg.aim, slot.aim || { x: 0, y: 0, z: -1 }),
       firing: !!msg.firing,
       weapon: String(msg.weapon || slot.weapon || 'blaster'),
       pos: sanitizePos(msg.pos, lobby.map),
@@ -216,6 +218,8 @@ function handleMessage(conn, msg) {
       alive: msg.alive !== false,
     };
     slot.input = input;
+    slot.up = input.up;
+    slot.aim = input.aim;
     slot.lastInputAt = Date.now();
     if (lobby.hostConnId && lobby.hostConnId !== conn.id) {
       const host = connections.get(lobby.hostConnId);
@@ -262,6 +266,16 @@ function sanitizeVel(vel) {
     y: Math.max(-160, Math.min(160, finite(vel.y, 0))),
     z: Math.max(-120, Math.min(120, finite(vel.z, 0))),
   };
+}
+
+function sanitizeUnitVec(vec, fallback) {
+  if (!vec || typeof vec !== 'object') return fallback;
+  const x = Math.max(-1, Math.min(1, finite(vec.x, fallback.x)));
+  const y = Math.max(-1, Math.min(1, finite(vec.y, fallback.y)));
+  const z = Math.max(-1, Math.min(1, finite(vec.z, fallback.z)));
+  const len = Math.hypot(x, y, z);
+  if (len < 1e-6) return fallback;
+  return { x: x / len, y: y / len, z: z / len };
 }
 
 function autoJoin(conn) {
@@ -327,6 +341,8 @@ function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE) {
     lastSpawnIndex: spawn.index,
     yaw: Math.random() * Math.PI * 2,
     pitch: 0,
+    up: { x: 0, y: 1, z: 0 },
+    aim: { x: 0, y: 0, z: -1 },
     score: 0,
     kills: 0,
     deaths: 0,
@@ -350,6 +366,8 @@ function resetSlotForHuman(slot, conn, lobby) {
     lastSpawnIndex: spawn.index,
     yaw: 0,
     pitch: 0,
+    up: { x: 0, y: 1, z: 0 },
+    aim: { x: 0, y: 0, z: -1 },
     score: 0,
     kills: 0,
     deaths: 0,
@@ -648,6 +666,7 @@ function sanitizeHostSnapshot(snapshot, lobby) {
       pos,
       yaw: finite(p.yaw, 0),
       pitch: finite(p.pitch, 0),
+      up: sanitizeUnitVec(p.up, { x: 0, y: 1, z: 0 }),
       hp: Math.max(0, Math.min(100, finite(p.hp, 100))),
       alive: p.alive !== false,
       score: Math.max(0, Math.floor(finite(p.score, 0))),
@@ -700,6 +719,7 @@ function sanitizeDrop(drop, lobby) {
     id,
     kind,
     pos,
+    up: sanitizeUnitVec(drop.up, { x: 0, y: 1, z: 0 }),
     amount: Math.max(0, Math.min(5000, Math.floor(finite(drop.amount, kind === 'points' ? 250 : 0)))),
   };
   if (kind === 'drop') out.weapon = String(drop.weapon || 'blaster').slice(0, 24);
@@ -714,6 +734,7 @@ function mergeHostSnapshot(lobby, snap) {
     slot.pos = p.pos;
     slot.yaw = p.yaw;
     slot.pitch = p.pitch;
+    slot.up = p.up;
     slot.hp = p.hp;
     slot.alive = p.alive;
     slot.team = p.team;

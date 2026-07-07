@@ -170,8 +170,8 @@ export class Player {
         const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize();
         const origin = this.camera.position.clone()
           .addScaledVector(dir, 1.1)
-          .addScaledVector(right, 0.18);
-        origin.y -= 0.22;
+          .addScaledVector(right, 0.18)
+          .addScaledVector(this.camera.up, -0.22);
         fire(this, origin, dir, this.weapon);
         if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
         this.cooldown = 1 / w.rof;

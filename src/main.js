@@ -756,6 +756,7 @@ function updateRemoteHuman(ch, dt, fire) {
   const turnA = 1 - Math.exp(-24 * dt);
   ch.yaw = smoothNetworkAngle(ch.yaw || 0, input.yaw || 0, turnA);
   ch.pitch += ((input.pitch || 0) - (ch.pitch || 0)) * turnA;
+  if (input.up) ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
   if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
     ch.weapon = input.weapon;
   }
@@ -763,12 +764,15 @@ function updateRemoteHuman(ch, dt, fire) {
   if (input.firing && ch.cooldown <= 0) {
     const w = WEAPONS[ch.weapon] || WEAPONS.blaster;
     const cp = Math.cos(ch.pitch || 0);
-    const dir = new THREE.Vector3(
-      -Math.sin(ch.yaw || 0) * cp,
-      Math.sin(ch.pitch || 0),
-      -Math.cos(ch.yaw || 0) * cp,
-    ).normalize();
-    const origin = new THREE.Vector3(ch.pos.x, ch.pos.y + 1.55, ch.pos.z).addScaledVector(dir, 0.8);
+    const dir = input.aim
+      ? new THREE.Vector3(input.aim.x || 0, input.aim.y || 0, input.aim.z || -1).normalize()
+      : new THREE.Vector3(
+        -Math.sin(ch.yaw || 0) * cp,
+        Math.sin(ch.pitch || 0),
+        -Math.cos(ch.yaw || 0) * cp,
+      ).normalize();
+    const up = ch.up || new THREE.Vector3(0, 1, 0);
+    const origin = ch.pos.clone().addScaledVector(up, 1.55).addScaledVector(dir, 0.8);
     fire(ch, origin, dir, ch.weapon || 'blaster');
     if (ch.weapon !== 'blaster') ch.ammo[ch.weapon]--;
     ch.cooldown = 1 / w.rof;
@@ -868,6 +872,7 @@ function ensureRemoteSlot(state) {
     human: state.human,
     pos: new THREE.Vector3(),
     targetPos: new THREE.Vector3(),
+    up: new THREE.Vector3(0, 1, 0),
     mesh: group,
     team: state.team || state.id,
     radius: 0.45,
@@ -945,6 +950,7 @@ function applyMultiplayerSnapshot(snap) {
     remote.deaths = state.deaths || 0;
     remote.weapon = state.weapon || 'blaster';
     remote.yaw = state.yaw || 0;
+    if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
     setNameTag(remote, remote.name, remote.color);
     remote.targetPos.set(state.pos.x, state.pos.y, state.pos.z);
     if (remote.pos.lengthSq() === 0) remote.pos.copy(remote.targetPos);
@@ -1001,12 +1007,14 @@ function reconcileMultiplayerDrops(drops) {
       amount: drop.amount,
       weapon: drop.weapon,
       pos: new THREE.Vector3(drop.pos.x, drop.pos.y, drop.pos.z),
+      up: drop.up ? new THREE.Vector3(drop.up.x || 0, drop.up.y || 1, drop.up.z || 0).normalize() : new THREE.Vector3(0, 1, 0),
     };
     const existing = G.pickups.items.find(item => item.mpDropId === id);
     if (existing) {
       existing.def.pos.copy(def.pos);
       existing.def.amount = def.amount;
       existing.def.weapon = def.weapon;
+      existing.def.up = def.up;
       existing.hostMirror = true;
       existing.active = true;
       existing.mesh.visible = true;
@@ -1759,7 +1767,13 @@ function dropPoints(victim) {
   const greater = G.characters.filter(c => c.score > victim.score).length;
   const amount = victim.score === 0 ? 250
     : greater === 0 ? 1000 : greater === 1 ? 750 : greater === 2 ? 500 : 250;
-  G.pickups.addDrop({ id: nextDropId('points'), kind: 'points', amount, pos: victim.pos.clone() });
+  G.pickups.addDrop({
+    id: nextDropId('points'),
+    kind: 'points',
+    amount,
+    pos: victim.pos.clone(),
+    up: (victim.up || new THREE.Vector3(0, 1, 0)).clone(),
+  });
 }
 
 // The victim's active weapon (with its remaining ammo) falls where they died.
@@ -1769,6 +1783,7 @@ function dropWeapon(ch) {
   G.pickups.addDrop({
     id: nextDropId('drop'), kind: 'drop', weapon: ch.weapon, amount: ch.ammo[ch.weapon],
     pos: ch.pos.clone(),
+    up: (ch.up || new THREE.Vector3(0, 1, 0)).clone(),
   });
 }
 
@@ -1941,6 +1956,27 @@ quitBtn.addEventListener('click', (e) => {
   endMatch(true);                    // back to the atrium
 });
 
+function popOutOfMultiplayerPortal() {
+  clearTimeout(multiplayerVotingTimer);
+  openingMultiplayer = false;
+  multiplayer.closeOverlay?.();
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(quitBtn, 'display', 'none');
+  setStyle(volumeControl, 'display', 'none');
+  setText(document.getElementById('catchtitle'), 'CLICK TO PLAY');
+  if (G?.multiplayer || G?.multiplayerHost) {
+    endMatch(true);
+    document.exitPointerLock?.();
+    return;
+  }
+  if (G?.atrium && G.player) {
+    G.player.pos.set(0, 0.1, 18);
+    G.player.vel.set(0, 0, 0);
+    G.player.update(0, () => {});
+    hud.message('LEFT MULTIPLAYER', '#ffd23c');
+  }
+}
+
 document.addEventListener('mousemove', (e) => {
   if (G && document.pointerLockElement === canvas) {
     G.player.onMouseMove(e.movementX, e.movementY);
@@ -2004,6 +2040,10 @@ multiplayer.addEventListener('joined', (e) => {
     hud.message('MULTIPLAYER LOBBY REJOINED', '#ffd23c');
     endMatch(true);
   }
+});
+
+multiplayer.addEventListener('exit', () => {
+  popOutOfMultiplayerPortal();
 });
 
 multiplayer.addEventListener('phase', (e) => {
@@ -2279,6 +2319,7 @@ function serializeCharacter(ch, i) {
     pos: { x: ch.pos.x, y: ch.pos.y, z: ch.pos.z },
     yaw: ch.yaw ?? ch.aimYaw ?? 0,
     pitch: ch.pitch ?? 0,
+    up: ch.up ? { x: ch.up.x, y: ch.up.y, z: ch.up.z } : { x: 0, y: 1, z: 0 },
     hp: ch.hp ?? 100,
     alive: ch.alive !== false,
     score: ch.score || 0,
@@ -2299,6 +2340,7 @@ function serializeDrops() {
       weapon: item.def.weapon,
       amount: item.def.amount || 0,
       pos: { x: item.def.pos.x, y: item.def.pos.y, z: item.def.pos.z },
+      up: item.def.up ? { x: item.def.up.x, y: item.def.up.y, z: item.def.up.z } : { x: 0, y: 1, z: 0 },
     }));
 }
 

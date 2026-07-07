@@ -282,15 +282,48 @@ export function cardinal(v) {
   return new THREE.Vector3(0, 0, Math.sign(v.z));
 }
 
+export function shellInnerNormal(box, world, target = new THREE.Vector3()) {
+  if (!box?.shell || box.type !== 'box' || !world?.cube) return null;
+  target.set(
+    world.cube.cx - (box.min.x + box.max.x) * 0.5,
+    world.cube.cy - (box.min.y + box.max.y) * 0.5,
+    world.cube.cz - (box.min.z + box.max.z) * 0.5);
+  const ax = Math.abs(target.x), ay = Math.abs(target.y), az = Math.abs(target.z);
+  if (ax < 1e-6 && ay < 1e-6 && az < 1e-6) return null;
+  if (ax >= ay && ax >= az) return target.set(Math.sign(target.x), 0, 0);
+  if (ay >= az) return target.set(0, Math.sign(target.y), 0);
+  return target.set(0, 0, Math.sign(target.z));
+}
+
+function pointHitsBox(p, radius, box, world) {
+  if (!box.shell) {
+    return p.x > box.min.x - radius && p.x < box.max.x + radius &&
+      p.y > box.min.y - radius && p.y < box.max.y + radius &&
+      p.z > box.min.z - radius && p.z < box.max.z + radius;
+  }
+
+  const n = shellInnerNormal(box, world, _v);
+  if (!n) return false;
+  const axis = Math.abs(n.x) > 0.5 ? 'x' : Math.abs(n.y) > 0.5 ? 'y' : 'z';
+  const sign = n[axis];
+  const plane = sign > 0 ? box.max[axis] : box.min[axis];
+  const signedDist = (p[axis] - plane) * sign;
+  const shellDepth = box.max[axis] - box.min[axis];
+  if (signedDist >= radius || signedDist <= -shellDepth - radius) return false;
+  for (const other of ['x', 'y', 'z']) {
+    if (other === axis) continue;
+    if (p[other] < box.min[other] - radius || p[other] > box.max[other] + radius) return false;
+  }
+  return true;
+}
+
 // Point-with-radius vs world, for projectiles.
 // skipRamps: LOS checks ignore ramp slabs (they're thin; treating them as
 // 2.5m-thick blockers falsely severs waypoint links along slopes).
 export function pointHitsWorld(p, radius, world, skipRamps = false) {
   for (const c of world.colliders) {
     if (c.type === 'box') {
-      if (p.x > c.min.x - radius && p.x < c.max.x + radius &&
-          p.y > c.min.y - radius && p.y < c.max.y + radius &&
-          p.z > c.min.z - radius && p.z < c.max.z + radius) return true;
+      if (pointHitsBox(p, radius, c, world)) return true;
     } else if (c.type === 'sphere') {
       if (p.distanceToSquared(c.center) < (c.radius + radius) ** 2) return true;
     }
