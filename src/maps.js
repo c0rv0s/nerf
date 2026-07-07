@@ -625,8 +625,17 @@ function buildArena(scene) {
   // Floors: main level (west + atrium), sunken east basement (top −5)
   // Main floor is split around inset lava basins.
   for (const [x, z, w, d] of [
-    [-47.75, 0, 62.5, 122],
-    [0.25, 0, 15.5, 122],
+    // West floor, split around the subway ramp openings.
+    [-47.75, 32.75, 62.5, 56.5],
+    [-47.75, -41.5, 62.5, 39],
+    [-57, -13.25, 44, 17.5],
+    [-22.75, -13.25, 12.5, 17.5],
+    [-75.5, 0, 7, 9],
+    [-37.25, 0, 41.5, 9],
+    // Atrium center floor, split around the north subway ramp opening.
+    [0.25, -28.25, 15.5, 65.5],
+    [0.25, 41.5, 15.5, 39],
+    [-2.75, 13.25, 9.5, 17.5],
     [-12, -57.75, 9, 6.5],
     [-12, -36.25, 9, 18.5],
     [-12, 0, 9, 54],
@@ -651,35 +660,60 @@ function buildArena(scene) {
   addBox(scene, world, 12, -0.5, -17, 8, 1, 46, 0x2e6da0, { tex: 'checker', repeat: [1, 6] });
   addBox(scene, world, 12, -0.5, 10, 8, 1, 8, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
   addBox(scene, world, 12, -0.5, 37.5, 8, 1, 47, 0x2e6da0, { tex: 'checker', repeat: [1, 6] });
-  // East basement floor is paneled around the lazy-river cutouts.
-  for (const [x, z, w, d] of [
-    [36.5, 0, 13, 122], [78, 0, 2, 122],
-    [60, -55.5, 34, 11], [50, -43, 12, 10], [68, -39, 24, 18], [58, -16, 38, 8],
-    [55.5, -4, 23, 17], [42.5, 30, 25, 62], [73.5, 27, 11, 68],
-  ]) {
-    addBox(scene, world, x, -5.5, z, w, 1, d, 0x274f74, { tex: 'checker', repeat: [Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(d / 8))] });
+  // Backfill tiny floor slivers around lava rims just below the main floor.
+  // This avoids visible void gaps without reintroducing coplanar z-fighting.
+  for (const [x, z] of lavaRoomPits) {
+    addBox(scene, world, x - 5.05, -0.515, z, 0.8, 0.97, 10.2, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
+    addBox(scene, world, x + 5.05, -0.515, z, 0.8, 0.97, 10.2, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
+    addBox(scene, world, x, -0.515, z - 5.05, 10.2, 0.97, 0.8, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
+    addBox(scene, world, x, -0.515, z + 5.05, 10.2, 0.97, 0.8, 0x2e6da0, { tex: 'checker', repeat: [1, 1] });
   }
-  // Extra seam-fill around the lazy-river ramp landings. These close the thin
-  // basement-floor strips that were exposing the void beside the water cuts.
-  for (const [x, z, w, d] of [
-    [60.5, -49, 33, 2],
-    [61.5, 51.5, 13, 19],
-    [43.5, -34, 1, 8],
-    [45.5, -25, 5, 9],
-    [43.5, -6.5, 1, 11],
-    [55.5, 29, 1, 26],
-    [43.5, -44, 1, 12],
-    [56.5, 14.75, 3, 2.5],
-    [67, 14.75, 2, 2.5],
-    [76.5, -26, 1, 7],
-  ]) {
-    addBox(scene, world, x, -5.5, z, w, 1, d, 0x274f74, { tex: 'checker', repeat: [Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(d / 8))] });
+  const lazyRiverRects = [
+    [50, -33.5, 12, 9],
+    [62, -25, 28, 9],
+    [72, -8, 10, 28],
+    [62, 9, 28, 9],
+    [62, 16, 8, 6],
+    [62, 29, 12, 26],
+  ];
+  const rectBounds = ([x, z, w, d]) => ({
+    minX: x - w / 2, maxX: x + w / 2,
+    minZ: z - d / 2, maxZ: z + d / 2,
+  });
+  const riverCuts = lazyRiverRects.map(rectBounds);
+  const basementBounds = { minX: 30, maxX: 79, minZ: -61, maxZ: 61 };
+  const uniqueSorted = (values) => [...new Set(values.map(v => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
+  const floorXs = uniqueSorted([basementBounds.minX, basementBounds.maxX, ...riverCuts.flatMap(r => [r.minX, r.maxX])]);
+  const floorZs = uniqueSorted([basementBounds.minZ, basementBounds.maxZ, ...riverCuts.flatMap(r => [r.minZ, r.maxZ])]);
+  const isRiverCell = (minX, maxX, minZ, maxZ) => {
+    const x = (minX + maxX) / 2;
+    const z = (minZ + maxZ) / 2;
+    return riverCuts.some(r => x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ);
+  };
+  for (let zi = 0; zi < floorZs.length - 1; zi++) {
+    const minZ = floorZs[zi], maxZ = floorZs[zi + 1];
+    let runStart = null, runEnd = null;
+    for (let xi = 0; xi < floorXs.length - 1; xi++) {
+      const minX = floorXs[xi], maxX = floorXs[xi + 1];
+      const dry = !isRiverCell(minX, maxX, minZ, maxZ);
+      if (dry && runStart == null) runStart = minX;
+      if (dry) runEnd = maxX;
+      if ((!dry || xi === floorXs.length - 2) && runStart != null) {
+        addBox(scene, world,
+          (runStart + runEnd) / 2, -5.5, (minZ + maxZ) / 2,
+          runEnd - runStart, 1, maxZ - minZ, 0x274f74,
+          { tex: 'checker', repeat: [Math.max(1, Math.round((runEnd - runStart) / 8)), Math.max(1, Math.round((maxZ - minZ) / 8))] });
+        runStart = null; runEnd = null;
+      }
+    }
   }
   // Last-resort underside deck: intentional pools sit above this, but
   // any accidental floor seam now lands on geometry instead of out-of-map void.
   addBox(scene, world, 55, -9.25, 0, 50, 0.5, 118, 0x102033, { tex: 'panel', repeat: [6, 14] });
   // Retaining wall top sits 0.1 below floor level; flush tops z-fight.
-  addBox(scene, world, 29.6, -3.05, 0, 1.4, 5.9, 122, 0x8a5230, { tex: 'panel' });
+  // Split at z 0 to make the under-map service-tunnel doorway.
+  addBox(scene, world, 29.6, -3.05, -32.5, 1.4, 5.9, 57, 0x8a5230, { tex: 'panel' });
+  addBox(scene, world, 29.6, -3.05, 32.5, 1.4, 5.9, 57, 0x8a5230, { tex: 'panel' });
 
   // Outer walls (drop below the basement floor)
   for (const [x, z, w, d] of [[0, -59, 162, 4], [0, 59, 162, 4], [-79, 0, 4, 122], [79, 0, 4, 122]]) {
@@ -700,7 +734,8 @@ function buildArena(scene) {
   addDecal(scene, 'poster1', -76.9, 13.5, 30, 9, Math.PI / 2);
   addDecal(scene, 'target', 76.9, 13.5, -30, 9, -Math.PI / 2);
   // ground variety: an arcade-carpet lounge in the west wing
-  addBox(scene, world, -52, 0.031, -30, 40, 0.06, 40, 0x9088b0, { tex: 'arcade', repeat: [8, 8] });
+  addBox(scene, world, -55, 0.031, -30, 34, 0.06, 40, 0x9088b0, { tex: 'arcade', repeat: [7, 8] });
+  addBox(scene, world, -35, 0.031, -38, 6, 0.06, 24, 0x9088b0, { tex: 'arcade', repeat: [1, 5] });
   addBox(scene, world, -52, 0.031, 30, 36, 0.06, 36, 0x7a94b0, { tex: 'grass', repeat: [7, 7] });
   // floating platform over the east basement + pad up
   addBox(scene, world, 54, 6.7, 30, 10, 0.6, 8, 0x7a4fc0, { tex: 'panel' });
@@ -801,31 +836,21 @@ function buildArena(scene) {
   addRamp(scene, world, { axis: 'x', minX: 30, maxX: 44, minZ: 22, maxZ: 30, h0: 0, h1: -5, color: 0x9a8050 });
   addBox(scene, world, 50, -0.4, 0, 40, 0.8, 6, 0xc8461e, { tex: 'panel' });        // bridge (ends at the ledge — overlapping it z-fights)
   addBox(scene, world, 73.5, -0.4, 0, 7, 0.8, 28, 0x5a70b0, { tex: 'panel' });      // east ledge
-  // basement lane walls (−5..0)
+  // basement lane walls (-5..0)
   addBox(scene, world, 44, -2.5, -14, 12, 5, 1.5, 0x8a5230, { tex: 'panel' });
   addBox(scene, world, 64, -2.5, -14, 12, 5, 1.5, 0x8a5230, { tex: 'panel' });
   addBox(scene, world, 48, -2.5, 14, 20, 5, 1.5, 0x8a5230, { tex: 'panel' });
   addBox(scene, world, 68, -2.5, 14, 4, 5, 1.5, 0x8a5230, { tex: 'panel' });
-  crate(50, -5, -36); crate(50, -5, -33.5); crate(66, -5, 33);
+  crate(62, -5, -42); crate(65, -5, -42); crate(72, -5, 33);
   // Lazy river: swimmable water snakes through the east basement instead of
   // flooding the whole floor. It dives under the main floor and resurfaces
   // through two floor cuts reached by ramps.
-  const riverRects = [
-    [50, -33.5, 12, 9],
-    [62, -25, 28, 9],
-    [72, -8, 10, 28],
-    [62, 9, 28, 9],
-    [62, 16, 8, 6],
-    [62, 29, 12, 26],
-  ];
+  const riverRects = lazyRiverRects;
   for (const [x, z, w, d] of riverRects) {
     addBox(scene, world, x, -8.3, z, w, 1, d, 0x1f5f72, { tex: 'panel', repeat: [Math.max(1, Math.round(w / 6)), Math.max(1, Math.round(d / 6))] });
     addWater(scene, world, x, -4.95, z, w, d, 3.0);
   }
-  const riverBounds = riverRects.map(([x, z, w, d]) => ({
-    minX: x - w / 2, maxX: x + w / 2,
-    minZ: z - d / 2, maxZ: z + d / 2,
-  }));
+  const riverBounds = riverRects.map(rectBounds);
   const openIntervals = (min, max, cuts) => {
     const clipped = cuts
       .map(([a, b]) => [Math.max(min, a), Math.min(max, b)])
@@ -867,7 +892,7 @@ function buildArena(scene) {
   }
   addBox(scene, world, 60, -0.95, 0, 22, 0.7, 28, 0x3a3358, { tex: 'panel' });
   addRamp(scene, world, { axis: 'z', minX: 47, maxX: 53, minZ: -51, maxZ: -39, h0: 0, h1: -5, color: 0x3f8f8f });
-  addRamp(scene, world, { axis: 'z', minX: 59, maxX: 65, minZ: 39, maxZ: 51, h0: -5, h1: 0, color: 0x3f8f8f });
+  addRamp(scene, world, { axis: 'z', minX: 59, maxX: 65, minZ: 42, maxZ: 54, h0: -5, h1: 0, color: 0x3f8f8f });
   const addRiverTrim = (x, z, w, d) => addBox(scene, world, x, -4.72, z, w, 0.32, d, 0x30e0ff,
     { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.0 });
   for (let i = 0; i < riverBounds.length; i++) {
@@ -892,6 +917,36 @@ function buildArena(scene) {
         addRiverTrim((a + b) / 2, edgeZ, b - a, 0.32);
       }
     }
+  }
+  // Subway-style under-map tunnel. It begins at the lower east retaining-wall
+  // doorway, then runs west beneath the main floor with ramp exits back up.
+  addBox(scene, world, -13.75, -5.5, 0, 88.5, 1, 8, 0x2f3542, { tex: 'panel', repeat: [12, 1] });
+  addRamp(scene, world, { axis: 'x', minX: -72, maxX: -58, minZ: -4, maxZ: 4, h0: 0, h1: -5, color: 0x2f3542 });
+  addRamp(scene, world, { axis: 'z', minX: 2, maxX: 8, minZ: 4.5, maxZ: 22, h0: -5, h1: 0, color: 0x2f3542 });
+  addRamp(scene, world, { axis: 'z', minX: -35, maxX: -29, minZ: -22, maxZ: -4.5, h0: 0, h1: -5, color: 0x2f3542 });
+  addBox(scene, world, -28, -2.85, 4.5, 60, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [8, 1] });
+  addBox(scene, world, 18.3, -2.85, 4.5, 20.6, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [3, 1] });
+  addBox(scene, world, -46.5, -2.85, -4.5, 23, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [3, 1] });
+  addBox(scene, world, -0.2, -2.85, -4.5, 57.6, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [8, 1] });
+  addBox(scene, world, -65, -2.85, 4.5, 14, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [2, 1] });
+  addBox(scene, world, -65, -2.85, -4.5, 14, 4.3, 0.8, 0x262b38, { tex: 'panel', repeat: [2, 1] });
+  addBox(scene, world, 1.5, -2.85, 13.25, 0.7, 4.3, 17.5, 0x262b38, { tex: 'panel', repeat: [1, 2] });
+  addBox(scene, world, 8.5, -2.85, 13.25, 0.7, 4.3, 17.5, 0x262b38, { tex: 'panel', repeat: [1, 2] });
+  addBox(scene, world, -35.5, -2.85, -13.25, 0.7, 4.3, 17.5, 0x262b38, { tex: 'panel', repeat: [1, 2] });
+  addBox(scene, world, -28.5, -2.85, -13.25, 0.7, 4.3, 17.5, 0x262b38, { tex: 'panel', repeat: [1, 2] });
+  const tunnelLight = new THREE.PointLight(0x36e0ff, 24, 36);
+  tunnelLight.position.set(-12, -3.2, 0);
+  scene.add(tunnelLight);
+  for (const [x, z, w, d] of [
+    [-13.75, 3.85, 88.5, 0.25],
+    [-13.75, -3.85, 88.5, 0.25],
+    [-65, 3.85, 14, 0.25],
+    [-65, -3.85, 14, 0.25],
+    [5, 21.5, 6, 0.25],
+    [-32, -21.5, 6, 0.25],
+  ]) {
+    addBox(scene, world, x, -4.72, z, w, 0.28, d, 0x30e0ff,
+      { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.0 });
   }
   for (const [x, z] of lavaRoomPits) {
     addLava(scene, world, x, z, 9, 9, -1.1);
@@ -922,6 +977,8 @@ function buildArena(scene) {
   // Pickups
   pk(world, 'shield', -4, 4.2, 0);                       // atrium base tier
   pk(world, 'speed', 20, 0.2, -20);                      // crate maze lane
+  pk(world, 'speed', 26, -4.8, 0);                       // tunnel east entrance
+  pk(world, 'speed', -64, -2.2, 0);                      // tunnel far exit ramp
   pk(world, 'djump', -52, 0.2, 30);                      // west-wing turf
   pk(world, 'gold', 2, 15, -7);                          // floating top platform
   pk(world, 'silver', -62, 0.2, -28);                    // deep in the crate maze
@@ -986,6 +1043,9 @@ function buildArena(scene) {
     // east doors + bridge + ledge
     [30, 0, -26], [30, 0, 26], [30, 0, 0],
     [40, 0, 0], [55, 0, 0], [66, 0, 0], [73, 0, 8], [73, 0, -8],
+    // under-map subway tunnel: lower doorway, buried run, ramp exits
+    [32, -5, 0], [24, -5, 0], [5, -5, 0], [-14, -5, 0], [-32, -5, 0], [-52, -5, 0],
+    [-62, -3, 0], [-70, 0, 0], [5, -2.5, 12], [5, 0, 22], [-32, -2.5, -12], [-32, 0, -22],
     // basement
     [37, -2.5, -26], [37, -2.5, 26],
     [50, -5, -45], [50, -5, -36], [62, -5, -25], [72, -5, -14], [72, -5, -4],
@@ -1003,6 +1063,9 @@ function buildArena(scene) {
     [-21.5, 5, 40, -15, 0, 42, true],     // ledge → north hall floor
     [27, 0, 42, 34, -5, 42, true],        // hall drop-doors → basement
     [27, 0, -42, 34, -5, -42, true],
+    [5, -5, 0, 5, 0, 22],                 // subway-tunnel side ramp
+    [-32, -5, 0, -32, 0, -22],
+    [-52, -5, 0, -70, 0, 0],              // far ramp out
   );
   mergeStatic(scene, world);
   return world;
