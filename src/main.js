@@ -435,7 +435,6 @@ function startMultiplayerMatch(mapDef) {
     mpSendT: 0,
     mpSyncedSelf: false,
     mpSawSelfSnapshot: false,
-    mpLocalRespawnedAt: 0,
   };
 
   respawnCharacter(player, true);
@@ -735,16 +734,9 @@ function applyMultiplayerSnapshot(snap) {
     seen.add(state.id);
     if (state.id === multiplayer.slotId) {
       const statePos = new THREE.Vector3(state.pos.x, state.pos.y, state.pos.z);
-      const recentLocalRespawn = G.mpLocalRespawnedAt && performance.now() - G.mpLocalRespawnedAt < 1200;
       if (state.alive && !G.mpSyncedSelf) {
-        if (multiplayerPositionIsVoid(statePos, G.player)) {
-          if (recentLocalRespawn && G.player.alive) continue;
-          beginMultiplayerLocalRespawn();
-          continue;
-        }
         G.player.spawn(statePos);
         G.mpSyncedSelf = true;
-        G.mpLocalRespawnedAt = 0;
       }
       G.player.name = state.name;
       G.player.color = state.color || G.player.color;
@@ -758,27 +750,16 @@ function applyMultiplayerSnapshot(snap) {
       G.mpSawSelfSnapshot = true;
       G.player.kills = state.kills || 0;
       G.player.deaths = state.deaths || 0;
-      const staleDeadSnapshot = !state.alive && G.player.alive && recentLocalRespawn;
-      const staleVoidSnapshot = state.alive && G.player.alive && recentLocalRespawn &&
-        multiplayerPositionIsVoid(statePos, G.player);
-      if (staleDeadSnapshot || staleVoidSnapshot) continue;
       if (state.hp < G.player.hp) hud.damageFlash();
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
-        if (recentLocalRespawn) continue;
         G.player.alive = false;
         G.mpSyncedSelf = false;
         hud.showRespawn(true, state.respawn || RESPAWN_TIME);
         sfx('death');
       } else if (state.alive && !G.player.alive) {
-        if (multiplayerPositionIsVoid(statePos, G.player)) {
-          if (recentLocalRespawn) continue;
-          hud.showRespawn(true, RESPAWN_TIME);
-          continue;
-        }
         G.player.spawn(statePos);
         G.mpSyncedSelf = true;
-        G.mpLocalRespawnedAt = 0;
       }
       if (state.alive) hud.showRespawn(false);
       if (!state.alive) hud.showRespawn(true, state.respawn || 0);
@@ -2061,7 +2042,6 @@ function stepMultiplayer(dt) {
   G.world.update?.(dt, G.characters);
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);
-  handleMultiplayerLocalVoid(dt);
   G.projectiles.update(dt, G.characters);
   G.pickups.update(dt, [G.player]);
   G.fxPool.update(dt);
@@ -2070,7 +2050,7 @@ function stepMultiplayer(dt) {
   syncMultiplayerNameTags();
   updateMultiplayerTracers(dt);
   G.mpSendT -= dt;
-  if (G.mpSendT <= 0) {
+  if (G.mpSendT <= 0 && G.mpSyncedSelf && G.player.alive) {
     G.mpSendT = 1 / 30;
     multiplayer.sendInput(G.player);
   }
@@ -2078,49 +2058,6 @@ function stepMultiplayer(dt) {
     player: G.player, mode: 'ffa', scores: G.scores,
     characters: G.characters, timeLeft: G.timeLeft, showBoard: G.showBoard,
   });
-}
-
-function multiplayerPositionIsVoid(pos, ch) {
-  const kc = G.world.killCenter, kr = G.world.killRadius;
-  const drifted = kc && pos.distanceToSquared(kc) > kr * kr;
-  if (pos.y < G.world.killY || pos.y > (G.world.killYTop ?? Infinity) || drifted) return true;
-  return pos.y < G.world.killY + 50 && !spawnHasSupport(pos, ch);
-}
-
-function beginMultiplayerLocalRespawn() {
-  if (!G?.multiplayer) return;
-  const existingTimer = G.respawnTimers.get(G.player);
-  G.player.hp = 0;
-  G.player.alive = false;
-  G.mpSyncedSelf = false;
-  if (existingTimer == null) {
-    hud.damageFlash();
-    hud.showRespawn(true, RESPAWN_TIME);
-    sfx('death');
-    G.respawnTimers.set(G.player, RESPAWN_TIME);
-  } else {
-    hud.showRespawn(true, existingTimer);
-  }
-}
-
-function handleMultiplayerLocalVoid(dt) {
-  if (G.player.alive && multiplayerPositionIsVoid(G.player.pos, G.player)) {
-    beginMultiplayerLocalRespawn();
-  }
-  const timer = G.respawnTimers.get(G.player);
-  if (timer == null) return;
-  const left = timer - dt;
-  if (left <= 0) {
-    G.respawnTimers.delete(G.player);
-    respawnCharacter(G.player);
-    G.mpSyncedSelf = true;
-    G.mpLocalRespawnedAt = performance.now();
-    multiplayer.sendInput(G.player);
-    hud.showRespawn(false);
-  } else {
-    G.respawnTimers.set(G.player, left);
-    hud.showRespawn(true, left);
-  }
 }
 
 // Debug handles: inspect state / fast-forward the sim headlessly
