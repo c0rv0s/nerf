@@ -192,7 +192,7 @@ function cameraInFoliage() {
 function updateFoliageFx(dt, forceClear = false) {
   if (!G) return;
   const target = !forceClear && cameraInFoliage() ? 1 : 0;
-  G.foliageMix = forceClear ? 0 : THREE.MathUtils.damp(G.foliageMix || 0, target, 9, dt);
+  G.foliageMix = forceClear ? 0 : THREE.MathUtils.damp(G.foliageMix || 0, target, 18, dt);
   const mix = G.foliageMix;
   if (foliageFx) foliageFx.style.opacity = mix > 0.01 ? String(0.72 * mix) : '0';
 }

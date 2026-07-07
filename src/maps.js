@@ -1666,19 +1666,15 @@ function buildCity(scene) {
   // SUBWAY: stairs at (-30,-7) and (32,7) down into an L-shaped tunnel
   addRamp(scene, world, { axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2, h0: -6, h1: 0, color: 0x2f3542 });
   addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: 2, maxZ: 12, h0: -6, h1: 0, color: 0x2f3542 });
-  // Stairwell guard walls: keep the ramp mouths open, but seal the side voids
-  // so players cannot fall out of the map beside the subway entrances.
-  addBox(scene, world, -34.5, -3.35, -7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
-  addBox(scene, world, -25.5, -3.35, -7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
-  addBox(scene, world, 27.5, -3.35, 7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
-  addBox(scene, world, 36.5, -3.35, 7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 1, -6.5, -7, 70, 1, 10, 0x2f3542, { tex: 'panel', repeat: [9, 2] });   // tunnel floor E-W
-  addBox(scene, world, 1, -3.5, -12.5, 70, 5, 1, 0x262b38, { tex: 'panel' });                 // tunnel walls
-  addBox(scene, world, -4.75, -3.5, -1.5, 58.5, 5, 1, 0x262b38, { tex: 'panel' });
   addBox(scene, world, 32, -6.5, 5, 8, 1, 14, 0x2f3542, { tex: 'panel', repeat: [1, 2] });    // connector leg
-  addBox(scene, world, 27.5, -3.5, 7, 1, 5, 10, 0x262b38, { tex: 'panel' });
-  addBox(scene, world, 36.5, -3.5, 5, 1, 5, 14, 0x262b38, { tex: 'panel' });
-  addBox(scene, world, 32, -3.5, 12.5, 10, 5, 1, 0x262b38, { tex: 'panel' });
+  // Subway walls: only the side walls. Leave both ramp mouths and the L-turn open.
+  addBox(scene, world, 1, -3.5, -12.5, 70, 5, 1, 0x262b38, { tex: 'panel' });       // north wall, E-W tunnel
+  addBox(scene, world, 1.25, -3.5, -1.5, 53.5, 5, 1, 0x262b38, { tex: 'panel' });   // south wall, stops before west ramp exit
+  addBox(scene, world, -34.5, -3.35, -7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' }); // west ramp side
+  addBox(scene, world, -25.5, -3.35, -7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });
+  addBox(scene, world, 27.5, -3.35, 7, 1, 6.3, 10.5, 0x262b38, { tex: 'panel' });   // east ramp side
+  addBox(scene, world, 36.5, -3.35, 5, 1, 6.3, 14.5, 0x262b38, { tex: 'panel' });
   const tubeLight = new THREE.PointLight(0xffe040, 30, 34);
   tubeLight.position.set(0, -3, -7);
   scene.add(tubeLight);
@@ -1767,7 +1763,7 @@ function buildCity(scene) {
   // Extra ground-level pathway texture so the city reads less like open asphalt.
   for (const [x, z, w, d] of [
     [-78, 0, 8, 128], [78, 0, 8, 128], [-20, 58, 52, 6], [52, 58, 54, 6],
-    [-20, -58, 52, 6], [52, -58, 54, 6], [-58, 0, 5, 54], [32, 0, 5, 54],
+    [-20, -58, 52, 6], [52, -58, 54, 6], [-58, 0, 5, 54],
   ]) {
     addBox(scene, world, x, 0.035, z, w, 0.06, d, 0x6f7888, { collide: false, tex: 'checker', repeat: [Math.max(1, Math.round(w / 4)), Math.max(1, Math.round(d / 4))] });
   }

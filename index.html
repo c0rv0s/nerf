@@ -50,16 +50,26 @@
     to { transform:translate3d(1.5%, 1%, 0) scale(1.05); }
   }
   #foliageFx { position:fixed; inset:0; pointer-events:none; z-index:2; opacity:0;
-    transition:opacity .16s; will-change:opacity;
+    transition:opacity .08s; will-change:opacity;
     background:
-      radial-gradient(ellipse at center, rgba(160,255,95,.20), rgba(36,130,40,.34) 66%, rgba(8,55,18,.52)),
-      repeating-linear-gradient(35deg, rgba(206,255,128,.18) 0 2px, transparent 2px 17px),
-      repeating-linear-gradient(128deg, transparent 0 14px, rgba(30,95,22,.18) 14px 19px); }
-  #foliageFx::after { content:""; position:absolute; inset:-5%;
-    background:radial-gradient(ellipse at 22% 28%, rgba(225,255,150,.28), transparent 12%),
-      radial-gradient(ellipse at 70% 18%, rgba(140,230,90,.24), transparent 13%),
-      radial-gradient(ellipse at 48% 74%, rgba(80,180,70,.22), transparent 16%),
-      repeating-radial-gradient(ellipse at 50% 50%, transparent 0 18px, rgba(170,255,120,.10) 19px 22px); }
+      radial-gradient(ellipse at center, rgba(150,255,105,.10), rgba(45,135,42,.22) 62%, rgba(7,48,16,.45)),
+      linear-gradient(rgba(44,140,44,.18), rgba(44,140,44,.18)); }
+  #foliageFx::before { content:""; position:absolute; inset:0;
+    background:
+      radial-gradient(ellipse at -2% 10%, rgba(176,255,118,.45) 0 4%, transparent 8%),
+      radial-gradient(ellipse at 4% 28%, rgba(80,190,65,.42) 0 5%, transparent 9%),
+      radial-gradient(ellipse at 1% 57%, rgba(160,245,100,.38) 0 4%, transparent 8%),
+      radial-gradient(ellipse at 6% 82%, rgba(70,175,55,.42) 0 5%, transparent 10%),
+      radial-gradient(ellipse at 102% 16%, rgba(150,245,95,.42) 0 5%, transparent 9%),
+      radial-gradient(ellipse at 96% 38%, rgba(65,175,55,.42) 0 4%, transparent 8%),
+      radial-gradient(ellipse at 99% 68%, rgba(165,255,105,.38) 0 5%, transparent 10%),
+      radial-gradient(ellipse at 94% 88%, rgba(70,180,58,.40) 0 5%, transparent 9%); }
+  #foliageFx::after { content:""; position:absolute; inset:0;
+    background:
+      linear-gradient(101deg, transparent 0 5%, rgba(34,118,36,.42) 5.5% 6.3%, transparent 6.8% 100%),
+      linear-gradient(84deg, transparent 0 11%, rgba(70,170,48,.30) 11.4% 12%, transparent 12.6% 100%),
+      linear-gradient(77deg, transparent 0 91%, rgba(32,112,35,.44) 91.4% 92.2%, transparent 92.8% 100%),
+      linear-gradient(96deg, transparent 0 96%, rgba(86,190,55,.30) 96.2% 96.8%, transparent 97.4% 100%); }
   @keyframes foliageSway {
     from { background-position:0 0, -16px -8px; }
     to { background-position:18px 10px, 26px 18px; }
