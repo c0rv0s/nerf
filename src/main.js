@@ -9,7 +9,7 @@ import { MAPS, buildAtrium, texturesReady } from './maps.js';
 import { buildWaypointGraph, pick, rand, rampSurfaceY } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
-import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
+import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, nextLoadedWeaponAfter } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
 import { sfx, setListener, setMasterVolume } from './audio.js';
@@ -772,7 +772,9 @@ function updateRemoteHuman(ch, dt, fire) {
     fire(ch, origin, dir, ch.weapon || 'blaster');
     if (ch.weapon !== 'blaster') ch.ammo[ch.weapon]--;
     ch.cooldown = 1 / w.rof;
-    if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) ch.weapon = 'blaster';
+    if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) {
+      ch.weapon = nextLoadedWeaponAfter(ch.weapon, ch.weapons, ch.ammo);
+    }
   }
   if (ch.mesh) {
     ch.syncGunModel?.();

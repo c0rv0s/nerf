@@ -2,7 +2,7 @@
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
 import { moveCharacter, moveCharacterUp, cardinal, clamp } from './engine.js';
-import { WEAPONS, WEAPON_ORDER, buildBlaster, blasterSkin } from './weapons.js';
+import { WEAPONS, WEAPON_ORDER, buildBlaster, blasterSkin, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx } from './audio.js';
 
 export class Player {
@@ -177,10 +177,10 @@ export class Player {
         this.cooldown = 1 / w.rof;
         this.recoil = 1;
         if (this.weapon !== 'blaster' && this.ammo[this.weapon] <= 0) {
-          this.switchWeapon('blaster'); // auto-swap when dry
+          this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
         }
       } else {
-        this.switchWeapon('blaster');
+        this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
       }
     }
 

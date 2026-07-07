@@ -39,6 +39,15 @@ export const WEAPONS = {
                 beamDamageInterval: 0.4, secretMapOnly: true, texture: 'refractor', sound: 'hyper' },
 };
 
+export function nextLoadedWeaponAfter(currentId, owned = {}, ammo = {}) {
+  const start = Math.max(0, WEAPON_ORDER.indexOf(currentId));
+  for (let offset = 1; offset < WEAPON_ORDER.length; offset++) {
+    const id = WEAPON_ORDER[(start + offset) % WEAPON_ORDER.length];
+    if (id !== 'blaster' && owned[id] && ammo[id] > 0) return id;
+  }
+  return 'blaster';
+}
+
 /* ---------------- procedural blaster models ----------------
    Distinct Nerf-style silhouettes per weapon, merged into 2 draw calls each
    (plastic shell with baked vertex colors + one emissive "energy" mesh). */
