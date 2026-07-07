@@ -65,6 +65,9 @@ export class Bot {
     this._lastPos = new THREE.Vector3();
     this.avoid = null;                  // pickup we gave up on (proved unreachable)
     this.avoidT = 0;
+    this._vineExitT = 0;
+    this._waterRecoveryT = 0;
+    this._waterRecoveryPath = false;
 
     const { group } = buildBotMesh(color);
     this.mesh = group;
@@ -107,6 +110,11 @@ export class Bot {
     this.avoid = null;
     this.avoidT = 0;
     this._roam = null;
+    this._vineExitT = 0;
+    this._waterRecoveryT = 0;
+    this._waterRecoveryPath = false;
+    this._drownT = 0;
+    this._drownDamageT = 0;
     // PRISM RUN: orient to whatever surface we spawned on
     if (this.world.escher) {
       this.up = this.up || new THREE.Vector3(0, 1, 0);
@@ -436,7 +444,10 @@ export class Bot {
       this.speedTime -= dt;
       if (this.speedTime <= 0) this.speedMult = 1;
     }
-    const water = this._waterZone();
+    this._vineExitT = Math.max(0, (this._vineExitT || 0) - dt);
+    const vine = this._vineZone();
+    const water = vine ? null : this._waterZone();
+    if (!water && !vine) this._waterRecoveryPath = false;
     const speed = this.world.playerSpeed * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
     const lowGrav = this.world.gravity < 12;
     let moveX = 0, moveZ = 0;
@@ -461,7 +472,31 @@ export class Bot {
       if (fd < maxD && Math.abs(lp.y - this.pos.y) < maxDy) wpTarget = lp;
     }
 
-    if (this.target && !lowGrav) {
+    // If a bot is in drowning danger, survival overrides fighting and shopping:
+    // climb a vine first, otherwise follow the waypoint graph toward dry ground.
+    let waterRecoveryGoal = null;
+    if (water && (this._drownT || 0) > 30) {
+      waterRecoveryGoal = this._waterRecoveryGoal(water, dt);
+      if (waterRecoveryGoal) wpTarget = waterRecoveryGoal;
+    }
+
+    // If a bot is swimming near an escape vine, bias the current leg toward
+    // the vine center. Once attached, vine motion takes over and climbs out.
+    let waterVineGoal = null;
+    if (water && !waterRecoveryGoal) {
+      waterVineGoal = this._nearbyVineGoal(12);
+      if (waterVineGoal) wpTarget = waterVineGoal;
+    }
+
+    if (waterRecoveryGoal || waterVineGoal) {
+      const to = new THREE.Vector3().subVectors(waterRecoveryGoal || waterVineGoal, this.pos);
+      to.y = 0;
+      const d = to.length();
+      if (d > 0.1) { to.normalize(); moveX = to.x; moveZ = to.z; }
+      this.facing = this.target
+        ? Math.atan2(this.target.pos.x - this.pos.x, this.target.pos.z - this.pos.z)
+        : Math.atan2(moveX, moveZ);
+    } else if (this.target && !lowGrav) {
       // combat: run around — pick a fresh maneuver (an angle relative to the
       // target direction) every second or so, with the odd dodge-hop
       const to = new THREE.Vector3().subVectors(this.target.pos, this.pos);
@@ -545,7 +580,8 @@ export class Bot {
       this.vel.x += (moveX * speed - this.vel.x) * Math.min(1, accel * dt);
       this.vel.z += (moveZ * speed - this.vel.z) * Math.min(1, accel * dt);
     }
-    if (water) this._applyWaterMotion(water, dt);
+    if (vine) this._applyVineMotion(vine, dt, moveX, moveZ, wpTarget);
+    else if (water) this._applyWaterMotion(water, dt);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
     if (lowGrav && wasAirborne && this.grounded) {
@@ -612,6 +648,102 @@ export class Bot {
     return null;
   }
 
+  _vineZone() {
+    if (this._vineExitT > 0) return null;
+    const zones = this.world.vineZones;
+    if (!zones?.length) return null;
+    const midY = this.pos.y + this.height * 0.5;
+    for (const z of zones) {
+      if (
+        midY >= z.minY - 0.5 && midY <= z.maxY + 2.0 &&
+        (this.pos.x - z.x) * (this.pos.x - z.x) +
+          (this.pos.z - z.z) * (this.pos.z - z.z) < z.r * z.r
+      ) return z;
+    }
+    return null;
+  }
+
+  _nearbyVineGoal(maxD) {
+    const zones = this.world.vineZones;
+    if (!zones?.length) return null;
+    const midY = this.pos.y + this.height * 0.5;
+    let best = null, bs = Infinity;
+    for (const z of zones) {
+      if (midY < z.minY - 2.2 || midY > z.maxY + 2.0 || z.maxY < this.pos.y + 0.4) continue;
+      const d = Math.hypot(z.x - this.pos.x, z.z - this.pos.z);
+      if (d > maxD) continue;
+      const score = d + Math.max(0, z.minY - midY) * 2;
+      if (score < bs) { bs = score; best = z; }
+    }
+    if (!best) return null;
+    return new THREE.Vector3(best.x, clamp(this.pos.y, best.minY, best.maxY), best.z);
+  }
+
+  _waterRecoveryGoal(zone, dt) {
+    if (zone.waterfall) return null;
+    this._waterRecoveryT = Math.max(0, (this._waterRecoveryT || 0) - dt);
+    this.lootLock = 0;
+    this.shopping = null;
+
+    const urgent = (this._drownT || 0) > 38;
+    const vineGoal = this._nearbyVineGoal(urgent ? 26 : 16);
+    if (vineGoal) return vineGoal;
+
+    if (this.world.waypoints?.length && this._waterRecoveryT <= 0) {
+      this._waterRecoveryT = urgent ? 0.35 : 0.8;
+      const from = this.reachableNearest();
+      let recoveryPath = null;
+      const ranked = this.world.waypoints
+        .map((w, i) => {
+          const dry = !this._pointInWater(w.pos, zone) || w.pos.y > zone.surfaceY + 0.55;
+          if (!dry) return null;
+          const d = w.pos.distanceTo(this.pos);
+          const upBias = w.pos.y < this.pos.y ? 8 : 0;
+          return [d + upBias, i];
+        })
+        .filter(Boolean)
+        .sort((a, b) => a[0] - b[0]);
+
+      for (const [, to] of ranked.slice(0, urgent ? 16 : 10)) {
+        const path = findPath(this.world, from, to);
+        if (!path) continue;
+        recoveryPath = path;
+        break;
+      }
+      this.path = recoveryPath;
+      this.pathIdx = 0;
+      this._waterRecoveryPath = !!recoveryPath;
+    }
+
+    if (this._waterRecoveryPath && this.path && this.pathIdx < this.path.length) {
+      return this.world.waypoints[this.path[this.pathIdx]].pos;
+    }
+    return this._nearestWaterEdgeGoal(zone);
+  }
+
+  _pointInWater(pos, zone) {
+    return pos.x >= zone.minX && pos.x <= zone.maxX &&
+      pos.z >= zone.minZ && pos.z <= zone.maxZ &&
+      pos.y < zone.surfaceY + 0.35 &&
+      pos.y > (zone.bottomY ?? zone.surfaceY - 4) - 0.6;
+  }
+
+  _nearestWaterEdgeGoal(zone) {
+    const pad = this.radius + 0.9;
+    const choices = [
+      new THREE.Vector3(zone.minX - pad, Math.max(this.pos.y, zone.surfaceY + 0.2), this.pos.z),
+      new THREE.Vector3(zone.maxX + pad, Math.max(this.pos.y, zone.surfaceY + 0.2), this.pos.z),
+      new THREE.Vector3(this.pos.x, Math.max(this.pos.y, zone.surfaceY + 0.2), zone.minZ - pad),
+      new THREE.Vector3(this.pos.x, Math.max(this.pos.y, zone.surfaceY + 0.2), zone.maxZ + pad),
+    ];
+    choices[0].z = clamp(choices[0].z, zone.minZ, zone.maxZ);
+    choices[1].z = clamp(choices[1].z, zone.minZ, zone.maxZ);
+    choices[2].x = clamp(choices[2].x, zone.minX, zone.maxX);
+    choices[3].x = clamp(choices[3].x, zone.minX, zone.maxX);
+    choices.sort((a, b) => a.distanceToSquared(this.pos) - b.distanceToSquared(this.pos));
+    return choices[0];
+  }
+
   _inLava(x, y, z) {
     for (const l of this.world.lavaZones || []) {
       if (x >= l.minX && x <= l.maxX && z >= l.minZ && z <= l.maxZ && y < l.maxY + 0.4) return true;
@@ -655,6 +787,49 @@ export class Bot {
     this._waterHopT = Math.max(0, (this._waterHopT || 0) - dt);
     this.vel.y = THREE.MathUtils.damp(this.vel.y, targetVy + this.world.gravity * dt, 8, dt);
     const drag = Math.exp(-2.8 * dt);
+    this.vel.x *= drag;
+    this.vel.z *= drag;
+    this.grounded = false;
+  }
+
+  _applyVineMotion(vine, dt, moveX, moveZ, wpTarget) {
+    const midY = this.pos.y + this.height * 0.5;
+    let exitX = moveX;
+    let exitZ = moveZ;
+    const exitLen = Math.hypot(exitX, exitZ);
+    if (exitLen < 0.2 && wpTarget) {
+      exitX = wpTarget.x - this.pos.x;
+      exitZ = wpTarget.z - this.pos.z;
+    }
+    let len = Math.hypot(exitX, exitZ);
+    if (len < 0.2) {
+      exitX = this.pos.x - vine.x;
+      exitZ = this.pos.z - vine.z;
+      len = Math.hypot(exitX, exitZ);
+    }
+    if (len < 0.2) {
+      exitX = Math.sin(this.facing);
+      exitZ = Math.cos(this.facing);
+      len = Math.hypot(exitX, exitZ);
+    }
+    exitX /= len;
+    exitZ /= len;
+
+    if (midY > vine.maxY + 1.2) {
+      this.vel.x += exitX * 4.2;
+      this.vel.z += exitZ * 4.2;
+      this.vel.y = this.world.jumpVel * 1.05;
+      this._vineExitT = 0.45;
+      this.grounded = false;
+      return;
+    }
+
+    // moveCharacter applies gravity at the start of integration, so offset it
+    // to make the bot climb under control instead of free-falling off the vine.
+    this.vel.y = 5.0 + this.world.gravity * dt;
+    this.vel.x += ((vine.x - this.pos.x) * 2.5 - this.vel.x) * Math.min(1, 5 * dt);
+    this.vel.z += ((vine.z - this.pos.z) * 2.5 - this.vel.z) * Math.min(1, 5 * dt);
+    const drag = Math.exp(-3.2 * dt);
     this.vel.x *= drag;
     this.vel.z *= drag;
     this.grounded = false;
