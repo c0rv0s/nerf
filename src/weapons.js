@@ -10,25 +10,25 @@ export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zook
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
                 pellets: 1, ammo: Infinity, pickupAmmo: 0, color: 0xffa020, size: 0.13,
-                sound: 'blaster' },
+                texture: 'blaster', sound: 'blaster' },
   scatter:    { name: 'SCATTERBLAST', slot: 2, dmg: 9,  rof: 1.1, speed: 90,  spread: 0.07,
                 pellets: 6, ammo: 0, pickupAmmo: 12, color: 0x40d0ff, size: 0.11,
-                sound: 'scatter' },
+                texture: 'scatter', sound: 'scatter' },
   pulsar:     { name: 'PULSATOR',     slot: 3, dmg: 7,  rof: 9,   speed: 75,  spread: 0.035,
                 pellets: 1, ammo: 0, pickupAmmo: 60, color: 0xb060ff, size: 0.1,
-                sound: 'pulsar' },
+                texture: 'pulsar', sound: 'pulsar' },
   sidewinder: { name: 'SIDEWINDER',   slot: 4, dmg: 18, rof: 1.6, speed: 55,  spread: 0.01,
                 pellets: 1, ammo: 0, pickupAmmo: 10, color: 0x8aff30, size: 0.17,
-                disc: true, bounce: 6, bounceDmgGain: 5, sound: 'disc' },
+                disc: true, bounce: 6, bounceDmgGain: 5, texture: 'sidewinder', sound: 'disc' },
   zooka:      { name: 'BALLZOOKA',    slot: 5, dmg: 42, rof: 0.8, speed: 38,  spread: 0.005,
                 pellets: 1, ammo: 0, pickupAmmo: 6, color: 0xffe040, size: 0.35,
-                splash: 5.5, splashDmg: 32, gravity: true, trail: true, sound: 'zooka' },
+                splash: 5.5, splashDmg: 32, gravity: true, trail: true, texture: 'zooka', sound: 'zooka' },
   whomper:    { name: 'WHOMPER',      slot: 6, dmg: 85, rof: 0.5, speed: 42,  spread: 0.004,
                 pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.42,
-                splash: 10, splashDmg: 50, sound: 'whomp' },
+                splash: 10, splashDmg: 50, texture: 'whomper', sound: 'whomp' },
   hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 320, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
-                pierce: 2, trail: true, sound: 'hyper' },
+                pierce: 2, trail: true, texture: 'hyper', sound: 'hyper' },
   parasite:   { name: 'PARASITE',      slot: 8, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
                 pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
                 bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
@@ -55,10 +55,12 @@ const _blasterMats = {};
 function blasterMats(color, textureName = null) {
   const bodyKey = textureName ? `body-${textureName}` : 'body';
   if (!_blasterMats[bodyKey]) {
+    const tex = aiTex(textureName || 'plastic', textureName ? 0.16 : 0.6, textureName ? 0.16 : 0.6);
+    if (textureName && tex.normalScale) tex.normalScale.set(0.06, 0.28);
     _blasterMats[bodyKey] = new THREE.MeshStandardMaterial({
       color: 0xffffff, vertexColors: true, roughness: 0.45, metalness: 0.05,
       envMapIntensity: textureName ? 0.85 : 0.5,
-      ...aiTex(textureName || 'plastic', textureName ? 1.3 : 0.6, textureName ? 1.3 : 0.6),
+      ...tex,
     });
   }
   const key = 'e' + color;

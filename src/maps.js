@@ -139,7 +139,8 @@ export function aiTex(name, rx = 1, ry = 1) {
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
    'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
-   'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite', 'refractor',
+   'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
+   'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
    'atrium-gate-frame-atlas']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
