@@ -3300,7 +3300,7 @@ function addGateBrick(scene, world, id, color, x, y, z, w, h, d) {
 
 function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz) {
   const sideCenters = [-4, 4];
-  const brickH = 1.75;
+  const brickH = 1.55;
   for (const u of sideCenters) {
     for (let i = 0; i < 4; i++) {
       const y = brickH / 2 + i * brickH;
@@ -3308,10 +3308,16 @@ function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz) {
       else addGateBrick(scene, world, id, color, px, y, pz + u, 1.6, brickH, 1.6);
     }
   }
+  const lintelY = 6.9;
+  const lintelH = 1.4;
+  for (const u of sideCenters) {
+    if (horiz) addGateBrick(scene, world, id, color, px + u, lintelY, pz, 1.6, lintelH, 1.6);
+    else addGateBrick(scene, world, id, color, px, lintelY, pz + u, 1.6, lintelH, 1.6);
+  }
   for (let i = 0; i < 4; i++) {
-    const u = -3.6 + i * 2.4;
-    if (horiz) addGateBrick(scene, world, id, color, px + u, 7.6, pz, 2.4, 1.4, 1.6);
-    else addGateBrick(scene, world, id, color, px, 7.6, pz + u, 1.6, 1.4, 2.4);
+    const u = -2.4 + i * 1.6;
+    if (horiz) addGateBrick(scene, world, id, color, px + u, lintelY, pz, 1.6, lintelH, 1.6);
+    else addGateBrick(scene, world, id, color, px, lintelY, pz + u, 1.6, lintelH, 1.6);
   }
 }
 
@@ -3333,19 +3339,19 @@ export function buildAtrium(scene) {
   addBox(scene, world, 33.5, 6, -4.75, 3, 12, 89.5, 0x6a5f88, { tex: 'neonwall', repeat: [11, 2] });
   addBox(scene, world, 33.5, 6, 46.75, 3, 12, 5.5, 0x6a5f88, { tex: 'neonwall' });
   addBox(scene, world, 33.5, 8.5, 42, 3, 7, 4, 0x6a5f88, { tex: 'neonwall' });     // lintel
-  addBox(scene, world, 30.2, 2.5, 40, 0.6, 5, 5.6, 0x6a5f88, { tex: 'neonwall' }); // concealer slab
-  addBox(scene, world, 32.5, -0.5, 42, 1.2, 1, 4.2, 0x3a3452, { tex: 'panel' });   // door threshold (no void gap)
+  addBox(scene, world, 31.7, 2.5, 40, 0.6, 5, 5.6, 0x6a5f88, { tex: 'neonwall' }); // concealer slab, back face flush with wall
+  addBox(scene, world, 33.5, -0.5, 42, 3, 1, 4, 0x3a3452, { tex: 'panel' });       // threshold owns only the wall thickness
   // the passage: east hallway, then a leg north to the gate chamber
-  // hall pieces start at x 33, buried inside the wall box (32..35) — ending
-  // exactly on the wall's inner face plane (x 32) z-fought with it
-  addBox(scene, world, 40.5, -0.5, 42, 15, 1, 8, 0x3a3452, { tex: 'panel' });
+  // hall pieces start at the outer wall face (x 35); the threshold ends there,
+  // so the floor planes meet edge-to-edge without coplanar overlap.
+  addBox(scene, world, 41.5, -0.5, 42, 13, 1, 8, 0x3a3452, { tex: 'panel' });
   addBox(scene, world, 44, -0.5, 24, 8, 1, 28, 0x3a3452, { tex: 'panel' });
-  addBox(scene, world, 36.5, 3, 38.3, 7, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
-  addBox(scene, world, 40.5, 3, 45.7, 15, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 37.5, 3, 38.3, 5, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
+  addBox(scene, world, 41.5, 3, 45.7, 13, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
   addBox(scene, world, 47.7, 3, 28, 0.6, 6, 36, 0x4a4266, { tex: 'neonwall' });
   addBox(scene, world, 40.3, 3, 24, 0.6, 6, 28, 0x4a4266, { tex: 'neonwall' });
   addBox(scene, world, 44, 3, 10.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });     // gate wall
-  addBox(scene, world, 40.5, 6.1, 42, 15, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
+  addBox(scene, world, 41.5, 6.1, 42, 13, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
   addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
   addMagicPortal(scene, world, 44, 3, 10.9, 7.95, 6.0, 0x8a5fff, 0);
   const sancLight = new THREE.PointLight(0x8a5fff, 20, 16);
@@ -3403,13 +3409,13 @@ export function buildAtrium(scene) {
   for (const [id, name, color, wall, off] of bays) {
     const horiz = wall === 'n' || wall === 's';
     const sgn = (wall === 'e' || wall === 's') ? 1 : -1;
-    const px = horiz ? off : sgn * 30.6, pz = horiz ? sgn * 46.6 : off;  // pillar centerline
+    const px = horiz ? off : sgn * 31.2, pz = horiz ? sgn * 47.2 : off;  // back face flush with wall
     if (horiz) {
       addAtriumGateBrickFrame(scene, world, id, color, px, pz, true);
-      addMagicPortal(scene, world, px, 3.7, pz + sgn * 0.92, 7.8, 7.8, color, sgn === -1 ? 0 : Math.PI);
+      addMagicPortal(scene, world, px, 3.7, pz + sgn * 0.82, 7.8, 7.8, color, sgn === -1 ? 0 : Math.PI);
     } else {
       addAtriumGateBrickFrame(scene, world, id, color, px, pz, false);
-      addMagicPortal(scene, world, px + sgn * 0.92, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
+      addMagicPortal(scene, world, px + sgn * 0.82, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
     }
     // sign panel flat on the wall above the gate (inner faces: z ±48, x ±32)
     makeSign(scene, horiz ? px : sgn * 31.9, 10.2, horiz ? sgn * 47.95 : pz, 13,
