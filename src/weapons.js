@@ -31,7 +31,7 @@ export const WEAPONS = {
                 pierce: 2, trail: true, sound: 'hyper' },
   parasite:   { name: 'PARASITE',      slot: 8, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
                 pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
-                bounce: 1, split: 5, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
+                bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
                 trail: true, sound: 'hyper' },
   refractor:  { name: 'REFRACTOR',     slot: 9, dmg: 22, rof: 0.5, speed: 0,   spread: 0,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,

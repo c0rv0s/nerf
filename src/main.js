@@ -187,6 +187,14 @@ let multiplayerVotingTimer = 0;
 const lastSpawnByKey = new Map();
 const lastSpawnFaceByKey = new Map();
 
+function modeLabel(mode = selectedMode) {
+  return mode === 'tdm' ? 'MODE: TEAM DEATHMATCH' : 'MODE: FREE FOR ALL';
+}
+
+function syncAtriumModeSign(world = G?.world) {
+  world?.setModeSign?.(modeLabel(selectedMode));
+}
+
 setInterval(() => {
   if (!G?.multiplayerHost || multiplayer.phase !== 'playing' || G.over) return;
   const now = performance.now();
@@ -367,6 +375,7 @@ function startAtrium() {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildAtrium(scene);
+  syncAtriumModeSign(world);
   world.spawnsAll = [...world.spawns.ffa];
   buildWaypointGraph(world);
   scene.add(camera);
@@ -2295,8 +2304,8 @@ function stepAtrium(dt) {
     G.padCooldown = 1.2;
     selectedMode = selectedMode === 'ffa' ? 'tdm' : 'ffa';
     G.mode = selectedMode;
-    G.world.setModeSign(selectedMode === 'ffa' ? 'MODE: FREE FOR ALL' : 'MODE: TEAM DEATHMATCH');
-    hud.message(selectedMode === 'ffa' ? 'MODE: FREE FOR ALL' : 'MODE: TEAM DEATHMATCH', '#30e0ff');
+    syncAtriumModeSign();
+    hud.message(modeLabel(selectedMode), '#30e0ff');
     sfx('pickup');
   }
 }
