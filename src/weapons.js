@@ -206,10 +206,15 @@ export class ProjectileSystem {
     this.fx = fx;           // {spawnPuff(pos,color,scale), onDamage(target, dmg, attacker)}
     this.projectiles = [];
     this.beams = [];
+    this.nextShotId = 1;
     this.nextBeamId = 1;
     this.geoBall = new THREE.SphereGeometry(1, 8, 6);
     this.mats = {};
     this.beamMats = {};
+  }
+
+  makeShotGroup(owner, weapon) {
+    return { id: this.nextShotId++, owner, weaponId: Object.keys(WEAPONS).find(id => WEAPONS[id] === weapon), kills: 0 };
   }
 
   matFor(color) {
@@ -311,7 +316,7 @@ export class ProjectileSystem {
     for (const m of seg.group.children) m.scale.y = len;
   }
 
-  spawnBeam(owner, origin, dir, weapon) {
+  spawnBeam(owner, origin, dir, weapon, shotGroup = this.makeShotGroup(owner, weapon)) {
     const points = [origin.clone()];
     let pos = origin.clone();
     let vel = dir.clone().normalize();
@@ -338,7 +343,7 @@ export class ProjectileSystem {
       totalLen += seg.len;
     }
     this.beams.push({
-      id: this.nextBeamId++, owner, weapon, segments, totalLen,
+      id: this.nextBeamId++, owner, weapon, shotGroup, segments, totalLen,
       age: 0, life: weapon.beamLife || 2.5, retract: weapon.beamRetract || 0.8,
       hitCooldowns: new Map(),
     });
@@ -363,13 +368,15 @@ export class ProjectileSystem {
       ignore: opts.ignore ? new Set(opts.ignore) : null,
       damage: opts.damage ?? weapon.dmg,
       noSplit: opts.noSplit === true,
+      shotGroup: opts.shotGroup || this.makeShotGroup(owner, weapon),
     });
   }
 
   fire(owner, origin, dir, weaponId) {
     const w = WEAPONS[weaponId];
+    const shotGroup = this.makeShotGroup(owner, w);
     if (w.beam) {
-      this.spawnBeam(owner, origin, dir, w);
+      this.spawnBeam(owner, origin, dir, w, shotGroup);
       sfx(w.sound, owner.isPlayer ? null : origin);
       return;
     }
@@ -379,7 +386,7 @@ export class ProjectileSystem {
       d.y += rand(-w.spread, w.spread);
       d.z += rand(-w.spread, w.spread);
       d.normalize();
-      this.spawnProjectile(owner, origin, d, w);
+      this.spawnProjectile(owner, origin, d, w, { shotGroup });
     }
     // muzzle flash only for other shooters — your own fills the screen
     if (!owner.isPlayer) this.fx.spawnPuff(origin, w.color, 0.3);
@@ -406,6 +413,7 @@ export class ProjectileSystem {
         bounce: p.weapon.childBounce ?? p.weapon.bounce,
         ignore: [ch],
         noSplit: true,
+        shotGroup: p.shotGroup,
       });
     }
   }
@@ -456,7 +464,7 @@ export class ProjectileSystem {
         if (!ch.alive || ch === b.owner || ch.team === b.owner.team) continue;
         if ((b.hitCooldowns.get(ch) || 0) > 0) continue;
         if (b.segments.some(seg => seg.group.visible && this.characterTouchesSegment(ch, seg.activeStart, seg.activeEnd))) {
-          this.fx.onDamage(ch, b.weapon.dmg * b.owner.damageMult, b.owner);
+          this.fx.onDamage(ch, b.weapon.dmg * b.owner.damageMult, b.owner, { shotGroup: b.shotGroup });
           const hitPos = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), ch.height * 0.55);
           this.fx.spawnPuff(hitPos, b.weapon.color, 0.45);
           b.hitCooldowns.set(ch, b.weapon.beamDamageInterval || 0.4);
@@ -497,7 +505,7 @@ export class ProjectileSystem {
           if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
               p.pierced?.has(ch) || p.ignore?.has(ch)) continue;
           if (this.projectileTouchesCharacter(ch, p)) {
-            this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner);
+            this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
             if (p.weapon.split && !p.noSplit) {
               this.splitParasite(p, ch);
@@ -552,7 +560,7 @@ export class ProjectileSystem {
       const d = center.distanceTo(p.pos);
       if (d < p.weapon.splash) {
         const dmg = p.weapon.splashDmg * (1 - d / p.weapon.splash);
-        this.fx.onDamage(ch, dmg * p.owner.damageMult, p.owner);
+        this.fx.onDamage(ch, dmg * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
       }
     }
   }

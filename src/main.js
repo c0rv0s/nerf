@@ -22,6 +22,16 @@ const REMOTE_HUMAN_SNAP_DIST = 8;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
 const REMOTE_HUMAN_MAX_PREDICT = 0.18;
 const REMOTE_HUMAN_SMOOTH = 20;
+const MULTI_KILL_WINDOW = 2.75;
+const MAX_KILL_AWARD = 7;
+const KILL_AWARD_LABELS = {
+  2: 'DOUBLE KILL',
+  3: 'TRIPLE KILL',
+  4: 'QUAD KILL',
+  5: 'PENTA KILL',
+  6: 'HEXA KILL',
+  7: 'SEPTUPLE KILL',
+};
 
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
@@ -195,6 +205,7 @@ document.getElementById('againbtn').addEventListener('click', () => {
 /* ---------------- match setup ---------------- */
 function teardown() {
   if (!G) return;
+  setPauseScoreboardLayer(false);
   updateUnderwaterFx(1, true);
   updateFoliageFx(1, true);
   G.over = true;
@@ -397,6 +408,7 @@ function startAtrium() {
   renderer.compile(scene, camera);
 
   hud.show(true);
+  hud.clearAwards();
   setStyle(document.getElementById('scores'), 'display', 'none');
   setText(document.getElementById('catchtitle'), 'CLICK TO PLAY');
   setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
@@ -452,12 +464,16 @@ function startMatch(mapDef, mode = 'ffa') {
       characters.push(bot);
     }
   }
-  for (const ch of characters) ch.score = 0;
+  for (const ch of characters) {
+    ch.score = 0;
+    ch.awards = {};
+    ch.killChain = null;
+  }
 
   const projectiles = new ProjectileSystem(scene, world, {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
-    onDamage: (target, dmg, attacker) => applyDamage(target, dmg, attacker),
+    onDamage: (target, dmg, attacker, ctx) => applyDamage(target, dmg, attacker, ctx),
   });
 
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
@@ -498,6 +514,7 @@ function startMatch(mapDef, mode = 'ffa') {
 
   player.update(0, () => {});      // camera on the spawn point before the first tick
   hud.show(true);
+  hud.clearAwards();
   setStyle(document.getElementById('scores'), 'display', '');
   setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   requestPointerLock();
@@ -554,12 +571,14 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   player.team = playerTeam;
   player.name = multiplayer.name || 'YOU';
   player.score = 0;
+  player.awards = {};
+  player.killChain = null;
 
   const characters = [player];
   const projectiles = new ProjectileSystem(scene, world, {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
-    onDamage: (target, dmg, attacker) => applyPredictedMultiplayerDamage(target, dmg, attacker),
+    onDamage: (target, dmg, attacker, ctx) => applyPredictedMultiplayerDamage(target, dmg, attacker, ctx),
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
@@ -656,6 +675,8 @@ function ensureHostRemoteHuman(slot) {
   remote.score = 0;
   remote.kills = 0;
   remote.deaths = 0;
+  remote.awards = {};
+  remote.killChain = null;
   G.characters.push(remote);
   addTeamMarker(remote);
   respawnCharacter(remote, true);
@@ -689,6 +710,8 @@ function addReplacementBot() {
   bot.id = `bot-${i}`;
   bot.color = color;
   bot.score = 0;
+  bot.awards = {};
+  bot.killChain = null;
   G.characters.push(bot);
   addTeamMarker(bot);
   respawnCharacter(bot, true);
@@ -883,6 +906,8 @@ function ensureRemoteSlot(state) {
     score: 0,
     kills: 0,
     deaths: 0,
+    awards: {},
+    killChain: null,
     damageMult: 1,
     powerup: null,
     weapons: { blaster: true },
@@ -923,6 +948,7 @@ function applyMultiplayerSnapshot(snap) {
       G.mpSawSelfSnapshot = true;
       G.player.kills = state.kills || 0;
       G.player.deaths = state.deaths || 0;
+      G.player.awards = state.awards || G.player.awards || {};
       if (state.hp < G.player.hp) hud.damageFlash();
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
@@ -948,6 +974,7 @@ function applyMultiplayerSnapshot(snap) {
     remote.score = state.score || 0;
     remote.kills = state.kills || 0;
     remote.deaths = state.deaths || 0;
+    remote.awards = state.awards || remote.awards || {};
     remote.weapon = state.weapon || 'blaster';
     remote.yaw = state.yaw || 0;
     if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
@@ -979,11 +1006,14 @@ function applyMultiplayerSnapshot(snap) {
       hud.killfeed(killer, victim);
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
+    if (ev.type === 'award' && ev.playerId === multiplayer.slotId) {
+      hud.award(ev.title, ev.sub || '', ev.color || '#ffd23c');
+    }
   }
   reconcileMultiplayerDrops(snap.drops || []);
 }
 
-function applyPredictedMultiplayerDamage(target, dmg, attacker) {
+function applyPredictedMultiplayerDamage(target, dmg, attacker, ctx = {}) {
   if (!G?.multiplayer || attacker !== G.player || !target || target === G.player) return;
 }
 
@@ -1145,6 +1175,7 @@ function updateMultiplayerTracers(dt) {
 function endMatch(toLobby) {
   teardown();
   hud.show(false);
+  hud.clearAwards();
   if (toLobby) startAtrium();
   else document.exitPointerLock?.();
 }
@@ -1564,6 +1595,7 @@ function showVictoryPodium(result) {
   if (G.multiplayer || G.multiplayerHost) G.mpPodiumStartedAt ||= performance.now();
   G.over = true;
   G.showBoard = false;
+  setPauseScoreboardLayer(false);
   hud.show(false);
   hud.els.hud.classList.add('endboard');
   setStyle(hud.els.board, 'display', 'none');
@@ -1594,6 +1626,7 @@ function showVictoryPodium(result) {
   setText(document.getElementById('endtitle'), result.title);
   setStyle(document.getElementById('endtitle'), 'color', result.color);
   setText(document.getElementById('endstats'), result.stats);
+  setText(document.getElementById('endawards'), awardsLine(G.player.awards));
   setStyle(end, 'display', 'flex');
   document.exitPointerLock?.();
   sfx('powerup');
@@ -1702,7 +1735,73 @@ function updateDmgMarkers(dt) {
   }
 }
 
-function applyDamage(target, dmg, attacker) {
+function ensureAwards(ch) {
+  ch.awards ||= {};
+  return ch.awards;
+}
+
+function awardKey(prefix, count) {
+  return `${prefix}${Math.min(MAX_KILL_AWARD, Math.max(2, count))}`;
+}
+
+function incrementAward(ch, key, title, sub, color = '#ffd23c') {
+  const awards = ensureAwards(ch);
+  awards[key] = (awards[key] || 0) + 1;
+  if (ch.isPlayer) hud.award(title, sub, color);
+  if (G.multiplayerHost) {
+    queueMultiplayerEvent({
+      type: 'award',
+      playerId: characterNetworkId(ch),
+      key,
+      title,
+      sub,
+      color,
+    });
+  }
+}
+
+function recordKillAwards(attacker, target, ctx = {}) {
+  if (!attacker || attacker === target) return;
+  const now = performance.now() / 1000;
+  const chain = attacker.killChain && attacker.killChain.expiresAt >= now
+    ? attacker.killChain
+    : { count: 0, expiresAt: 0 };
+  chain.count = Math.min(MAX_KILL_AWARD, chain.count + 1);
+  chain.expiresAt = now + MULTI_KILL_WINDOW;
+  attacker.killChain = chain;
+  if (chain.count >= 2) {
+    const label = KILL_AWARD_LABELS[chain.count] || `${chain.count}X KILL`;
+    incrementAward(attacker, awardKey('multi', chain.count), label, `${chain.count} kills in a burst`, attacker.color || '#ffd23c');
+  }
+
+  const shotGroup = ctx.shotGroup;
+  if (shotGroup && shotGroup.owner === attacker) {
+    shotGroup.kills = Math.min(MAX_KILL_AWARD, (shotGroup.kills || 0) + 1);
+    if (shotGroup.kills >= 2) {
+      incrementAward(
+        attacker,
+        awardKey('oneShot', shotGroup.kills),
+        `ONE SHOT, ${shotGroup.kills} KILLS`,
+        'same trigger pull',
+        '#7fd0ff',
+      );
+    }
+  }
+}
+
+function awardsLine(awards = {}) {
+  const labels = [
+    ['multi2', 'Double Kill'], ['multi3', 'Triple Kill'], ['multi4', 'Quad Kill'],
+    ['multi5', 'Penta Kill'], ['multi6', 'Hexa Kill'], ['multi7', 'Septuple Kill'],
+    ['oneShot2', 'One Shot, Two Kills'], ['oneShot3', 'One Shot, Three Kills'],
+    ['oneShot4', 'One Shot, Four Kills'], ['oneShot5', 'One Shot, Five Kills'],
+    ['oneShot6', 'One Shot, Six Kills'], ['oneShot7', 'One Shot, Seven Kills'],
+  ];
+  const parts = labels.filter(([key]) => awards[key]).map(([key, label]) => `${label} x${awards[key]}`);
+  return parts.length ? `Awards: ${parts.join(' · ')}` : 'Awards: none';
+}
+
+function applyDamage(target, dmg, attacker, ctx = {}) {
   if (!target.alive || G.over) return;
   const rawDmg = dmg;
   if (attacker.isPlayer && attacker !== target) spawnDmgMarker(target, dmg);
@@ -1728,6 +1827,7 @@ function applyDamage(target, dmg, attacker) {
   if (target.hp <= 0) {
     target.deaths++;
     attacker.kills++;
+    recordKillAwards(attacker, target, ctx);
     dropPoints(target); // the points fall with the victim — go collect them
     for (const c of G.characters) {
       if (c.isPlayer || !c.noticeDrop || !c.alive) continue;
@@ -1899,6 +1999,12 @@ const volumeValue = document.getElementById('volumevalue');
 setGameVolume(gameVolume, false);
 updateTrackTitle();
 
+function setPauseScoreboardLayer(on) {
+  const board = hud.els.board;
+  const parent = on ? clickcatch : hud.els.hud;
+  if (board.parentElement !== parent) parent.appendChild(board);
+}
+
 function requestPointerLock() {
   if (!canvas.requestPointerLock) return;
   try {
@@ -1925,18 +2031,22 @@ document.addEventListener('pointerlockchange', () => {
     setStyle(volumeControl, 'display', showPause ? 'block' : 'none');
     setText(quitBtn, multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM');
     const board = hud.els.board;
+    setPauseScoreboardLayer(showPause);
     setStyle(board, 'display', showPause ? 'block' : 'none');
     setStyle(board, 'top', showPause ? '27%' : '');    // scoreboard on top, resume mid, quit bottom
-    setStyle(board, 'zIndex', showPause ? 3 : '');     // above the pause overlay
+    setStyle(board, 'zIndex', showPause ? 4 : '');     // above the pause overlay
     setStyle(board, 'background', showPause ? 'rgba(10,12,30,.96)' : ''); // solid — the tint washed it out
     if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
   } else {
+    setPauseScoreboardLayer(false);
     setStyle(clickcatch, 'display', 'none');
     setStyle(quitBtn, 'display', 'none');
     setStyle(volumeControl, 'display', 'none');
   }
 });
 clickcatch.addEventListener('click', requestPointerLock);
+hud.els.board.addEventListener('click', (e) => e.stopPropagation());
+hud.els.board.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeControl.addEventListener('click', (e) => e.stopPropagation());
 volumeControl.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeSlider.addEventListener('input', () => setGameVolume(Number(volumeSlider.value) / 100));
@@ -2325,6 +2435,7 @@ function serializeCharacter(ch, i) {
     score: ch.score || 0,
     kills: ch.kills || 0,
     deaths: ch.deaths || 0,
+    awards: { ...(ch.awards || {}) },
     respawn: G.respawnTimers.get(ch) || 0,
     weapon: ch.weapon || 'blaster',
   };

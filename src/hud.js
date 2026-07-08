@@ -21,6 +21,7 @@ export class HUD {
       ammo: $('ammonum'), wname: $('weaponname'), slots: $('wslots'),
       left: $('scoreBlue'), right: $('scoreRed'), timer: $('timer'), top3: $('top3'),
       feed: $('killfeed'), msg: $('message'), power: $('powerup'),
+      awards: $('awards'),
       vignette: $('vignette'), hit: $('hitmarker'),
       respawn: $('respawn'), respawnCount: $('respawncount'),
       board: $('scoreboard'),
@@ -159,6 +160,7 @@ export class HUD {
       mode, scores.blue, scores.red,
       characters.map((c) => [
         c.name, c.color || '', c.isPlayer ? 1 : 0, c.score, c.kills, c.deaths,
+        this.awardsSummary(c.awards),
       ].join('|')).join('\n'),
     ].join('\n');
     if (boardKey === this._boardKey) return;
@@ -167,14 +169,49 @@ export class HUD {
     const rows = [...characters].sort((a, b) => b.score - a.score)
       .map(c => `<tr>
         <td style="color:${c.color}">${c.name}${c.isPlayer ? ' ◄' : ''}</td>
-        <td>${c.score}</td><td>${c.kills}</td><td>${c.deaths}</td></tr>`).join('');
+        <td>${c.score}</td><td>${c.kills}</td><td>${c.deaths}</td><td>${this.awardsSummary(c.awards)}</td></tr>`).join('');
     const head = mode === 'tdm'
       ? `<h3><span style="color:#5cb3ff">BLUE ${scores.blue}</span> —
           <span style="color:#ff5c5c">${scores.red} RED</span></h3>`
       : `<h3 style="color:#ffd23c">FREE FOR ALL</h3>`;
     const html = `${head}
-      <table><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr>${rows}</table>`;
+      <table><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th><th>Awards</th></tr>${rows}</table>`;
     if (this.els.board.innerHTML !== html) this.els.board.innerHTML = html;
+  }
+
+  awardsSummary(awards = {}) {
+    const parts = [];
+    const labels = {
+      multi2: 'Double', multi3: 'Triple', multi4: 'Quad', multi5: 'Penta', multi6: 'Hexa', multi7: 'Septuple',
+      oneShot2: '1S2K', oneShot3: '1S3K', oneShot4: '1S4K', oneShot5: '1S5K', oneShot6: '1S6K', oneShot7: '1S7K',
+    };
+    for (const [key, label] of Object.entries(labels)) {
+      if (awards[key]) parts.push(`${label} x${awards[key]}`);
+    }
+    return parts.length ? parts.join(', ') : '-';
+  }
+
+  award(text, sub = '', color = '#ffd23c') {
+    const div = document.createElement('div');
+    div.className = 'awardtoast';
+    div.style.borderColor = color;
+    const title = document.createElement('strong');
+    title.style.color = color;
+    title.textContent = text;
+    div.appendChild(title);
+    if (sub) {
+      const line = document.createElement('span');
+      line.textContent = sub;
+      div.appendChild(line);
+    }
+    this.els.awards.prepend(div);
+    while (this.els.awards.children.length > 4) this.els.awards.lastChild.remove();
+    setTimeout(() => div.classList.add('fade'), 1900);
+    setTimeout(() => div.remove(), 2600);
+  }
+
+  clearAwards() {
+    this.els.awards.textContent = '';
   }
 
   message(text, color = '#ffd23c') {

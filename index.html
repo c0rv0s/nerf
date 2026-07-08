@@ -121,6 +121,17 @@
     font-size:22px; color:#ffd23c; text-shadow:0 2px 6px #000; opacity:0;
     transition:opacity .3s; text-align:center; }
 
+  #awards { position:absolute; top:132px; left:50%; transform:translateX(-50%);
+    display:flex; flex-direction:column; align-items:center; gap:7px; pointer-events:none; }
+  .awardtoast { min-width:230px; padding:8px 18px; border:2px solid #ffd23c; border-radius:7px;
+    background:rgba(7,10,24,.78); box-shadow:0 0 18px rgba(255,210,60,.28);
+    text-align:center; font-family:Arial,sans-serif; font-weight:900; letter-spacing:1.4px;
+    text-transform:uppercase; animation:awardpop .2s ease-out; transition:opacity .35s, transform .35s; }
+  .awardtoast strong { display:block; font-size:20px; line-height:1.05; text-shadow:0 2px 7px #000; }
+  .awardtoast span { display:block; margin-top:3px; font-size:10px; color:#cfd8ff; letter-spacing:.8px; }
+  .awardtoast.fade { opacity:0; transform:translateY(-10px) scale(.96); }
+  @keyframes awardpop { from { transform:scale(.82); opacity:0; } to { transform:scale(1); opacity:1; } }
+
   #respawn { position:absolute; inset:0; display:none; align-items:center; justify-content:center;
     background:rgba(120,0,0,.25); }
   #respawn div { font-size:34px; color:#fff; text-shadow:0 3px 8px #000; text-align:center; }
@@ -134,6 +145,7 @@
   #scoreboard th { color:#999; font-size:11px; text-transform:uppercase; }
 
   #clickcatch { position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    z-index:3;
     background:rgba(0,0,10,.45); color:#fff; font-size:22px; cursor:pointer; text-align:center;
     flex-direction:column; gap:10px; }
   #clickcatch small { font-size:13px; color:#aaa; font-family:Arial,sans-serif; line-height:1.7; }
@@ -181,6 +193,10 @@
   #endstats { position:absolute; top:16%; left:50%; transform:translateX(-50%);
     width:min(94vw,1080px); text-align:center; font-size:clamp(13px,2vw,18px);
     color:#dfe7ff; font-family:Arial,sans-serif; font-weight:bold; text-shadow:0 2px 8px #000; }
+  #endawards { position:absolute; top:21%; left:50%; transform:translateX(-50%);
+    width:min(94vw,1040px); text-align:center; font-size:clamp(11px,1.6vw,14px);
+    color:#ffd23c; font-family:Arial,sans-serif; font-weight:900; letter-spacing:.8px;
+    text-transform:uppercase; text-shadow:0 2px 8px #000; }
   .bigbtn { pointer-events:auto; font:inherit; font-size:20px; padding:12px 34px; border-radius:10px;
     border:3px solid #ffd23c; background:#c8461e; color:#fff; cursor:pointer; letter-spacing:1px; }
   .bigbtn:hover { background:#e85a28; }
@@ -215,6 +231,7 @@
   <div id="top3" class="panel"></div>
   <div id="killfeed"></div>
   <div id="message"></div>
+  <div id="awards"></div>
   <div id="health" class="panel">
     <span id="healthnum">100</span><span id="shieldnum" style="color:#7fd0ff;font-size:16px;margin-left:8px"></span>
     <div id="healthbar"><div id="healthfill"></div></div>
@@ -257,6 +274,7 @@
 <div id="endscreen">
   <div id="endtitle"></div>
   <div id="endstats"></div>
+  <div id="endawards"></div>
   <button class="bigbtn" id="againbtn">BACK TO LOBBY</button>
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
