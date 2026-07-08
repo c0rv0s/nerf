@@ -90,7 +90,11 @@ const TEXES = { checker: texChecker, panel: texPanel, crate: texCrate, rock: tex
 // ---- AI texture set (textures/*.jpg/.png) — used when present, else canvas fallback ----
 // A normal map is derived from each image's luminance so surfaces catch light.
 const AI_TEX = {};
-const AI_TEX_SOURCES = { parasite: './textures/parasite.jpg', refractor: './textures/refractor.jpg' };
+const AI_TEX_SOURCES = {
+  parasite: './textures/parasite.jpg',
+  refractor: './textures/refractor.jpg',
+  'atrium-gate-frame-atlas': './textures/atrium-gate-frame-atlas.jpg',
+};
 function makeNormalMap(img) {
   const size = 256;
   const c = document.createElement('canvas');
@@ -135,7 +139,8 @@ export function aiTex(name, rx = 1, ry = 1) {
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
    'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
-   'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite', 'refractor']
+   'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava', 'parasite', 'refractor',
+   'atrium-gate-frame-atlas']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
       fetch(url, { method: 'HEAD' }).then((r) => {
@@ -3066,6 +3071,29 @@ function makeSign(scene, x, y, z, w, color, text, yaw = 0, doubleFaced = false) 
   return draw;
 }
 
+const GATE_FRAME_INDEX = { arena: 0, fortress: 1, asteroids: 2, canopy: 3, city: 4, sanctum: 5 };
+const gateFrameCache = {};
+function gateFrameTex(index) {
+  if (gateFrameCache[index]) return gateFrameCache[index];
+  const atlas = AI_TEX['atrium-gate-frame-atlas']?.map?.image;
+  if (!atlas) return null;
+  const cols = 3;
+  const rows = 2;
+  const tileW = Math.floor(atlas.width / cols);
+  const tileH = Math.floor(atlas.height / rows);
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.drawImage(atlas, col * tileW, row * tileH, tileW, tileH, 0, 0, 512, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  gateFrameCache[index] = t;
+  return t;
+}
+
 function portalMaterial(color) {
   const base = new THREE.Color(color);
   const accent = base.clone().offsetHSL(0.12, 0.08, 0.16);
@@ -3153,33 +3181,147 @@ function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
   return m;
 }
 
+function addAtriumSkyDome(scene) {
+  const width = 2048;
+  const height = 1024;
+  let seed = 0x7c6f3a21;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+
+  const skyC = document.createElement('canvas');
+  skyC.width = width;
+  skyC.height = height;
+  const sg = skyC.getContext('2d');
+
+  const grad = sg.createLinearGradient(0, 0, 0, height);
+  grad.addColorStop(0, '#43308a');
+  grad.addColorStop(0.28, '#6848aa');
+  grad.addColorStop(0.58, '#b06ac7');
+  grad.addColorStop(0.78, '#df91bc');
+  grad.addColorStop(1, '#ffc37a');
+  sg.fillStyle = grad;
+  sg.fillRect(0, 0, width, height);
+
+  const zenith = sg.createRadialGradient(width * 0.5, height * 0.16, 24, width * 0.5, height * 0.16, width * 0.42);
+  zenith.addColorStop(0, 'rgba(32,31,118,0.62)');
+  zenith.addColorStop(0.45, 'rgba(50,39,141,0.32)');
+  zenith.addColorStop(1, 'rgba(50,39,141,0)');
+  sg.fillStyle = zenith;
+  sg.fillRect(0, 0, width, height);
+
+  const horizon = sg.createRadialGradient(width * 0.5, height * 1.08, width * 0.12, width * 0.5, height * 1.08, width * 0.72);
+  horizon.addColorStop(0, 'rgba(255,226,160,0.5)');
+  horizon.addColorStop(0.48, 'rgba(255,177,170,0.23)');
+  horizon.addColorStop(1, 'rgba(255,177,170,0)');
+  sg.fillStyle = horizon;
+  sg.fillRect(0, 0, width, height);
+
+  sg.save();
+  sg.globalCompositeOperation = 'screen';
+  for (let i = 0; i < 24; i++) {
+    const x = rnd() * width;
+    const y = rnd() * height * 0.58 + height * 0.02;
+    const rx = 90 + rnd() * 260;
+    const ry = 10 + rnd() * 26;
+    sg.translate(x, y);
+    sg.rotate((rnd() - 0.5) * 0.45);
+    const mist = sg.createRadialGradient(0, 0, 0, 0, 0, rx);
+    mist.addColorStop(0, `rgba(255,240,255,${0.025 + rnd() * 0.035})`);
+    mist.addColorStop(1, 'rgba(255,240,255,0)');
+    sg.scale(1, ry / rx);
+    sg.fillStyle = mist;
+    sg.beginPath();
+    sg.arc(0, 0, rx, 0, Math.PI * 2);
+    sg.fill();
+    sg.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  sg.restore();
+
+  sg.save();
+  sg.globalCompositeOperation = 'screen';
+  for (let i = 0; i < 170; i++) {
+    const yBias = rnd() ** 1.65;
+    const x = rnd() * width;
+    const y = height * (0.04 + yBias * 0.45);
+    const bright = 0.32 + rnd() * 0.58;
+    const radius = rnd() < 0.12 ? 1.8 + rnd() * 1.4 : 0.75 + rnd() * 0.9;
+    sg.shadowColor = `rgba(255,245,255,${bright * 0.6})`;
+    sg.shadowBlur = radius * 4.5;
+    sg.fillStyle = `rgba(255,248,255,${bright})`;
+    sg.beginPath();
+    sg.arc(x, y, radius, 0, Math.PI * 2);
+    sg.fill();
+  }
+  sg.restore();
+
+  const skyTex = new THREE.CanvasTexture(skyC);
+  skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.generateMipmaps = true;
+  skyTex.minFilter = THREE.LinearMipmapLinearFilter;
+  skyTex.magFilter = THREE.LinearFilter;
+
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(380, 64, 32),
+    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false }));
+  scene.add(sky);
+}
+
+function gateBrickMaterial(id, color) {
+  const tex = gateFrameTex(GATE_FRAME_INDEX[id]);
+  if (!tex) return mat(color, { tex: 'neonwall' });
+  const map = tex.clone();
+  map.needsUpdate = true;
+  map.wrapS = map.wrapT = THREE.MirroredRepeatWrapping;
+  map.repeat.set(1.15, 1.15);
+  return new THREE.MeshStandardMaterial({
+    map,
+    color: 0xffffff,
+    roughness: 0.72,
+    metalness: 0.08,
+    emissive: new THREE.Color(color),
+    emissiveIntensity: 0.06,
+    envMapIntensity: 0.35,
+  });
+}
+
+function addGateBrick(scene, world, id, color, x, y, z, w, h, d) {
+  world.colliders.push({
+    type: 'box',
+    min: V(x - w / 2, y - h / 2, z - d / 2),
+    max: V(x + w / 2, y + h / 2, z + d / 2),
+  });
+  const brick = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), gateBrickMaterial(id, color));
+  brick.position.set(x, y, z);
+  brick.castShadow = brick.receiveShadow = true;
+  scene.add(brick);
+  return brick;
+}
+
+function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz) {
+  const sideCenters = [-4, 4];
+  const brickH = 1.75;
+  for (const u of sideCenters) {
+    for (let i = 0; i < 4; i++) {
+      const y = brickH / 2 + i * brickH;
+      if (horiz) addGateBrick(scene, world, id, color, px + u, y, pz, 1.6, brickH, 1.6);
+      else addGateBrick(scene, world, id, color, px, y, pz + u, 1.6, brickH, 1.6);
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    const u = -3.6 + i * 2.4;
+    if (horiz) addGateBrick(scene, world, id, color, px + u, 7.6, pz, 2.4, 1.4, 1.6);
+    else addGateBrick(scene, world, id, color, px, 7.6, pz + u, 1.6, 1.4, 2.4);
+  }
+}
+
 export function buildAtrium(scene) {
   const world = newWorld({ killY: -30 });
   scene.background = new THREE.Color(0xd99cb0);
   scene.fog = new THREE.Fog(0xd99cb0, 120, 340);
   baseLighting(scene, 0xffe0c8, 0x8a6a90, [-40, 80, 30], 90);
 
-  // warm dusk sky dome: gradient + a sprinkle of early stars up top
-  const skyC = document.createElement('canvas');
-  skyC.width = 512; skyC.height = 512;
-  const sg = skyC.getContext('2d');
-  const grad = sg.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, '#4a3a8e');
-  grad.addColorStop(0.42, '#9a63b8');
-  grad.addColorStop(0.62, '#e88aa0');
-  grad.addColorStop(0.8, '#ffc978');
-  grad.addColorStop(1, '#ffc978');
-  sg.fillStyle = grad;
-  sg.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 90; i++) {
-    sg.fillStyle = `rgba(255,255,255,${0.25 + Math.random() * 0.55})`;
-    const s = Math.random() < 0.15 ? 2 : 1;
-    sg.fillRect(Math.random() * 512, Math.random() * 190, s, s);
-  }
-  const skyTex = new THREE.CanvasTexture(skyC);
-  skyTex.colorSpace = THREE.SRGBColorSpace;
-  scene.add(new THREE.Mesh(new THREE.SphereGeometry(380, 24, 12),
-    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false })));
+  addAtriumSkyDome(scene);
 
   // courtyard floor + perimeter (inner faces at x ±32, z ±48)
   addBox(scene, world, 0, -0.5, 0, 64, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [8, 12] });
@@ -3205,8 +3347,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, 44, 3, 10.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });     // gate wall
   addBox(scene, world, 40.5, 6.1, 42, 15, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
   addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
-  addMagicPortal(scene, world, 44, 3, 10.9, 5.7, 6.7, 0x8a5fff, 0);
-  makeSign(scene, 44, 5.1, 11.2, 7, '#ff40e0', '? ? ?');
+  addMagicPortal(scene, world, 44, 3, 10.9, 7.95, 6.0, 0x8a5fff, 0);
   const sancLight = new THREE.PointLight(0x8a5fff, 20, 16);
   sancLight.position.set(44, 3, 14);
   scene.add(sancLight);
@@ -3263,18 +3404,15 @@ export function buildAtrium(scene) {
     const horiz = wall === 'n' || wall === 's';
     const sgn = (wall === 'e' || wall === 's') ? 1 : -1;
     const px = horiz ? off : sgn * 30.6, pz = horiz ? sgn * 46.6 : off;  // pillar centerline
-    const P = (dx, dz, w, h, d) => addBox(scene, world, px + dx, h / 2, pz + dz, w, h, d, 0x4a4266, { tex: 'neonwall' });
     if (horiz) {
-      P(-4, 0, 1.6, 7, 1.6); P(4, 0, 1.6, 7, 1.6);
-      addBox(scene, world, px, 7.6, pz, 9.6, 1.4, 1.6, 0x4a4266, { tex: 'neonwall' });
+      addAtriumGateBrickFrame(scene, world, id, color, px, pz, true);
       addMagicPortal(scene, world, px, 3.7, pz + sgn * 0.92, 7.8, 7.8, color, sgn === -1 ? 0 : Math.PI);
     } else {
-      P(0, -4, 1.6, 7, 1.6); P(0, 4, 1.6, 7, 1.6);
-      addBox(scene, world, px, 7.6, pz, 1.6, 1.4, 9.6, 0x4a4266, { tex: 'neonwall' });
+      addAtriumGateBrickFrame(scene, world, id, color, px, pz, false);
       addMagicPortal(scene, world, px + sgn * 0.92, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
     }
     // sign panel flat on the wall above the gate (inner faces: z ±48, x ±32)
-    makeSign(scene, horiz ? px : sgn * 31.9, 9.6, horiz ? sgn * 47.95 : pz, 10,
+    makeSign(scene, horiz ? px : sgn * 31.9, 10.2, horiz ? sgn * 47.95 : pz, 13,
       '#' + color.toString(16).padStart(6, '0'), name,
       horiz ? (sgn === -1 ? 0 : Math.PI) : -sgn * Math.PI / 2);
     const L = new THREE.PointLight(color, 26, 20);

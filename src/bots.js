@@ -152,7 +152,7 @@ export class Bot {
     if (this.pos.distanceTo(pos) > 45) return;
     const from = this.reachableNearest();
     const to = nearestWaypoint(this.world, pos);
-    this.path = findPath(this.world, from, to) || [from];
+    this.path = this._findPath(from, to, { avoidWater: true }) || [from];
     this.pathIdx = 0;
     this.lootLock = 4;
   }
@@ -259,13 +259,67 @@ export class Bot {
       // already standing at the item's waypoint but can't actually grab it
       // (wrong floor, ledge above, …) — stop staring at the wall and move on
       if (to === from && this.pos.distanceTo(loot.def.pos) > 3) {
-        to = Math.floor(Math.random() * this.world.waypoints.length);
+        to = this._randomRoamWaypoint(from);
       }
     } else {
-      to = Math.floor(Math.random() * this.world.waypoints.length);
+      to = this._randomRoamWaypoint(from);
     }
-    this.path = findPath(this.world, from, to) || [from];
+    this.path = this._findPath(from, to, { avoidWater: true }) || [from];
     this.pathIdx = 0;
+  }
+
+  _randomRoamWaypoint(from = this.reachableNearest()) {
+    const wps = this.world.waypoints || [];
+    if (!wps.length) return 0;
+    const fromPos = wps[from]?.pos || this.pos;
+    const dry = [];
+    for (let i = 0; i < wps.length; i++) {
+      if (!this._pointInAnyWater(wps[i].pos)) dry.push(i);
+    }
+    const pool = dry.length ? dry : wps.map((_, i) => i);
+    let best = pool[Math.floor(Math.random() * pool.length)];
+    let bestScore = -Infinity;
+    for (let tries = 0; tries < Math.min(8, pool.length); tries++) {
+      const i = pool[Math.floor(Math.random() * pool.length)];
+      const d = wps[i].pos.distanceTo(fromPos);
+      const verticalBonus = Math.abs(wps[i].pos.y - fromPos.y) * 1.8;
+      const score = d + verticalBonus + rand(-8, 8);
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    return best;
+  }
+
+  _findPath(fromIdx, toIdx, opts = {}) {
+    if (!opts.avoidWater) return findPath(this.world, fromIdx, toIdx);
+    const dryPath = this._findDryPath(fromIdx, toIdx);
+    return dryPath || findPath(this.world, fromIdx, toIdx);
+  }
+
+  _findDryPath(fromIdx, toIdx) {
+    const wps = this.world.waypoints || [];
+    if (!wps.length || fromIdx == null || toIdx == null || !wps[fromIdx] || !wps[toIdx]) return null;
+    const targetInWater = this._pointInAnyWater(wps[toIdx]?.pos);
+    if (targetInWater) return null;
+    if (fromIdx === toIdx) return [toIdx];
+    const prev = new Array(wps.length).fill(-1);
+    const q = [fromIdx];
+    prev[fromIdx] = fromIdx;
+    while (q.length) {
+      const cur = q.shift();
+      for (const nb of wps[cur].links) {
+        if (prev[nb] !== -1) continue;
+        if (nb !== toIdx && this._pointInAnyWater(wps[nb].pos)) continue;
+        prev[nb] = cur;
+        if (nb === toIdx) {
+          const path = [toIdx];
+          let c = toIdx;
+          while (c !== fromIdx) { c = prev[c]; path.unshift(c); }
+          return path;
+        }
+        q.push(nb);
+      }
+    }
+    return null;
   }
 
   // Outward cardinal normal of the nearest surface (which way is "up" here),
@@ -441,8 +495,8 @@ export class Bot {
         if (this.shopping) { this.avoid = this.shopping; this.avoidT = 12; }
         this.shopping = null;
         this.lootLock = 0;
-        this.path = findPath(this.world, this.reachableNearest(),
-          Math.floor(Math.random() * this.world.waypoints.length)) || null;
+        const from = this.reachableNearest();
+        this.path = this._findPath(from, this._randomRoamWaypoint(from), { avoidWater: true }) || null;
         this.pathIdx = 0;
         this.stuckT = 0;
       } else if (this.stuckT >= 1.5 && this.grounded) {
@@ -586,6 +640,11 @@ export class Bot {
         moveX = away.x;
         moveZ = away.z;
         if (this.grounded) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.75);
+      } else if (!water && this._isOpenWaterAt(probeX, probeZ)) {
+        const away = this._waterAvoidVector(probeX, probeZ);
+        moveX = away.x;
+        moveZ = away.z;
+        if (this.grounded) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.35);
       }
       const accel = this.grounded ? 8 : 1.5;
       this.vel.x += (moveX * speed - this.vel.x) * Math.min(1, accel * dt);
@@ -749,6 +808,25 @@ export class Bot {
     return false;
   }
 
+  _isOpenWaterAt(x, z) {
+    for (const zone of this.world.waterZones || []) {
+      if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      if (this._hasDrySupportOverWater(x, z, zone.surfaceY)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  _hasDrySupportOverWater(x, z, surfaceY) {
+    for (const c of this.world.colliders || []) {
+      if (c.type !== 'box') continue;
+      if (x < c.min.x || x > c.max.x || z < c.min.z || z > c.max.z) continue;
+      const top = c.max.y;
+      if (top > surfaceY + 0.05 && top < this.pos.y + 1.2) return true;
+    }
+    return false;
+  }
+
   _nearestWaterEdgeGoal(zone) {
     const pad = this.radius + 0.9;
     const choices = [
@@ -778,6 +856,22 @@ export class Bot {
       if (x < l.minX || x > l.maxX || z < l.minZ || z > l.maxZ) continue;
       const dl = Math.abs(x - l.minX), dr = Math.abs(l.maxX - x);
       const db = Math.abs(z - l.minZ), dt = Math.abs(l.maxZ - z);
+      const m = Math.min(dl, dr, db, dt);
+      if (m === dl) ax -= 1;
+      else if (m === dr) ax += 1;
+      else if (m === db) az -= 1;
+      else az += 1;
+    }
+    const len = Math.hypot(ax, az) || 1;
+    return { x: ax / len, z: az / len };
+  }
+
+  _waterAvoidVector(x, z) {
+    let ax = 0, az = 0;
+    for (const zone of this.world.waterZones || []) {
+      if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      const dl = Math.abs(x - zone.minX), dr = Math.abs(zone.maxX - x);
+      const db = Math.abs(z - zone.minZ), dt = Math.abs(zone.maxZ - z);
       const m = Math.min(dl, dr, db, dt);
       if (m === dl) ax -= 1;
       else if (m === dr) ax += 1;
