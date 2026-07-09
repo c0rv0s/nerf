@@ -1740,6 +1740,7 @@ function buildCanopy(scene) {
   scene.fog = new THREE.Fog(0x47684e, 120, 330);
   baseLighting(scene, 0xa8d8a0, 0x1c3020, [60, 120, -40], 130);
   addDaytimeSkyDome(scene);
+  addCanopyStorm(scene, world);
 
   // Mossy ground split by twin RIVERS (channels x −58..−50 and x 50..58,
   // bed −4.8, water −0.55): swim them, cross the plank bridges, or duck into
@@ -3195,6 +3196,26 @@ function seededRandom(seed) {
   };
 }
 
+function softenCanvasHorizontalSeam(ctx, width, height, margin = 220) {
+  const img = ctx.getImageData(0, 0, width, height);
+  const src = new Uint8ClampedArray(img.data);
+  const m = Math.min(margin, Math.floor(width / 2));
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4;
+    for (let x = 0; x < m; x++) {
+      const weight = 1 - x / m;
+      const li = row + x * 4;
+      const ri = row + (width - 1 - x) * 4;
+      for (let c = 0; c < 4; c++) {
+        const avg = (src[li + c] + src[ri + c]) * 0.5;
+        img.data[li + c] = src[li + c] * (1 - weight) + avg * weight;
+        img.data[ri + c] = src[ri + c] * (1 - weight) + avg * weight;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 function addCanvasSkyDome(scene, draw, radius = 420) {
   const width = 2048;
   const height = 1024;
@@ -3203,6 +3224,7 @@ function addCanvasSkyDome(scene, draw, radius = 420) {
   skyC.height = height;
   const sg = skyC.getContext('2d');
   draw(sg, width, height);
+  softenCanvasHorizontalSeam(sg, width, height);
 
   const skyTex = new THREE.CanvasTexture(skyC);
   skyTex.colorSpace = THREE.SRGBColorSpace;
@@ -3298,6 +3320,247 @@ function addDaytimeSkyDome(scene) {
       sg.restore();
     }
     sg.restore();
+  });
+}
+
+function addStormCloudDome(scene) {
+  const rnd = seededRandom(0x61a7c0de);
+  const stormSky = addCanvasSkyDome(scene, (sg, width, height) => {
+    const grad = sg.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#0a1018');
+    grad.addColorStop(0.42, '#182333');
+    grad.addColorStop(0.72, '#273343');
+    grad.addColorStop(1, '#344038');
+    sg.fillStyle = grad;
+    sg.fillRect(0, 0, width, height);
+
+    sg.save();
+    sg.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 70; i++) {
+      const x = rnd() * width;
+      const y = height * (0.04 + rnd() * 0.48);
+      const rx = 150 + rnd() * 360;
+      const ry = 40 + rnd() * 90;
+      sg.save();
+      sg.translate(x, y);
+      sg.rotate((rnd() - 0.5) * 0.16);
+      sg.scale(1, ry / rx);
+      const cloud = sg.createRadialGradient(0, 0, 0, 0, 0, rx);
+      cloud.addColorStop(0, `rgba(120,142,160,${0.18 + rnd() * 0.16})`);
+      cloud.addColorStop(0.62, `rgba(72,88,106,${0.08 + rnd() * 0.1})`);
+      cloud.addColorStop(1, 'rgba(20,28,38,0)');
+      sg.fillStyle = cloud;
+      sg.beginPath();
+      sg.arc(0, 0, rx, 0, Math.PI * 2);
+      sg.fill();
+      sg.restore();
+    }
+    sg.restore();
+
+    sg.save();
+    sg.globalCompositeOperation = 'multiply';
+    for (let i = 0; i < 24; i++) {
+      const x = rnd() * width;
+      const y = height * (0.02 + rnd() * 0.5);
+      const rx = 180 + rnd() * 420;
+      const ry = 38 + rnd() * 84;
+      sg.save();
+      sg.translate(x, y);
+      sg.rotate((rnd() - 0.5) * 0.1);
+      sg.scale(1, ry / rx);
+      const shade = sg.createRadialGradient(0, 0, 0, 0, 0, rx);
+      shade.addColorStop(0, 'rgba(2,5,10,0.28)');
+      shade.addColorStop(1, 'rgba(2,5,10,0)');
+      sg.fillStyle = shade;
+      sg.beginPath();
+      sg.arc(0, 0, rx, 0, Math.PI * 2);
+      sg.fill();
+      sg.restore();
+    }
+    sg.restore();
+  }, 418);
+  stormSky.material.transparent = true;
+  stormSky.material.opacity = 0;
+  stormSky.material.depthWrite = false;
+  return stormSky;
+}
+
+function addCanopyStorm(scene, world) {
+  const stormStart = rand(10, 270);
+  const storm = {
+    startAt: stormStart,
+    endAt: stormStart + rand(60, 240),
+    nextLightning: rand(3, 6),
+    flashT: 0,
+  };
+  world.storm = storm;
+
+  const baseBackground = scene.background?.clone?.() || new THREE.Color(0x8fcbe6);
+  const baseFog = scene.fog ? {
+    color: scene.fog.color.clone(),
+    near: scene.fog.near,
+    far: scene.fog.far,
+  } : null;
+  const stormBackground = new THREE.Color(0x111923);
+  const stormFog = new THREE.Color(0x182b2b);
+  const flashSky = new THREE.Color(0xdaf8ff);
+  const flashFog = new THREE.Color(0xcff8ff);
+
+  const cloudDome = addStormCloudDome(scene);
+
+  const rainCount = 1900;
+  const rainPositions = new Float32Array(rainCount * 6);
+  const rainWindX = -0.42;
+  const rainWindZ = 0.18;
+  const rainLenY = 3.2;
+  const rainLenScale = 1.65;
+  const resetDrop = (i, y = rand(8, 44)) => {
+    const j = i * 6;
+    const x = rand(-92, 92);
+    const z = rand(-92, 92);
+    rainPositions[j] = x;
+    rainPositions[j + 1] = y;
+    rainPositions[j + 2] = z;
+    rainPositions[j + 3] = x + rainWindX * rainLenScale;
+    rainPositions[j + 4] = y - rainLenY;
+    rainPositions[j + 5] = z + rainWindZ * rainLenScale;
+  };
+  for (let i = 0; i < rainCount; i++) resetDrop(i);
+  const rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  const rainMat = new THREE.LineBasicMaterial({
+    color: 0xb4ddff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const rain = new THREE.LineSegments(rainGeo, rainMat);
+  rain.frustumCulled = false;
+  scene.add(rain);
+
+  const boltPoints = 9;
+  const boltPositions = new Float32Array(boltPoints * 3);
+  const boltGeo = new THREE.BufferGeometry();
+  boltGeo.setAttribute('position', new THREE.BufferAttribute(boltPositions, 3));
+  const boltMat = new THREE.LineBasicMaterial({
+    color: 0xe6fbff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const bolt = new THREE.Line(boltGeo, boltMat);
+  bolt.frustumCulled = false;
+  scene.add(bolt);
+
+  const forkCount = 8;
+  const forkPositions = new Float32Array(forkCount * 2 * 3);
+  const forkGeo = new THREE.BufferGeometry();
+  forkGeo.setAttribute('position', new THREE.BufferAttribute(forkPositions, 3));
+  const forkMat = new THREE.LineBasicMaterial({
+    color: 0xbff8ff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const forks = new THREE.LineSegments(forkGeo, forkMat);
+  forks.frustumCulled = false;
+  scene.add(forks);
+
+  const impact = new THREE.Mesh(new THREE.CircleGeometry(3.6, 32),
+    new THREE.MeshBasicMaterial({ color: 0xbff8ff, transparent: true, opacity: 0, depthWrite: false }));
+  impact.rotation.x = -Math.PI / 2;
+  scene.add(impact);
+
+  const flashLight = new THREE.PointLight(0xdff7ff, 0, 260);
+  scene.add(flashLight);
+
+  const strikeAt = (x, z, characters = []) => {
+    const topY = 50;
+    const hitY = 0.12;
+    for (let i = 0; i < boltPoints; i++) {
+      const p = i / (boltPoints - 1);
+      const j = i * 3;
+      const jag = i === 0 || i === boltPoints - 1 ? 0 : 2.4;
+      boltPositions[j] = x + rand(-jag, jag);
+      boltPositions[j + 1] = topY + (hitY - topY) * p;
+      boltPositions[j + 2] = z + rand(-jag, jag);
+    }
+    boltGeo.attributes.position.needsUpdate = true;
+    for (let i = 0; i < forkCount; i++) {
+      const baseP = rand(0.16, 0.82);
+      const baseY = topY + (hitY - topY) * baseP;
+      const baseX = x + rand(-2.4, 2.4);
+      const baseZ = z + rand(-2.4, 2.4);
+      const len = rand(4.5, 10);
+      const j = i * 6;
+      forkPositions[j] = baseX;
+      forkPositions[j + 1] = baseY;
+      forkPositions[j + 2] = baseZ;
+      forkPositions[j + 3] = baseX + rand(-len, len);
+      forkPositions[j + 4] = baseY - rand(3, 8);
+      forkPositions[j + 5] = baseZ + rand(-len, len);
+    }
+    forkGeo.attributes.position.needsUpdate = true;
+    impact.position.set(x, hitY + 0.02, z);
+    flashLight.position.set(x, 22, z);
+    storm.flashT = 0.72;
+    world.onLightningStrike?.({ x, y: hitY, z });
+
+    const hitR = 3.4;
+    for (const ch of characters || []) {
+      if (!ch?.alive) continue;
+      const dx = ch.pos.x - x;
+      const dz = ch.pos.z - z;
+      if (dx * dx + dz * dz <= hitR * hitR) world.onLightningHit?.(ch, { x, z });
+    }
+  };
+
+  world.anim.push((dt, t, characters = []) => {
+    const active = t >= storm.startAt && t < storm.endAt;
+    const fadeIn = THREE.MathUtils.smoothstep(t, storm.startAt, storm.startAt + 4);
+    const fadeOut = 1 - THREE.MathUtils.smoothstep(t, storm.endAt - 5, storm.endAt);
+    const mix = active ? Math.min(fadeIn, fadeOut) : 0;
+    storm.mix = mix;
+    storm.flashT = Math.max(0, storm.flashT - dt);
+    const flash = Math.min(1, storm.flashT / 0.42);
+
+    cloudDome.material.opacity = 0.86 * mix;
+    rainMat.opacity = 0.78 * mix;
+    if (scene.background?.isColor) scene.background.copy(baseBackground).lerp(stormBackground, 0.82 * mix).lerp(flashSky, 0.32 * flash);
+    if (scene.fog && baseFog) {
+      scene.fog.color.copy(baseFog.color).lerp(stormFog, 0.8 * mix).lerp(flashFog, 0.36 * flash);
+      scene.fog.near = THREE.MathUtils.lerp(baseFog.near, 44, mix);
+      scene.fog.far = THREE.MathUtils.lerp(baseFog.far, 145, mix);
+    }
+
+    if (mix > 0.01) {
+      const fall = 55 * dt;
+      const windX = rainWindX * fall / rainLenY;
+      const windZ = rainWindZ * fall / rainLenY;
+      for (let i = 0; i < rainCount; i++) {
+        const j = i * 6;
+        rainPositions[j] += windX;
+        rainPositions[j + 1] -= fall;
+        rainPositions[j + 2] += windZ;
+        rainPositions[j + 3] += windX;
+        rainPositions[j + 4] -= fall;
+        rainPositions[j + 5] += windZ;
+        if (rainPositions[j + 4] < -4 || Math.abs(rainPositions[j]) > 96 || Math.abs(rainPositions[j + 2]) > 96) resetDrop(i, rand(40, 56));
+      }
+      rainGeo.attributes.position.needsUpdate = true;
+    }
+
+    boltMat.opacity = flash;
+    forkMat.opacity = flash * 0.72;
+    impact.material.opacity = flash * 0.58;
+    flashLight.intensity = flash * 360;
+
+    if (!active) return;
+    storm.nextLightning -= dt;
+    if (storm.nextLightning <= 0) {
+      strikeAt(rand(-76, 76), rand(-76, 76), characters);
+      storm.nextLightning = rand(20, 30);
+    }
   });
 }
 

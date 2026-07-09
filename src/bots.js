@@ -39,6 +39,7 @@ export class Bot {
     this.kills = 0; this.deaths = 0;
     this.damageMult = 1;
     this.powerup = null;
+    this.paralyzeT = 0;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -101,6 +102,7 @@ export class Bot {
     this.speedMult = 1;
     this.speedTime = 0;
     this.powerup = null;
+    this.paralyzeT = 0;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -469,6 +471,18 @@ export class Bot {
   update(dt, characters, fire) {
     if (!this.alive) return;
     if (this.world.escher) return this.updateEscher(dt, characters, fire);
+
+    if (this.paralyzeT > 0) {
+      this.paralyzeT = Math.max(0, this.paralyzeT - dt);
+      this.vel.x *= Math.exp(-12 * dt);
+      this.vel.z *= Math.exp(-12 * dt);
+      this.grounded = moveCharacter(this, this.world, dt);
+      this.cooldown = Math.max(0, this.cooldown - dt);
+      this.syncGunModel();
+      this.mesh.position.copy(this.pos);
+      this.mesh.rotation.y = this.aimYaw;
+      return;
+    }
 
     this.thinkTimer -= dt;
     if (this.thinkTimer <= 0) {

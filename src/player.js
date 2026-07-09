@@ -25,6 +25,7 @@ export class Player {
     this.kills = 0; this.deaths = 0;
     this.damageMult = 1;
     this.powerup = null;       // {kind, timeLeft}
+    this.paralyzeT = 0;
     this.weapons = { blaster: true };  // owned guns — ammo alone isn't enough
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -96,6 +97,7 @@ export class Player {
     this.alive = true;
     this.damageMult = 1;
     this.powerup = null;
+    this.paralyzeT = 0;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -204,10 +206,16 @@ export class Player {
   // ---- normal, Y-gravity movement + camera (all maps except PRISM RUN) ----
   _moveNormal(dt) {
     this._vineExitT = Math.max(0, (this._vineExitT || 0) - dt);
+    const paralyzed = this.paralyzeT > 0;
+    if (paralyzed) {
+      this.paralyzeT = Math.max(0, this.paralyzeT - dt);
+      this.wantJump = false;
+      this.firing = false;
+    }
     const env = this._environmentState();
     const speed = this.world.playerSpeed * (this.speedMult || 1) * env.speedMult;
-    const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
-    const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    const f = paralyzed ? 0 : (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
+    const s = paralyzed ? 0 : (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     let wx = (-sin * f + cos * s), wz = (-cos * f - sin * s);
     const wl = Math.hypot(wx, wz);
@@ -219,6 +227,7 @@ export class Player {
     this.vel.z += wz * speed * accel * dt * 0.12;
     const damp = this.grounded ? Math.exp(-8 * dt) : Math.exp(-0.4 * dt);
     if (wl === 0 && this.grounded) { this.vel.x *= damp; this.vel.z *= damp; }
+    if (paralyzed) { this.vel.x *= Math.exp(-12 * dt); this.vel.z *= Math.exp(-12 * dt); }
     const hs = Math.hypot(this.vel.x, this.vel.z);
     const cap = this.grounded ? speed : Math.max(speed, prevHs);
     if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
@@ -230,7 +239,11 @@ export class Player {
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
-    if (vine) {
+    if (paralyzed) {
+      this.jumpBuffer = 0;
+      this.wantJump = false;
+      this.coyote = 0;
+    } else if (vine) {
       this._applyVineMotion(dt, vine);
       this.jumpBuffer = 0;
       this.wantJump = false;

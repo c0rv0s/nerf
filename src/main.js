@@ -12,7 +12,7 @@ import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
 import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, nextLoadedWeaponAfter } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx, setListener, setMasterVolume } from './audio.js';
+import { sfx, setListener, setMasterVolume, setRainAmbience } from './audio.js';
 import { multiplayer } from './multiplayer.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
@@ -36,6 +36,7 @@ const KILL_AWARD_LABELS = {
 const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
 const WATER = { name: 'Water', color: '#3fcfff', isPlayer: false, kills: 0, team: 'water' };
+const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills: 0, team: 'storm' };
 
 function setText(el, value) {
   if (!el) return;
@@ -216,6 +217,7 @@ function teardown() {
   setPauseScoreboardLayer(false);
   updateUnderwaterFx(1, true);
   updateFoliageFx(1, true);
+  setRainAmbience(0);
   G.over = true;
   for (const ch of G.characters || []) disposeNameTag(ch);
   G.projectiles.clear();
@@ -488,6 +490,18 @@ function startMatch(mapDef, mode = 'ffa') {
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
 
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  world.onLightningStrike = (pos) => sfx('thunder', pos);
+  world.onLightningHit = (ch) => {
+    if (!ch?.alive) return;
+    ch.paralyzeT = Math.max(ch.paralyzeT || 0, 2);
+    if (ch.vel) {
+      ch.vel.x *= 0.08;
+      ch.vel.z *= 0.08;
+      if (ch.vel.y > 0) ch.vel.y *= 0.25;
+    }
+    applyDamage(ch, 50, LIGHTNING, { environmental: true });
+    if (ch.isPlayer) hud.message('LIGHTNING STRIKE', '#dff7ff');
+  };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
 
   G = {
@@ -2310,6 +2324,10 @@ function stepAtrium(dt) {
   }
 }
 
+function updateStormAudio() {
+  setRainAmbience(G?.world?.storm?.mix || 0);
+}
+
 function step(dt) {
   if (G.over) {
     updateVictoryPodium(dt);
@@ -2326,6 +2344,7 @@ function step(dt) {
   setListener(G.player.pos); // distance-based sfx volume
 
   G.world.update?.(dt, G.characters);
+  updateStormAudio();
   if (G.multiplayerHost) {
     syncRemoteHumans();
     syncMultiplayerNameTags();
@@ -2483,6 +2502,7 @@ function stepMultiplayer(dt) {
   G.timeLeft = Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000);
   setListener(G.player.pos);
   G.world.update?.(dt, G.characters);
+  updateStormAudio();
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);
   G.projectiles.update(dt, G.characters);

@@ -2,6 +2,7 @@
 let ctx = null;
 let masterBus = null;
 let masterVolume = 1;
+let rainAmbience = null;
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') ctx.resume();
@@ -83,7 +84,64 @@ const SFX = {
   death:    () => blip({ freq: 400, end: 60, dur: 0.5, vol: 0.2, type: 'sawtooth' }),
   explode:  () => { blip({ freq: 150, end: 30, dur: 0.4, vol: 0.25, type: 'sawtooth' });
                     blip({ freq: 90, end: 25, dur: 0.5, vol: 0.2, type: 'square', delay: 0.03 }); },
+  thunder:  () => thunder(),
 };
+
+function noiseBuffer(a, seconds = 2) {
+  const buffer = a.createBuffer(1, Math.floor(a.sampleRate * seconds), a.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
+
+function thunder() {
+  try {
+    const a = ac();
+    const t = a.currentTime;
+    const noise = a.createBufferSource();
+    noise.buffer = noiseBuffer(a, 1.7);
+    const lp = a.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(520, t);
+    lp.frequency.exponentialRampToValueAtTime(70, t + 1.55);
+    const g = a.createGain();
+    g.gain.setValueAtTime(0.001 * _mult, t);
+    g.gain.exponentialRampToValueAtTime(0.26 * _mult, t + 0.045);
+    g.gain.exponentialRampToValueAtTime(0.018 * _mult, t + 1.65);
+    noise.connect(lp).connect(g).connect(bus(a));
+    noise.start(t);
+    noise.stop(t + 1.75);
+
+    blip({ freq: 58, end: 28, type: 'sine', dur: 1.25, vol: 0.18, delay: 0.03 });
+    blip({ freq: 92, end: 38, type: 'sine', dur: 0.72, vol: 0.08, delay: 0.18 });
+  } catch { /* audio blocked — fine */ }
+}
+
+export function setRainAmbience(level = 0) {
+  const target = Math.max(0, Math.min(1, Number(level) || 0));
+  try {
+    const a = ac();
+    if (!rainAmbience) {
+      const source = a.createBufferSource();
+      source.buffer = noiseBuffer(a, 3);
+      source.loop = true;
+      const hp = a.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 650;
+      const lp = a.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 5200;
+      const gain = a.createGain();
+      gain.gain.value = 0.001;
+      source.connect(hp).connect(lp).connect(gain).connect(bus(a));
+      source.start();
+      rainAmbience = { gain };
+    }
+    const now = a.currentTime;
+    rainAmbience.gain.gain.cancelScheduledValues(now);
+    rainAmbience.gain.gain.setTargetAtTime(0.06 * target, now, 0.25);
+  } catch { /* audio blocked — fine */ }
+}
 
 export function sfx(name, at = null) {
   if (at) {
