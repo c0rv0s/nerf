@@ -40,7 +40,11 @@ const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
   { id: 'asteroids', name: 'ASTEROID BELT', bounds: 78, spawns: [[-45, 8, -20], [45, 8, 20], [-30, 8, 35], [30, 8, -35], [0, 8, -45], [0, 8, 45], [-55, 8, 0], [55, 8, 0]] },
-  { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-48, 0.1, -48], [48, 0.1, 48], [-48, 0.1, 48], [48, 0.1, -48], [0, 0.1, -62], [0, 0.1, 62], [-62, 0.1, 0], [62, 0.1, 0]] },
+  // Mirrors buildCanopy's FFA pool. The previous corner coordinates were
+  // inside the solid tree trunks, so the authoritative multiplayer snapshot
+  // could repeatedly snap players into scenery.
+  { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25], [
+    -40, 20.2, 40], [40, 20.2, -40], [8, 10.2, 45], [-8, 10.2, -45], [-34, 0.1, -30], [34, 0.1, -30], [-34, 0.1, 30], [34, 0.1, 30]] },
   { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },
   { id: 'prism', name: 'PRISM RUN', bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
@@ -392,8 +396,8 @@ function colorForSlot(i, team, mode) {
   return mode === 'tdm' ? TEAM_COLORS[team] : COLORS[i % COLORS.length];
 }
 
-function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE) {
-  const spawn = chooseSpawn(map, previousSpawnIndex);
+function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE, spawnCycle = []) {
+  const spawn = chooseSpawn(map, previousSpawnIndex, null, spawnCycle);
   const team = teamForSlot(i, mode);
   const s = {
     id: `slot-${i}`,
@@ -404,6 +408,7 @@ function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE) {
     color: colorForSlot(i, team, mode),
     pos: spawn.pos,
     lastSpawnIndex: spawn.index,
+    spawnCycle: spawn.cycle,
     yaw: Math.random() * Math.PI * 2,
     pitch: 0,
     up: { x: 0, y: 1, z: 0 },
@@ -421,7 +426,7 @@ function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE) {
 
 function resetSlotForHuman(slot, conn, lobby) {
   const idx = Number(slot.id.split('-')[1]) || 0;
-  const spawn = chooseSpawn(lobby.map, slot.lastSpawnIndex);
+  const spawn = chooseSpawn(lobby.map, slot.lastSpawnIndex, null, slot.spawnCycle);
   const team = teamForSlot(idx, lobby.mode);
   Object.assign(slot, {
     human: true,
@@ -431,6 +436,7 @@ function resetSlotForHuman(slot, conn, lobby) {
     color: colorForSlot(idx, team, lobby.mode),
     pos: spawn.pos,
     lastSpawnIndex: spawn.index,
+    spawnCycle: spawn.cycle,
     yaw: 0,
     pitch: 0,
     up: { x: 0, y: 1, z: 0 },
@@ -452,7 +458,7 @@ function convertToBot(slot, lobby) {
   const idx = Number(slot.id.split('-')[1]) || 0;
   if (slot.reservedToken) reconnectReservations.delete(slot.reservedToken);
   clearTimeout(slot.reservationTimer);
-  Object.assign(slot, makeBotSlot(idx, lobby.map, slot.lastSpawnIndex, lobby.mode), { id: slot.id });
+  Object.assign(slot, makeBotSlot(idx, lobby.map, slot.lastSpawnIndex, lobby.mode, slot.spawnCycle), { id: slot.id });
   delete slot.reservedToken;
   delete slot.reservationTimer;
 }
@@ -706,7 +712,7 @@ function setPhase(lobby, phase) {
     lobby.latestScores = { blue: 0, red: 0 };
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
-      if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map, s.lastSpawnIndex, lobby.mode), { id: s.id });
+      if (!s.human) Object.assign(s, makeBotSlot(i, lobby.map, s.lastSpawnIndex, lobby.mode, s.spawnCycle), { id: s.id });
     }
   } else if (phase === 'playing') {
     lobby.map = chooseVotedMap(lobby);
@@ -720,13 +726,14 @@ function setPhase(lobby, phase) {
     const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
-      const spawn = chooseSpawn(lobby.map, s.lastSpawnIndex, usedSpawns);
+      const spawn = chooseSpawn(lobby.map, s.lastSpawnIndex, usedSpawns, s.spawnCycle);
       const team = teamForSlot(i, lobby.mode);
       usedSpawns.add(spawn.index);
       s.team = team;
       s.color = colorForSlot(i, team, lobby.mode);
       s.pos = spawn.pos;
       s.lastSpawnIndex = spawn.index;
+      s.spawnCycle = spawn.cycle;
       s.hp = 100;
       s.alive = true;
       s.respawn = 0;
@@ -756,14 +763,25 @@ function setPhase(lobby, phase) {
   broadcastLobbyMeta(lobby);
 }
 
-function chooseSpawn(map, previousIndex = null, usedIndices = null) {
+function chooseSpawn(map, previousIndex = null, usedIndices = null, priorCycle = []) {
   const spawns = map.spawns;
-  let candidates = spawns.map((_, i) => i);
+  const indices = spawns.map((_, i) => i);
+  // Shuffle once per player, then consume the bag. This keeps respawns spread
+  // over the whole map instead of merely avoiding the immediately prior point.
+  let cycle = priorCycle.filter(i => Number.isInteger(i) && i >= 0 && i < spawns.length);
+  if (!cycle.length) {
+    cycle = [...indices];
+    for (let i = cycle.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [cycle[i], cycle[j]] = [cycle[j], cycle[i]];
+    }
+  }
+  let candidates = cycle;
   if (usedIndices && usedIndices.size < spawns.length) candidates = candidates.filter(i => !usedIndices.has(i));
   if (spawns.length > 1 && candidates.length > 1) candidates = candidates.filter(i => i !== previousIndex);
-  const index = candidates[Math.floor(Math.random() * candidates.length)] ?? 0;
+  const index = candidates[0] ?? indices.find(i => i !== previousIndex) ?? 0;
   const p = spawns[index];
-  return { index, pos: { x: p[0], y: p[1], z: p[2] } };
+  return { index, pos: { x: p[0], y: p[1], z: p[2] }, cycle: cycle.filter(i => i !== index) };
 }
 
 function tickLobby(lobby) {

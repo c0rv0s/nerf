@@ -1979,9 +1979,12 @@ function buildCanopy(scene) {
   // Spawns
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.blue.push(V(-62, 0.1, dz));
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.red.push(V(62, 0.1, dz));
+  // Keep these clear of trunks, ramps, and hedges. The multiplayer server
+  // mirrors this pool so its authoritative position cannot snap a player into
+  // scenery after the local spawn selection has placed them safely.
   for (const [x, y, z] of [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25],
-                           [-40, 20.2, 40], [40, 20.2, -40], [-30, 0.1, 0], [8, 10.2, 45],
-                           [-8, 10.2, -45], [-45, 0.1, 45], [45, 0.1, -45]]) {
+                           [-40, 20.2, 40], [40, 20.2, -40], [8, 10.2, 45], [-8, 10.2, -45],
+                           [-34, 0.1, -30], [34, 0.1, -30], [-34, 0.1, 30], [34, 0.1, 30]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
