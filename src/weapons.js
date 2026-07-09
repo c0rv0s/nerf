@@ -39,6 +39,20 @@ export const WEAPONS = {
                 beamDamageInterval: 0.4, secretMapOnly: true, texture: 'refractor', sound: 'hyper' },
 };
 
+// Presentation-only weapon character. These values never change damage, spread,
+// rate of fire, or projectile behavior; they drive viewmodel and camera response.
+export const WEAPON_FEEL = {
+  blaster:    { recoil: 0.62, camera: 0.004, return: 13, flash: 0.85 },
+  scatter:    { recoil: 1.35, camera: 0.012, return: 8,  flash: 1.25 },
+  pulsar:     { recoil: 0.34, camera: 0.003, return: 18, flash: 0.72 },
+  sidewinder: { recoil: 0.82, camera: 0.007, return: 10, flash: 0.9 },
+  zooka:      { recoil: 1.55, camera: 0.016, return: 7,  flash: 1.45 },
+  whomper:    { recoil: 1.8,  camera: 0.02,  return: 6,  flash: 1.6 },
+  hyper:      { recoil: 1.15, camera: 0.011, return: 9,  flash: 1.1 },
+  parasite:   { recoil: 0.92, camera: 0.008, return: 10, flash: 1.05 },
+  refractor:  { recoil: 0.7,  camera: 0.006, return: 8,  flash: 1.35 },
+};
+
 export function nextLoadedWeaponAfter(currentId, owned = {}, ammo = {}) {
   const start = Math.max(0, WEAPON_ORDER.indexOf(currentId));
   for (let offset = 1; offset < WEAPON_ORDER.length; offset++) {
@@ -581,30 +595,49 @@ export class FXPool {
     this.scene = scene;
     this.puffs = [];
     this.geo = new THREE.SphereGeometry(1, 8, 6);
+    this.ringGeo = new THREE.TorusGeometry(1, 0.09, 5, 18);
   }
   spawnPuff(pos, color, scale = 1) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false });
-    const m = new THREE.Mesh(this.geo, mat);
-    m.position.copy(pos);
-    m.scale.setScalar(scale * 0.3);
-    this.scene.add(m);
-    this.puffs.push({ m, t: 0, scale });
+    const coreMat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.72, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const ringMat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.9, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const group = new THREE.Group();
+    const core = new THREE.Mesh(this.geo, coreMat);
+    const ring = new THREE.Mesh(this.ringGeo, ringMat);
+    ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    group.add(core, ring);
+    group.position.copy(pos);
+    group.scale.setScalar(scale * 0.22);
+    this.scene.add(group);
+    this.puffs.push({ m: group, core, ring, mats: [coreMat, ringMat], t: 0, scale });
   }
   update(dt) {
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const p = this.puffs[i];
       p.t += dt * 3.5;
-      p.m.scale.setScalar(p.scale * (0.3 + p.t));
-      p.m.material.opacity = Math.max(0, 0.85 * (1 - p.t));
+      const ease = 1 - (1 - Math.min(1, p.t)) ** 3;
+      p.m.scale.setScalar(p.scale * (0.22 + ease * 0.9));
+      p.core.scale.setScalar(1 + ease * 0.35);
+      p.ring.scale.setScalar(0.7 + ease * 1.7);
+      p.mats[0].opacity = Math.max(0, 0.72 * (1 - p.t));
+      p.mats[1].opacity = Math.max(0, 0.9 * (1 - p.t) ** 1.5);
       if (p.t >= 1) {
         this.scene.remove(p.m);
-        p.m.material.dispose();
+        for (const mat of p.mats) mat.dispose();
         this.puffs.splice(i, 1);
       }
     }
   }
   clear() {
-    for (const p of this.puffs) { this.scene.remove(p.m); p.m.material.dispose(); }
+    for (const p of this.puffs) {
+      this.scene.remove(p.m);
+      for (const mat of p.mats) mat.dispose();
+    }
     this.puffs.length = 0;
   }
 }

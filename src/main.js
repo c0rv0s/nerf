@@ -12,7 +12,7 @@ import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
 import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, nextLoadedWeaponAfter } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx, setListener, setMasterVolume, setRainAmbience } from './audio.js';
+import { sfx, setEffectsVolume, setListener, setMasterVolume, setRainAmbience } from './audio.js';
 import { multiplayer } from './multiplayer.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
@@ -90,7 +90,7 @@ function playMusicIndex(idx) {
 function musicPlay() {
   if (!musicEl) {
     musicEl = new Audio();
-    musicEl.volume = MUSIC_BASE_VOLUME * gameVolume;
+    musicEl.volume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
     musicEl.addEventListener('ended', () => {
       playMusicIndex(nextMusicIndex());
     });
@@ -100,12 +100,21 @@ function musicPlay() {
 function musicStop() { musicEl?.pause(); }
 
 const volumeStorageKey = 'nerf-arena-volume-v2';
+const musicMixStorageKey = 'nerf-arena-music-mix-v1';
+const effectsMixStorageKey = 'nerf-arena-effects-mix-v1';
 let gameVolume = 1;
+let musicMix = 1;
+let effectsMix = 1;
 try {
-  const storedVolume = Number(localStorage.getItem(volumeStorageKey));
-  if (Number.isFinite(storedVolume)) gameVolume = Math.max(0, Math.min(1, storedVolume));
+  const storedVolume = localStorage.getItem(volumeStorageKey);
+  const storedMusic = localStorage.getItem(musicMixStorageKey);
+  const storedEffects = localStorage.getItem(effectsMixStorageKey);
+  if (storedVolume !== null && Number.isFinite(Number(storedVolume))) gameVolume = Math.max(0, Math.min(1, Number(storedVolume)));
+  if (storedMusic !== null && Number.isFinite(Number(storedMusic))) musicMix = Math.max(0, Math.min(1, Number(storedMusic)));
+  if (storedEffects !== null && Number.isFinite(Number(storedEffects))) effectsMix = Math.max(0, Math.min(1, Number(storedEffects)));
 } catch { /* localStorage may be unavailable */ }
 setMasterVolume(gameVolume);
+setEffectsVolume(effectsMix);
 
 const ua = navigator.userAgent || '';
 const isSafari = /\bSafari\//.test(ua) && !/\b(Chrome|Chromium|CriOS|FxiOS|Edg|OPR)\//.test(ua);
@@ -123,11 +132,31 @@ const performanceProfile = {
 function setGameVolume(value, persist = true) {
   gameVolume = Math.max(0, Math.min(1, Number(value) || 0));
   setMasterVolume(gameVolume);
-  if (musicEl) musicEl.volume = MUSIC_BASE_VOLUME * gameVolume;
+  if (musicEl) musicEl.volume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
   if (volumeSlider) volumeSlider.value = String(Math.round(gameVolume * 100));
   setText(volumeValue, `${Math.round(gameVolume * 100)}%`);
   if (persist) {
     try { localStorage.setItem(volumeStorageKey, String(gameVolume)); } catch { /* ignore */ }
+  }
+}
+
+function setMusicMix(value, persist = true) {
+  musicMix = Math.max(0, Math.min(1, Number(value) || 0));
+  if (musicEl) musicEl.volume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
+  if (musicSlider) musicSlider.value = String(Math.round(musicMix * 100));
+  setText(musicValue, `${Math.round(musicMix * 100)}%`);
+  if (persist) {
+    try { localStorage.setItem(musicMixStorageKey, String(musicMix)); } catch { /* ignore */ }
+  }
+}
+
+function setEffectsMix(value, persist = true) {
+  effectsMix = Math.max(0, Math.min(1, Number(value) || 0));
+  setEffectsVolume(effectsMix);
+  if (effectsSlider) effectsSlider.value = String(Math.round(effectsMix * 100));
+  setText(effectsValue, `${Math.round(effectsMix * 100)}%`);
+  if (persist) {
+    try { localStorage.setItem(effectsMixStorageKey, String(effectsMix)); } catch { /* ignore */ }
   }
 }
 
@@ -139,7 +168,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, performanceProfile.pixelRatioC
 renderer.shadowMap.enabled = performanceProfile.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.02;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 900);
 
 // Post-processing: MSAA render target → bloom on emissives → tonemap/output
@@ -149,7 +179,7 @@ const composer = new EffectComposer(renderer,
     type: performanceProfile.postprocessing ? THREE.HalfFloatType : THREE.UnsignedByteType,
   }));
 const renderPass = new RenderPass(new THREE.Scene(), camera);
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.35, 0.5, 0.9);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.58, 0.94);
 bloomPass.enabled = performanceProfile.postprocessing;
 composer.addPass(renderPass);
 composer.addPass(bloomPass);
@@ -695,9 +725,9 @@ function ensureHostRemoteHuman(slot) {
   remote.team = team;
   remote.name = slot.name || 'Player';
   remote.color = color;
-  remote.score = 0;
-  remote.kills = 0;
-  remote.deaths = 0;
+  remote.score = slot.score || 0;
+  remote.kills = slot.kills || 0;
+  remote.deaths = slot.deaths || 0;
   remote.awards = {};
   remote.killChain = null;
   G.characters.push(remote);
@@ -2019,7 +2049,13 @@ const clickcatch = document.getElementById('clickcatch');
 const volumeControl = document.getElementById('pausevolume');
 const volumeSlider = document.getElementById('volumeslider');
 const volumeValue = document.getElementById('volumevalue');
+const musicSlider = document.getElementById('musicslider');
+const musicValue = document.getElementById('musicvalue');
+const effectsSlider = document.getElementById('effectsslider');
+const effectsValue = document.getElementById('effectsvalue');
 setGameVolume(gameVolume, false);
+setMusicMix(musicMix, false);
+setEffectsMix(effectsMix, false);
 updateTrackTitle();
 
 function setPauseScoreboardLayer(on) {
@@ -2073,6 +2109,8 @@ hud.els.board.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeControl.addEventListener('click', (e) => e.stopPropagation());
 volumeControl.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeSlider.addEventListener('input', () => setGameVolume(Number(volumeSlider.value) / 100));
+musicSlider.addEventListener('input', () => setMusicMix(Number(musicSlider.value) / 100));
+effectsSlider.addEventListener('input', () => setEffectsMix(Number(effectsSlider.value) / 100));
 quitBtn.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();               // don't let the overlay re-lock the pointer

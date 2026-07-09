@@ -42,11 +42,13 @@ export class HUD {
     const { player, mode, scores, characters, timeLeft, showBoard, world } = state;
     const e = this.els;
     setText(e.health, Math.max(0, Math.ceil(player.hp)));
+    e.hud.classList.toggle('critical', player.hp > 0 && player.hp <= 25);
     setText(e.shield, player.shield > 0 ? `+${Math.ceil(player.shield)} 🛡` : '');
     setStyle(e.fill, 'width', Math.max(0, player.hp) + '%');
     const w = WEAPONS[player.weapon];
     setText(e.wname, w.name);
     setText(e.ammo, player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] ?? 0);
+    $('ammo').classList.toggle('low-ammo', player.weapon !== 'blaster' && (player.ammo[player.weapon] ?? 0) <= 2);
 
     // weapon slots
     const weaponOrder = world?.availableWeapons || WEAPON_ORDER.filter(id => !WEAPONS[id].secretMapOnly);

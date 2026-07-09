@@ -205,6 +205,119 @@
     width:min(92vw,760px); text-align:center; font-size:clamp(12px,1.7vw,16px);
     color:#dfe7ff; font-family:Arial,sans-serif; font-weight:900; letter-spacing:.5px;
     text-shadow:0 2px 8px #000; }
+
+  /* ---------- ARENA PRESENTATION PASS ---------- */
+  :root {
+    --ink:#070b14; --panel:rgba(8,13,25,.82); --line:rgba(184,214,255,.22);
+    --paper:#f5f8ff; --muted:#a9b6cc; --gold:#ffc845; --cyan:#65d7ff;
+    --display:Impact,Haettenschweiler,"Arial Narrow Bold",sans-serif;
+    --body:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  html,body { font-family:var(--display); background:#070b14; }
+  #cinematicFx { position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:
+      radial-gradient(ellipse at center, transparent 58%, rgba(3,6,14,.11) 82%, rgba(3,6,14,.24) 100%),
+      repeating-linear-gradient(0deg,rgba(255,255,255,.009) 0 1px,transparent 1px 3px);
+    opacity:1; }
+  #underwaterFx,#foliageFx { z-index:2; }
+  #hud { z-index:3; font-family:var(--body); }
+  .panel { color:var(--paper); background:
+      linear-gradient(135deg,rgba(25,38,63,.94),rgba(7,12,24,.86));
+    border:1px solid var(--line); border-radius:4px; backdrop-filter:blur(9px) saturate(1.15);
+    box-shadow:inset 0 1px rgba(255,255,255,.08),0 14px 36px rgba(2,7,18,.25); }
+
+  #crosshair { width:30px; height:30px; border:1px solid rgba(255,255,255,.48); border-radius:50%;
+    background:radial-gradient(circle,#fff 0 1px,transparent 2px); opacity:.9;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.9)); }
+  #crosshair::before,#crosshair::after { box-shadow:none; background:transparent; }
+  #crosshair::before { left:14px; top:-7px; width:2px; height:44px; transform:none;
+    background:linear-gradient(transparent 0 5px,#fff 5px 11px,transparent 11px 33px,#fff 33px 39px,transparent 39px); }
+  #crosshair::after { left:-7px; top:14px; width:44px; height:2px; transform:none;
+    background:linear-gradient(90deg,transparent 0 5px,#fff 5px 11px,transparent 11px 33px,#fff 33px 39px,transparent 39px); }
+  #hitmarker { width:38px; height:38px; filter:drop-shadow(0 0 5px rgba(255,200,69,.75)); }
+
+  #health,#ammo { bottom:22px; min-width:238px; padding:22px 20px 15px;
+    clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px)); }
+  #health { left:22px; }
+  #ammo { right:22px; }
+  #health::before,#ammo::before { position:absolute; top:7px; font:700 9px/1 var(--body);
+    letter-spacing:2.4px; text-transform:uppercase; color:var(--muted); }
+  #health::before { content:"VITALS"; left:20px; }
+  #ammo::before { content:"LOADOUT"; right:20px; }
+  #healthnum,#ammonum { font-family:var(--display); font-variant-numeric:tabular-nums;
+    line-height:.9; letter-spacing:.5px; text-shadow:0 3px 14px rgba(0,0,0,.42); }
+  #healthnum { font-size:34px; color:var(--paper); }
+  #ammonum { font-size:42px; color:var(--paper); }
+  #healthbar { height:7px; margin-top:10px; background:rgba(255,255,255,.1); border-radius:0;
+    outline:1px solid rgba(255,255,255,.1); outline-offset:2px; }
+  #healthfill { border-radius:0; background:linear-gradient(90deg,#ff5b3e 0%,#ffc845 88%);
+    box-shadow:0 0 13px rgba(255,151,50,.42); transition:width .16s cubic-bezier(.2,.8,.2,1); }
+  #hud.critical #health { border-color:rgba(255,75,62,.8); animation:criticalPulse 1s ease-in-out infinite; }
+  #hud.critical #healthnum { color:#ff6a55; }
+  #ammo.low-ammo #ammonum { color:#ff765f; text-shadow:0 0 18px rgba(255,72,50,.55); }
+  @keyframes criticalPulse { 50%{filter:drop-shadow(0 0 10px rgba(255,55,45,.34))} }
+  #weaponname { font:700 11px/1 var(--body); color:var(--cyan); letter-spacing:2px; text-transform:uppercase; }
+  #wslots { gap:4px; margin-top:9px; }
+  .wslot { width:24px; height:20px; border-radius:2px; line-height:18px; font:700 10px/18px var(--body);
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.13); color:#667289; }
+  .wslot.owned { color:#dce9ff; background:rgba(101,215,255,.12); border-color:rgba(101,215,255,.26); }
+  .wslot.empty { color:#7e8da5; background:transparent; }
+  .wslot.active { color:var(--ink); background:var(--gold); border-color:#fff1b5;
+    box-shadow:0 0 12px rgba(255,200,69,.5); transform:translateY(-2px); }
+
+  #scores { top:18px; gap:14px; padding:9px 24px 10px;
+    clip-path:polygon(12px 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,12px 100%,0 50%); }
+  .teamscore { min-width:78px; font:400 25px/1 var(--display); letter-spacing:1px; font-variant-numeric:tabular-nums; }
+  #timer { padding:0 12px; margin:0; font:700 14px/1 var(--body); color:#fff; letter-spacing:1.5px;
+    font-variant-numeric:tabular-nums; border-left:1px solid var(--line); border-right:1px solid var(--line); }
+  #top3 { top:18px; left:22px; min-width:170px; padding:11px 14px; border-left:3px solid var(--cyan);
+    font:700 11px/1.7 var(--body); letter-spacing:.4px; }
+  #top3 .t3rank { color:#6f7d95; }
+  #killfeed { top:18px; right:22px; font:700 11px/1.2 var(--body); letter-spacing:.3px; }
+  #killfeed div { padding:7px 10px 7px 14px; border-radius:2px; margin-bottom:5px;
+    background:linear-gradient(90deg,rgba(8,13,25,.35),rgba(8,13,25,.88));
+    border-right:2px solid rgba(255,255,255,.3); animation:feedIn .18s ease-out; }
+  @keyframes feedIn { from{opacity:0;transform:translateX(12px)} to{opacity:1;transform:none} }
+  #message { top:29%; width:min(720px,88vw); font:400 clamp(20px,3vw,34px)/1 var(--display);
+    letter-spacing:1.4px; text-transform:uppercase; text-shadow:0 3px 18px #000,0 0 22px currentColor; }
+  #powerup { top:78px; padding:8px 18px; border-radius:2px; font:800 11px/1 var(--body);
+    letter-spacing:1.5px; text-transform:uppercase; }
+  #awards { top:128px; gap:8px; }
+  .awardtoast { min-width:270px; padding:10px 22px; border-width:1px; border-radius:2px;
+    background:linear-gradient(120deg,rgba(15,21,36,.92),rgba(38,26,12,.88));
+    clip-path:polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%); }
+  .awardtoast strong { font:400 23px/1 var(--display); letter-spacing:1.2px; }
+  .awardtoast span { font:700 9px/1.2 var(--body); color:#c7d4e9; }
+
+  #scoreboard { min-width:min(620px,92vw); padding:22px 28px 26px; border-top:3px solid var(--gold); }
+  #scoreboard h3 { font:400 24px/1 var(--display); letter-spacing:1.5px; }
+  #scoreboard table { font:650 12px/1.35 var(--body); font-variant-numeric:tabular-nums; }
+  #scoreboard td,#scoreboard th { padding:7px 10px; border-bottom:1px solid rgba(255,255,255,.07); }
+  #scoreboard th { color:#8c9ab0; font-size:9px; letter-spacing:1.2px; }
+
+  #clickcatch { z-index:5; background:radial-gradient(ellipse at 50% 42%,rgba(13,22,39,.48),rgba(3,7,15,.88));
+    font:400 clamp(25px,4vw,44px)/1 var(--display); letter-spacing:1.2px; text-shadow:0 4px 22px #000; }
+  #catchtitle { padding:12px 28px; border-top:1px solid rgba(255,200,69,.58); border-bottom:1px solid rgba(255,200,69,.28); }
+  #pausevolume { bottom:11%; width:min(390px,86vw); padding:16px 18px 18px; clip-path:none; }
+  #pausevolume label { margin:12px 0 6px; color:#dbe7f8; font:750 10px/1 var(--body); letter-spacing:1.5px; }
+  #pausevolume label:first-child { margin-top:0; }
+  #pausevolume input { height:4px; accent-color:var(--gold); }
+  #pausevolume .trackrow { margin-top:14px; padding-top:11px; border-top:1px solid var(--line);
+    font:700 10px/1.4 var(--body); letter-spacing:1px; }
+  .bigbtn { border:1px solid rgba(255,226,143,.8); border-radius:2px;
+    background:linear-gradient(180deg,#d85427,#a92e1c); box-shadow:inset 0 1px rgba(255,255,255,.18),0 8px 24px rgba(80,12,6,.34);
+    transition:transform .16s ease,filter .16s ease; }
+  .bigbtn:hover { background:linear-gradient(180deg,#ed6935,#bc3822); transform:translateY(-2px); filter:brightness(1.05); }
+  .bigbtn:active { transform:translateY(1px) scale(.99); }
+  button:focus-visible,input:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+
+  @media (max-width:720px) {
+    #health,#ammo { min-width:172px; bottom:12px; padding:20px 13px 12px; }
+    #health { left:10px; } #ammo { right:10px; }
+    #healthnum { font-size:28px; } #ammonum { font-size:32px; }
+    #wslots { display:none; } #top3 { display:none !important; }
+    #scores { top:10px; } #killfeed { top:66px; right:10px; }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -215,6 +328,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="cinematicFx"></div>
 <div id="underwaterFx"></div>
 <div id="foliageFx"></div>
 
@@ -248,8 +362,12 @@
 <div id="clickcatch" style="display:flex">
   <div id="catchtitle">LOADING…</div>
   <div id="pausevolume" class="panel">
-    <label for="volumeslider"><span>Volume</span><span id="volumevalue">100%</span></label>
+    <label for="volumeslider"><span>Master</span><span id="volumevalue">100%</span></label>
     <input id="volumeslider" type="range" min="0" max="100" step="1" value="100">
+    <label for="effectsslider"><span>Effects</span><span id="effectsvalue">100%</span></label>
+    <input id="effectsslider" type="range" min="0" max="100" step="1" value="100">
+    <label for="musicslider"><span>Music</span><span id="musicvalue">100%</span></label>
+    <input id="musicslider" type="range" min="0" max="100" step="1" value="100">
     <div class="trackrow">Now Playing: <span id="tracktitle">No track playing</span></div>
   </div>
   <button class="bigbtn" id="quitbtn" style="display:none;font-size:15px;padding:9px 24px;position:absolute;bottom:8%;left:50%;transform:translateX(-50%)">BACK TO ATRIUM</button>
@@ -279,6 +397,6 @@
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
-<script type="module" src="./src/main.js?v=3"></script>
+<script type="module" src="./src/main.js?v=4"></script>
 </body>
 </html>

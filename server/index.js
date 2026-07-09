@@ -8,9 +8,13 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const PORT = Number(process.env.PORT || 3000);
 
-const MATCH_TIME = 5 * 60;
-const VOTE_TIME = 10;
-const PODIUM_TIME = 6;
+const envSeconds = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+const MATCH_TIME = envSeconds('MATCH_TIME', 5 * 60);
+const VOTE_TIME = envSeconds('VOTE_TIME', 10);
+const PODIUM_TIME = envSeconds('PODIUM_TIME', 6);
 const MAX_LOBBIES = 5;
 const SLOTS = 8;
 const TICK_HZ = 30;
@@ -19,11 +23,19 @@ const RESPAWN_TIME = 3;
 const STALE_CONNECTION_MS = 3 * 60 * 1000;
 const EMPTY_LOBBY_GRACE_MS = 60 * 1000;
 const HOST_SNAPSHOT_TIMEOUT_MS = 5000;
+const RECONNECT_GRACE_MS = 12 * 1000;
+const MAX_INPUTS_PER_SECOND = 75;
+const MAX_SNAPSHOTS_PER_SECOND = 30;
+const MAX_CONTROL_MESSAGES_PER_SECOND = 12;
+const INPUT_POSITION_SLOP = 3;
+const INPUT_MAX_METERS_PER_SECOND = 140;
 const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
 const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
 const MODES = ['ffa', 'tdm'];
 const DEFAULT_MODE = 'ffa';
 const TEAM_COLORS = { blue: '#5cb3ff', red: '#ff5c5c' };
+const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor']);
+const WORLD_EVENT_IDS = new Set(['lava', 'water', 'storm', 'void']);
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
@@ -44,10 +56,12 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
 };
 
 const connections = new Map();
 const lobbies = new Map();
+const reconnectReservations = new Map();
 let nextLobbyNum = 1;
 
 function serveStatic(req, res) {
@@ -108,6 +122,7 @@ httpServer.on('upgrade', (req, socket) => {
     buffer: Buffer.alloc(0),
     alive: true,
     lastSeen: Date.now(),
+    rateWindows: new Map(),
   };
   connections.set(conn.id, conn);
   socket.on('data', (chunk) => onData(conn, chunk));
@@ -178,14 +193,20 @@ function close(conn) {
 function disconnect(conn) {
   if (!connections.has(conn.id)) return;
   conn.alive = false;
-  leaveLobby(conn);
+  leaveLobby(conn, true);
   connections.delete(conn.id);
 }
 
 function handleMessage(conn, msg) {
+  if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
   conn.lastSeen = Date.now();
+  const rateLimit = msg.type === 'input' ? MAX_INPUTS_PER_SECOND
+    : msg.type === 'hostSnapshot' ? MAX_SNAPSHOTS_PER_SECOND
+      : MAX_CONTROL_MESSAGES_PER_SECOND;
+  if (!allowMessage(conn, msg.type, rateLimit)) return;
   if (msg.type === 'hello') {
     conn.name = cleanName(msg.name);
+    conn.resumeToken = cleanResumeToken(msg.resumeToken);
     const requestedLobbyId = String(msg.lobbyId || '');
     if (requestedLobbyId && lobbies.has(requestedLobbyId)) joinLobby(conn, requestedLobbyId);
     else autoJoin(conn);
@@ -204,33 +225,49 @@ function handleMessage(conn, msg) {
   } else if (msg.type === 'input') {
     const lobby = lobbies.get(conn.lobbyId);
     const slot = lobby?.slots.find(s => s.connId === conn.id);
-    if (!slot || !slot.human) return;
+    if (!slot || !slot.human || lobby.phase !== 'playing') return;
+    if (Math.floor(finite(msg.authorityEpoch, -1)) !== lobby.authorityEpoch) return;
+    const seq = Math.floor(finite(msg.seq, -1));
+    if (seq <= (slot.lastInputSeq ?? -1)) return;
+    const pos = sanitizePos(msg.pos, lobby.map);
+    const now = Date.now();
+    if (!pos || !plausibleInputPosition(slot, pos, now)) return;
+    const weapon = String(msg.weapon || slot.weapon || 'blaster');
     const input = {
-      seq: Number(msg.seq || 0),
+      seq,
       yaw: finite(msg.yaw, slot.yaw),
-      pitch: finite(msg.pitch, slot.pitch),
+      pitch: Math.max(-1.55, Math.min(1.55, finite(msg.pitch, slot.pitch))),
       up: sanitizeUnitVec(msg.up, slot.up || { x: 0, y: 1, z: 0 }),
       aim: sanitizeUnitVec(msg.aim, slot.aim || { x: 0, y: 0, z: -1 }),
       firing: !!msg.firing,
-      weapon: String(msg.weapon || slot.weapon || 'blaster'),
-      pos: sanitizePos(msg.pos, lobby.map),
+      weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
+      pos,
       vel: sanitizeVel(msg.vel),
-      alive: msg.alive !== false,
+      alive: slot.alive !== false,
     };
     slot.input = input;
     slot.up = input.up;
     slot.aim = input.aim;
-    slot.lastInputAt = Date.now();
+    slot.lastInputAt = now;
+    slot.lastInputPos = pos;
+    slot.lastInputSeq = seq;
     if (lobby.hostConnId && lobby.hostConnId !== conn.id) {
       const host = connections.get(lobby.hostConnId);
-      if (host) send(host, { type: 'remoteInput', slotId: slot.id, name: slot.name, input });
+      if (host) send(host, {
+        type: 'remoteInput', authorityEpoch: lobby.authorityEpoch,
+        slotId: slot.id, name: slot.name, input,
+      });
     }
   } else if (msg.type === 'hostSnapshot') {
     const lobby = lobbies.get(conn.lobbyId);
     if (!lobby || lobby.hostConnId !== conn.id || lobby.phase !== 'playing') return;
-    const snap = sanitizeHostSnapshot(msg.snapshot, lobby);
+    const authorityEpoch = Math.floor(finite(msg.authorityEpoch, -1));
+    const snapshotSeq = Math.floor(finite(msg.seq, -1));
+    if (authorityEpoch !== lobby.authorityEpoch || snapshotSeq <= lobby.lastHostSnapshotSeq) return;
+    const snap = sanitizeHostSnapshot(msg.snapshot, lobby, snapshotSeq);
     if (snap) {
       lobby.lastHostSnapshotAt = Date.now();
+      lobby.lastHostSnapshotSeq = snapshotSeq;
       mergeHostSnapshot(lobby, snap);
       broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
     }
@@ -241,8 +278,24 @@ function handleMessage(conn, msg) {
   }
 }
 
+function allowMessage(conn, type, limit) {
+  const now = Date.now();
+  let window = conn.rateWindows.get(type);
+  if (!window || now - window.startedAt >= 1000) {
+    window = { startedAt: now, count: 0 };
+    conn.rateWindows.set(type, window);
+  }
+  window.count++;
+  return window.count <= limit;
+}
+
 function cleanName(name) {
   return String(name || 'Player').replace(/[^\w .'-]/g, '').trim().slice(0, 18) || 'Player';
+}
+
+function cleanResumeToken(token) {
+  const value = String(token || '').trim();
+  return /^[a-zA-Z0-9_-]{16,96}$/.test(value) ? value : null;
 }
 
 function finite(v, fallback = 0) {
@@ -266,6 +319,16 @@ function sanitizeVel(vel) {
     y: Math.max(-160, Math.min(160, finite(vel.y, 0))),
     z: Math.max(-120, Math.min(120, finite(vel.z, 0))),
   };
+}
+
+function plausibleInputPosition(slot, pos, now) {
+  if (!slot.lastInputPos || !slot.lastInputAt) return true;
+  const dt = Math.max(1 / 120, Math.min(0.25, (now - slot.lastInputAt) / 1000));
+  const maxDistance = INPUT_POSITION_SLOP + INPUT_MAX_METERS_PER_SECOND * dt;
+  const dx = pos.x - slot.lastInputPos.x;
+  const dy = pos.y - slot.lastInputPos.y;
+  const dz = pos.z - slot.lastInputPos.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
 }
 
 function sanitizeUnitVec(vec, fallback) {
@@ -306,6 +369,8 @@ function createLobby() {
     latestRanked: null,
     latestScores: { blue: 0, red: 0 },
     lastHostSnapshotAt: Date.now(),
+    authorityEpoch: 1,
+    lastHostSnapshotSeq: -1,
     slots: [],
     hostConnId: null,
     tickHandle: null,
@@ -348,6 +413,8 @@ function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE) {
     deaths: 0,
     input: null,
     lastInputAt: 0,
+    lastInputSeq: -1,
+    lastInputPos: spawn.pos,
   };
   return s;
 }
@@ -373,12 +440,21 @@ function resetSlotForHuman(slot, conn, lobby) {
     deaths: 0,
     input: null,
     lastInputAt: Date.now(),
+    lastInputSeq: -1,
+    lastInputPos: spawn.pos,
   });
+  delete slot.reservedToken;
+  clearTimeout(slot.reservationTimer);
+  delete slot.reservationTimer;
 }
 
 function convertToBot(slot, lobby) {
   const idx = Number(slot.id.split('-')[1]) || 0;
+  if (slot.reservedToken) reconnectReservations.delete(slot.reservedToken);
+  clearTimeout(slot.reservationTimer);
   Object.assign(slot, makeBotSlot(idx, lobby.map, slot.lastSpawnIndex, lobby.mode), { id: slot.id });
+  delete slot.reservedToken;
+  delete slot.reservationTimer;
 }
 
 function joinLobby(conn, lobbyId) {
@@ -386,6 +462,28 @@ function joinLobby(conn, lobbyId) {
   let lobby = lobbies.get(lobbyId);
   if (!lobby) lobby = createLobby();
   clearEmptyLobbyDestroy(lobby);
+  const reservation = conn.resumeToken ? reconnectReservations.get(conn.resumeToken) : null;
+  const reservedSlot = reservation?.lobbyId === lobby.id && reservation.expiresAt > Date.now()
+    ? lobby.slots.find(s => s.id === reservation.slotId && s.reservedToken === conn.resumeToken)
+    : null;
+  if (reservedSlot) {
+    clearTimeout(reservedSlot.reservationTimer);
+    reconnectReservations.delete(conn.resumeToken);
+    reservedSlot.human = true;
+    reservedSlot.connId = conn.id;
+    reservedSlot.name = conn.name;
+    reservedSlot.lastInputAt = Date.now();
+    reservedSlot.lastInputSeq = -1;
+    delete reservedSlot.reservedToken;
+    delete reservedSlot.reservationTimer;
+    conn.lobbyId = lobby.id;
+    conn.slotId = reservedSlot.id;
+    if (!lobby.hostConnId) setLobbyHost(lobby, conn.id);
+    sendJoinedLobby(conn, lobby, true);
+    broadcastHost(lobby);
+    broadcastLobbyMeta(lobby);
+    return;
+  }
   if (lobby.humanCount() >= SLOTS) {
     const occupied = [...lobbies.values()].filter(l => l.humanCount() > 0);
     if (occupied.length < MAX_LOBBIES) lobby = createLobby();
@@ -394,37 +492,50 @@ function joinLobby(conn, lobbyId) {
       return;
     }
   }
-  const slot = lobby.slots.find(s => !s.human) || lobby.slots[0];
+  const slot = lobby.slots.find(s => !s.human && !s.reservedToken);
+  if (!slot) {
+    const occupied = [...lobbies.values()].filter(l => l.humanCount() > 0);
+    if (occupied.length < MAX_LOBBIES) return joinLobby(conn, createLobby().id);
+    send(conn, { type: 'lobbyList', lobbies: lobbyList(), full: true });
+    return;
+  }
   resetSlotForHuman(slot, conn, lobby);
   conn.lobbyId = lobby.id;
   conn.slotId = slot.id;
-  if (!lobby.hostConnId) lobby.hostConnId = conn.id;
+  if (!lobby.hostConnId) setLobbyHost(lobby, conn.id, false);
+  sendJoinedLobby(conn, lobby, false);
+  broadcastHost(lobby);
+  broadcastLobbyMeta(lobby);
+}
+
+function sendJoinedLobby(conn, lobby, resumed) {
   send(conn, {
     type: 'joinedLobby',
     lobbyId: lobby.id,
-    slotId: slot.id,
+    slotId: conn.slotId,
     hostId: lobby.hostConnId,
     isHost: lobby.hostConnId === conn.id,
     phase: lobby.phase,
     mapId: lobby.map.id,
     mode: lobby.mode,
     phaseEndsAt: lobby.phaseEndsAt,
+    authorityEpoch: lobby.authorityEpoch,
+    resumed,
     maps: MAPS.map(({ id, name }) => ({ id, name })),
     slots: publicSlots(lobby),
   });
-  broadcastHost(lobby);
-  broadcastLobbyMeta(lobby);
 }
 
-function leaveLobby(conn) {
+function leaveLobby(conn, reserveForReconnect = false) {
   const lobby = lobbies.get(conn.lobbyId);
   if (!lobby) return;
   const slot = lobby.slots.find(s => s.connId === conn.id);
-  if (slot) convertToBot(slot, lobby);
+  if (slot && reserveForReconnect && conn.resumeToken) reserveSlot(slot, conn, lobby);
+  else if (slot) convertToBot(slot, lobby);
   lobby.votes.delete(conn.id);
   if (lobby.hostConnId === conn.id) {
     const nextHost = [...connections.values()].find(c => c.lobbyId === lobby.id && c.id !== conn.id);
-    lobby.hostConnId = nextHost?.id || null;
+    setLobbyHost(lobby, nextHost?.id || null);
   }
   conn.lobbyId = null;
   conn.slotId = null;
@@ -433,6 +544,24 @@ function leaveLobby(conn) {
     broadcastHost(lobby);
     broadcastLobbyMeta(lobby);
   }
+}
+
+function reserveSlot(slot, conn, lobby) {
+  const token = conn.resumeToken;
+  slot.human = false;
+  slot.connId = null;
+  slot.reservedToken = token;
+  const expiresAt = Date.now() + RECONNECT_GRACE_MS;
+  reconnectReservations.set(token, { lobbyId: lobby.id, slotId: slot.id, expiresAt });
+  clearTimeout(slot.reservationTimer);
+  slot.reservationTimer = setTimeout(() => {
+    if (slot.reservedToken !== token) return;
+    convertToBot(slot, lobby);
+    if (lobbies.has(lobby.id) && lobby.humanCount() > 0) {
+      broadcastHost(lobby);
+      broadcastLobbyMeta(lobby);
+    }
+  }, RECONNECT_GRACE_MS);
 }
 
 function scheduleEmptyLobbyDestroy(lobby) {
@@ -452,6 +581,10 @@ function clearEmptyLobbyDestroy(lobby) {
 function destroyLobby(lobby) {
   clearEmptyLobbyDestroy(lobby);
   clearInterval(lobby.tickHandle);
+  for (const slot of lobby.slots) {
+    clearTimeout(slot.reservationTimer);
+    if (slot.reservedToken) reconnectReservations.delete(slot.reservedToken);
+  }
   lobbies.delete(lobby.id);
 }
 
@@ -471,6 +604,7 @@ function lobbyList() {
     mode: l.mode,
     phaseEndsAt: l.phaseEndsAt,
     hostId: l.hostConnId,
+    authorityEpoch: l.authorityEpoch,
   }));
 }
 
@@ -489,6 +623,7 @@ function broadcastLobbyMeta(lobby) {
     modeVotes: modeCounts,
     phaseEndsAt: lobby.phaseEndsAt,
     hostId: lobby.hostConnId,
+    authorityEpoch: lobby.authorityEpoch,
     slots: publicSlots(lobby),
   });
 }
@@ -512,9 +647,18 @@ function broadcastHost(lobby) {
       type: 'hostChanged',
       hostId: lobby.hostConnId,
       isHost: conn.id === lobby.hostConnId,
+      authorityEpoch: lobby.authorityEpoch,
       slots: publicSlots(lobby),
     });
   }
+}
+
+function setLobbyHost(lobby, hostConnId, bumpAuthority = true) {
+  if (lobby.hostConnId === hostConnId) return;
+  lobby.hostConnId = hostConnId;
+  if (bumpAuthority) lobby.authorityEpoch++;
+  lobby.lastHostSnapshotSeq = -1;
+  lobby.lastHostSnapshotAt = Date.now();
 }
 
 function publicSlots(lobby) {
@@ -525,6 +669,10 @@ function publicSlots(lobby) {
     color: s.color,
     team: s.team,
     connId: s.human ? s.connId : null,
+    connected: s.human,
+    score: s.score || 0,
+    kills: s.kills || 0,
+    deaths: s.deaths || 0,
   }));
 }
 
@@ -567,6 +715,8 @@ function setPhase(lobby, phase) {
     lobby.latestRanked = null;
     lobby.latestScores = { blue: 0, red: 0 };
     lobby.lastHostSnapshotAt = now;
+    lobby.authorityEpoch++;
+    lobby.lastHostSnapshotSeq = -1;
     const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
@@ -584,6 +734,9 @@ function setPhase(lobby, phase) {
       s.score = s.human ? 0 : s.score;
       s.kills = s.human ? 0 : s.kills;
       s.deaths = s.human ? 0 : s.deaths;
+      s.lastInputSeq = -1;
+      s.lastInputPos = spawn.pos;
+      s.lastInputAt = now;
     }
   } else if (phase === 'podium') {
     lobby.phaseEndsAt = now + PODIUM_TIME * 1000;
@@ -597,6 +750,7 @@ function setPhase(lobby, phase) {
     ranked: phase === 'podium' && lobby.latestRanked ? lobby.latestRanked : ranked(lobby),
     scores: lobby.latestScores,
     hostId: lobby.hostConnId,
+    authorityEpoch: lobby.authorityEpoch,
     slots: publicSlots(lobby),
   });
   broadcastLobbyMeta(lobby);
@@ -640,8 +794,7 @@ function promoteHostIfStale(lobby, now = Date.now()) {
     lobby.lastHostSnapshotAt = now;
     return;
   }
-  lobby.hostConnId = next.id;
-  lobby.lastHostSnapshotAt = now;
+  setLobbyHost(lobby, next.id);
   broadcastHost(lobby);
   broadcastLobbyMeta(lobby);
 }
@@ -651,51 +804,65 @@ function ranked(lobby) {
     .map(s => ({ id: s.id, name: s.name, team: s.team, score: s.score, kills: s.kills, deaths: s.deaths, color: s.color, human: s.human }));
 }
 
-function sanitizeHostSnapshot(snapshot, lobby) {
+function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
   if (!snapshot || typeof snapshot !== 'object') return null;
   const players = Array.isArray(snapshot.players) ? snapshot.players.slice(0, SLOTS) : [];
+  const humanSlots = new Map(lobby.slots.filter(s => s.human).map(s => [s.id, s]));
+  const seenIds = new Set();
   const sanitizedPlayers = players.map((p, i) => {
     const id = String(p.id || `slot-${i}`).slice(0, 32);
+    if (seenIds.has(id) || (!humanSlots.has(id) && !/^bot-\d{1,2}$/.test(id))) return null;
+    seenIds.add(id);
+    const canonical = humanSlots.get(id);
     const pos = sanitizePos(p.pos, lobby.map) || { x: 0, y: 0, z: 0 };
+    const weapon = String(p.weapon || 'blaster').slice(0, 24);
     return {
       id,
-      name: cleanName(p.name || id),
-      human: !!p.human,
-      team: String(p.team || id).slice(0, 32),
-      color: /^#[0-9a-f]{6}$/i.test(String(p.color || '')) ? p.color : COLORS[i % COLORS.length],
+      name: canonical?.name || cleanName(p.name || id),
+      human: !!canonical,
+      team: canonical?.team || String(p.team || id).slice(0, 32),
+      color: canonical?.color || (/^#[0-9a-f]{6}$/i.test(String(p.color || '')) ? p.color : COLORS[i % COLORS.length]),
       pos,
       yaw: finite(p.yaw, 0),
-      pitch: finite(p.pitch, 0),
+      pitch: Math.max(-1.55, Math.min(1.55, finite(p.pitch, 0))),
       up: sanitizeUnitVec(p.up, { x: 0, y: 1, z: 0 }),
       hp: Math.max(0, Math.min(100, finite(p.hp, 100))),
       alive: p.alive !== false,
-      score: Math.max(0, Math.floor(finite(p.score, 0))),
-      kills: Math.max(0, Math.floor(finite(p.kills, 0))),
-      deaths: Math.max(0, Math.floor(finite(p.deaths, 0))),
-      respawn: Math.max(0, finite(p.respawn, 0)),
-      weapon: String(p.weapon || 'blaster').slice(0, 24),
+      score: clampInt(p.score, 0, 250000),
+      kills: clampInt(p.kills, 0, 999),
+      deaths: clampInt(p.deaths, 0, 999),
+      awards: sanitizeAwards(p.awards),
+      respawn: Math.max(0, Math.min(RESPAWN_TIME + 1, finite(p.respawn, 0))),
+      weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
     };
-  });
-  const ranked = Array.isArray(snapshot.ranked) ? snapshot.ranked.slice(0, SLOTS).map((r, i) => ({
-    id: String(r.id || `slot-${i}`).slice(0, 32),
-    name: cleanName(r.name || r.id || `slot-${i}`),
-    team: String(r.team || r.id || `slot-${i}`).slice(0, 32),
-    score: Math.max(0, Math.floor(finite(r.score, 0))),
-    kills: Math.max(0, Math.floor(finite(r.kills, 0))),
-    deaths: Math.max(0, Math.floor(finite(r.deaths, 0))),
-    color: /^#[0-9a-f]{6}$/i.test(String(r.color || '')) ? r.color : COLORS[i % COLORS.length],
-    human: !!r.human,
-  })) : sanitizedPlayers;
+  }).filter(Boolean);
+  for (const [id, slot] of humanSlots) {
+    if (seenIds.has(id)) continue;
+    sanitizedPlayers.push({
+      id, name: slot.name, human: true, team: slot.team, color: slot.color,
+      pos: slot.pos || { x: 0, y: 0, z: 0 }, yaw: slot.yaw || 0, pitch: slot.pitch || 0,
+      up: slot.up || { x: 0, y: 1, z: 0 }, hp: slot.hp ?? 100, alive: slot.alive !== false,
+      score: slot.score || 0, kills: slot.kills || 0, deaths: slot.deaths || 0,
+      awards: {}, respawn: slot.respawn || 0, weapon: 'blaster',
+    });
+  }
+  const ranked = [...sanitizedPlayers].sort((a, b) =>
+    b.score - a.score || b.kills - a.kills || a.deaths - b.deaths || a.id.localeCompare(b.id));
   const scores = snapshot.scores && typeof snapshot.scores === 'object'
     ? {
-        blue: Math.max(0, Math.floor(finite(snapshot.scores.blue, 0))),
-        red: Math.max(0, Math.floor(finite(snapshot.scores.red, 0))),
+        blue: clampInt(snapshot.scores.blue, 0, 500000),
+        red: clampInt(snapshot.scores.red, 0, 500000),
       }
     : { blue: 0, red: 0 };
-  const events = Array.isArray(snapshot.events) ? snapshot.events.slice(0, 32).map(sanitizeEvent).filter(Boolean) : [];
+  const allowedEventIds = new Set([...sanitizedPlayers.map(p => p.id), ...WORLD_EVENT_IDS]);
+  const events = Array.isArray(snapshot.events)
+    ? snapshot.events.slice(0, 32).map(ev => sanitizeEvent(ev, allowedEventIds)).filter(Boolean)
+    : [];
   const drops = Array.isArray(snapshot.drops) ? snapshot.drops.slice(0, 32).map(d => sanitizeDrop(d, lobby)).filter(Boolean) : [];
   return {
     tick: Date.now(),
+    authorityEpoch: lobby.authorityEpoch,
+    seq: snapshotSeq,
     phase: lobby.phase,
     phaseEndsAt: lobby.phaseEndsAt,
     mapId: lobby.map.id,
@@ -706,6 +873,20 @@ function sanitizeHostSnapshot(snapshot, lobby) {
     events,
     drops,
   };
+}
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, Math.floor(finite(value, min))));
+}
+
+function sanitizeAwards(awards) {
+  if (!awards || typeof awards !== 'object') return {};
+  const out = {};
+  for (const [key, value] of Object.entries(awards).slice(0, 24)) {
+    if (!/^[a-zA-Z0-9_-]{1,32}$/.test(key)) continue;
+    out[key] = clampInt(value, 0, 999);
+  }
+  return out;
 }
 
 function sanitizeDrop(drop, lobby) {
@@ -722,7 +903,10 @@ function sanitizeDrop(drop, lobby) {
     up: sanitizeUnitVec(drop.up, { x: 0, y: 1, z: 0 }),
     amount: Math.max(0, Math.min(5000, Math.floor(finite(drop.amount, kind === 'points' ? 250 : 0)))),
   };
-  if (kind === 'drop') out.weapon = String(drop.weapon || 'blaster').slice(0, 24);
+  if (kind === 'drop') {
+    const weapon = String(drop.weapon || 'blaster').slice(0, 24);
+    out.weapon = WEAPON_IDS.has(weapon) ? weapon : 'blaster';
+  }
   return out;
 }
 
@@ -743,22 +927,29 @@ function mergeHostSnapshot(lobby, snap) {
     slot.score = p.score;
     slot.kills = p.kills;
     slot.deaths = p.deaths;
+    if (slot.alive !== false && (!slot.lastInputPos || distance3(slot.lastInputPos, p.pos) > 18)) {
+      slot.lastInputPos = p.pos;
+      slot.lastInputAt = Date.now();
+    }
   }
   lobby.latestRanked = snap.ranked || ranked(lobby);
   lobby.latestScores = snap.scores || lobby.latestScores;
 }
 
-function sanitizeEvent(ev) {
+function sanitizeEvent(ev, allowedIds) {
   if (!ev || typeof ev !== 'object') return null;
   const type = String(ev.type || '');
   if (type === 'shot') {
     const from = sanitizeEventPoint(ev.from);
     const to = sanitizeEventPoint(ev.to);
     if (!from || !to) return null;
+    const shooterId = String(ev.shooterId || '').slice(0, 32);
+    const weapon = String(ev.weapon || 'blaster').slice(0, 24);
+    if (!allowedIds.has(shooterId)) return null;
     return {
       type,
-      shooterId: String(ev.shooterId || '').slice(0, 32),
-      weapon: String(ev.weapon || 'blaster').slice(0, 24),
+      shooterId,
+      weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
       from,
       to,
       color: /^#[0-9a-f]{6}$/i.test(String(ev.color || '')) ? ev.color : '#ffd23c',
@@ -766,21 +957,43 @@ function sanitizeEvent(ev) {
     };
   }
   if (type === 'damage') {
+    const attackerId = String(ev.attackerId || '').slice(0, 32);
+    const targetId = String(ev.targetId || '').slice(0, 32);
+    if (!allowedIds.has(attackerId) || !allowedIds.has(targetId) || attackerId === targetId) return null;
     return {
       type,
-      attackerId: String(ev.attackerId || '').slice(0, 32),
-      targetId: String(ev.targetId || '').slice(0, 32),
+      attackerId,
+      targetId,
       amount: Math.max(0, Math.min(999, finite(ev.amount, 0))),
     };
   }
   if (type === 'kill') {
+    const killerId = String(ev.killerId || '').slice(0, 32);
+    const victimId = String(ev.victimId || '').slice(0, 32);
+    if (!allowedIds.has(killerId) || !allowedIds.has(victimId) || killerId === victimId) return null;
     return {
       type,
-      killerId: String(ev.killerId || '').slice(0, 32),
-      victimId: String(ev.victimId || '').slice(0, 32),
+      killerId,
+      victimId,
+    };
+  }
+  if (type === 'award') {
+    const playerId = String(ev.playerId || '').slice(0, 32);
+    if (!allowedIds.has(playerId)) return null;
+    return {
+      type,
+      playerId,
+      key: String(ev.key || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32),
+      title: String(ev.title || '').replace(/[<>]/g, '').slice(0, 48),
+      sub: String(ev.sub || '').replace(/[<>]/g, '').slice(0, 72),
+      color: /^#[0-9a-f]{6}$/i.test(String(ev.color || '')) ? ev.color : '#ffd23c',
     };
   }
   return null;
+}
+
+function distance3(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
 function sanitizeEventPoint(p) {

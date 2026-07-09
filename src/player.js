@@ -2,7 +2,7 @@
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
 import { moveCharacter, moveCharacterUp, cardinal, clamp } from './engine.js';
-import { WEAPONS, WEAPON_ORDER, buildBlaster, blasterSkin, nextLoadedWeaponAfter } from './weapons.js';
+import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx } from './audio.js';
 
 export class Player {
@@ -47,6 +47,13 @@ export class Player {
     this.firing = false;
     this.grounded = false;
     this.recoil = 0;
+    this.cameraKick = 0;
+    this.muzzleT = 0;
+    this.equipT = 0;
+    this.lookSwayX = 0;
+    this.lookSwayY = 0;
+    this.stepDistance = 0;
+    this.wasGrounded = false;
     this.wantJump = false;
 
     this.buildViewmodel();
@@ -74,6 +81,15 @@ export class Player {
     g.rotation.y = 0.06;
     this.viewmodel = g;
     this.camera.add(g);
+
+    const flashMat = new THREE.SpriteMaterial({
+      color: 0xffe2a0, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
+    });
+    this.muzzleFlash = new THREE.Sprite(flashMat);
+    this.muzzleFlash.position.set(0.27, -0.16, -0.96);
+    this.muzzleFlash.scale.setScalar(0.01);
+    this.camera.add(this.muzzleFlash);
   }
 
   showWeaponModel(id) {
@@ -109,6 +125,11 @@ export class Player {
     this._camSnap = true;   // snap the roll on spawn, don't ease from stale
     this.djumpTime = 0;
     this._airJumped = false;
+    this.recoil = 0;
+    this.cameraKick = 0;
+    this.muzzleT = 0;
+    this.equipT = 0;
+    this.stepDistance = 0;
     if (this.world.escher) {
       // spawn oriented to whatever surface you land on (floor, wall or ceiling)
       const nf = this._nearestSurfaceUpAt(this.pos);
@@ -125,6 +146,8 @@ export class Player {
 
   onMouseMove(dx, dy) {
     const s = 0.0022;
+    this.lookSwayX = clamp(this.lookSwayX + dx * 0.00032, -0.045, 0.045);
+    this.lookSwayY = clamp(this.lookSwayY + dy * 0.00024, -0.035, 0.035);
     if (this.world.escher) {
       // yaw turns your heading within the surface plane; pitch is a plain
       // scalar (can't accumulate roll, so you can always look straight up).
@@ -142,6 +165,8 @@ export class Player {
       this.weapon = id;
       this.cooldown = Math.max(this.cooldown, 0.25);
       this.showWeaponModel(id);
+      this.equipT = 1;
+      sfx('equip');
     }
   }
 
@@ -153,6 +178,9 @@ export class Player {
 
   update(dt, fire) {
     if (!this.alive) return;
+
+    const wasGrounded = this.grounded;
+    const fallSpeed = this.vel.y;
 
     if (this.speedTime > 0) { // speed powerup wearing off
       this.speedTime -= dt;
@@ -177,20 +205,60 @@ export class Player {
         fire(this, origin, dir, this.weapon);
         if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
         this.cooldown = 1 / w.rof;
-        this.recoil = 1;
+        const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
+        this.recoil = Math.min(2.2, this.recoil + feel.recoil);
+        this.cameraKick = Math.min(0.035, this.cameraKick + feel.camera);
+        this.muzzleT = 0.065;
+        this.muzzleStrength = feel.flash;
         if (this.weapon !== 'blaster' && this.ammo[this.weapon] <= 0) {
           this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
         }
       } else {
+        sfx('dry');
         this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
       }
     }
 
-    // Viewmodel bob + recoil
-    this.recoil = Math.max(0, this.recoil - dt * 6);
-    const bob = this.grounded ? Math.sin(performance.now() * 0.012) * (this._speedRatio || 0) * 0.012 : 0;
-    this.viewmodel.position.set(0.3, -0.28 + bob, -0.6 + this.recoil * 0.09);
-    this.viewmodel.rotation.x = this.recoil * 0.25;
+    // Layered viewmodel response: locomotion, look inertia, equip dip, weapon kick.
+    const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
+    this.recoil *= Math.exp(-feel.return * dt);
+    this.cameraKick *= Math.exp(-18 * dt);
+    this.equipT *= Math.exp(-8.5 * dt);
+    this.lookSwayX *= Math.exp(-10 * dt);
+    this.lookSwayY *= Math.exp(-10 * dt);
+    const now = performance.now();
+    const moving = this.grounded ? (this._speedRatio || 0) : 0;
+    const bobY = Math.sin(now * 0.012) * moving * 0.012;
+    const bobX = Math.cos(now * 0.006) * moving * 0.008;
+    this.viewmodel.position.set(
+      0.3 + bobX - this.lookSwayX * 0.7,
+      -0.28 + bobY - this.equipT * 0.2 + this.lookSwayY * 0.35,
+      -0.6 + this.recoil * 0.082,
+    );
+    this.viewmodel.rotation.set(
+      this.recoil * 0.22 + this.lookSwayY,
+      0.06 - this.lookSwayX,
+      this.equipT * 0.12 - bobX * 0.8,
+    );
+    this.camera.rotateX(this.cameraKick);
+
+    this.muzzleT = Math.max(0, this.muzzleT - dt);
+    const flash = this.muzzleT > 0 ? this.muzzleT / 0.065 : 0;
+    this.muzzleFlash.material.opacity = flash * 0.82;
+    const flashScale = flash * 0.24 * (this.muzzleStrength || 1);
+    this.muzzleFlash.scale.set(flashScale * 1.35, flashScale, 1);
+    this.muzzleFlash.material.rotation = now * 0.018;
+
+    if (this.grounded && !wasGrounded && fallSpeed < -4.5) sfx('land');
+    if (this.grounded && moving > 0.16) {
+      this.stepDistance += this.world.playerSpeed * moving * dt;
+      if (this.stepDistance >= 3.25) {
+        this.stepDistance %= 3.25;
+        sfx('footstep');
+      }
+    } else if (!this.grounded) {
+      this.stepDistance = Math.min(this.stepDistance, 2.2);
+    }
 
     // Powerup timer
     if (this.powerup) {

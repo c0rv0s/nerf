@@ -174,7 +174,7 @@ function addDecal(scene, name, x, y, z, w, yaw = 0, h = w) {
 
 function mat(color, opts = {}) {
   const { tex, repeat, emissive, ...rest } = opts;
-  const params = { color, roughness: 0.85, metalness: 0.05, envMapIntensity: 0.35, ...rest };
+  const params = { color, roughness: 0.72, metalness: 0.07, envMapIntensity: 0.48, ...rest };
   if (tex) {
     const rx = repeat?.[0] ?? 1, ry = repeat?.[1] ?? 1;
     const ai = AI_TEX[tex];
@@ -187,7 +187,7 @@ function mat(color, opts = {}) {
       n.needsUpdate = true;
       n.repeat.set(rx, ry);
       params.normalMap = n;
-      params.normalScale = new THREE.Vector2(0.8, 0.8);
+      params.normalScale = new THREE.Vector2(0.92, 0.92);
     }
   }
   if (emissive) { params.emissive = new THREE.Color(emissive); params.emissiveIntensity = opts.emissiveIntensity ?? 0.8; }
@@ -641,10 +641,10 @@ function pk(world, kind, x, y, z, extra = {}) {
 }
 
 function baseLighting(scene, skyColor, groundColor, sunDir, shadowHalf) {
-  // r155+ physical lighting divides diffuse by π — intensities compensate
-  scene.add(new THREE.HemisphereLight(skyColor, groundColor, 3.4));
-  scene.add(new THREE.AmbientLight(0xffffff, 1.1));
-  const sun = new THREE.DirectionalLight(0xffffff, 3.0);
+  // Directional contrast gives geometry weight; restrained fill preserves texture detail.
+  scene.add(new THREE.HemisphereLight(skyColor, groundColor, 2.35));
+  scene.add(new THREE.AmbientLight(0xeaf0ff, 0.38));
+  const sun = new THREE.DirectionalLight(0xfff5e6, 3.65);
   sun.position.set(...sunDir);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);

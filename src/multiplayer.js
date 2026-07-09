@@ -17,9 +17,13 @@ export class MultiplayerClient extends EventTarget {
     this.phaseEndsAt = 0;
     this.isHost = false;
     this.hostId = null;
+    this.authorityEpoch = 0;
+    this.hostSnapshotSeq = 0;
+    this.lastSnapshotSeq = -1;
     this.slots = [];
     this.seq = 0;
     this.name = localStorage.getItem('nerf-mp-name') || '';
+    this.resumeToken = this._loadResumeToken();
     this.pendingInput = null;
     this.lastSnapshot = null;
     this.snapshotCount = 0;
@@ -54,7 +58,7 @@ export class MultiplayerClient extends EventTarget {
     this.ws.addEventListener('open', () => {
       this.connected = true;
       this.status.textContent = this.reconnecting ? 'Rejoining lobby...' : 'Finding lobby...';
-      const hello = { type: 'hello', name: this.name };
+      const hello = { type: 'hello', name: this.name, resumeToken: this.resumeToken };
       if (this.reconnecting && this.reconnectLobbyId) hello.lobbyId = this.reconnectLobbyId;
       this.send(hello);
       this._ping();
@@ -88,6 +92,18 @@ export class MultiplayerClient extends EventTarget {
     this.ws.send(JSON.stringify(msg));
   }
 
+  _loadResumeToken() {
+    try {
+      const stored = localStorage.getItem('nerf-mp-resume-token-v1');
+      if (stored) return stored;
+      const token = crypto.randomUUID().replaceAll('-', '');
+      localStorage.setItem('nerf-mp-resume-token-v1', token);
+      return token;
+    } catch {
+      return `session_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+    }
+  }
+
   sendInput(player) {
     if (!player || !this.connected || !this.slotId) return;
     const aim = new THREE.Vector3(0, 0, -1);
@@ -95,6 +111,7 @@ export class MultiplayerClient extends EventTarget {
     this.seq++;
     this.send({
       type: 'input',
+      authorityEpoch: this.authorityEpoch,
       seq: this.seq,
       yaw: player.yaw || 0,
       pitch: player.pitch || 0,
@@ -127,6 +144,9 @@ export class MultiplayerClient extends EventTarget {
     this.phaseEndsAt = 0;
     this.isHost = false;
     this.hostId = null;
+    this.authorityEpoch = 0;
+    this.hostSnapshotSeq = 0;
+    this.lastSnapshotSeq = -1;
     this.slots = [];
     this.lastSnapshot = null;
   }
@@ -151,6 +171,7 @@ export class MultiplayerClient extends EventTarget {
       this.playerId = msg.id;
     } else if (msg.type === 'joinedLobby') {
       const wasReconnecting = this.reconnecting;
+      this._acceptAuthority(msg);
       this.slotId = msg.slotId;
       this.lobbyId = msg.lobbyId;
       this.phase = msg.phase;
@@ -166,6 +187,7 @@ export class MultiplayerClient extends EventTarget {
       if (wasReconnecting) this.dispatchEvent(new CustomEvent('reconnected', { detail: msg }));
       this._renderPhase();
     } else if (msg.type === 'hostChanged') {
+      this._acceptAuthority(msg);
       this.isHost = !!msg.isHost;
       this.hostId = msg.hostId || null;
       this.slots = msg.slots || [];
@@ -173,6 +195,7 @@ export class MultiplayerClient extends EventTarget {
     } else if (msg.type === 'lobbyList') {
       this._renderLobbyList(msg);
     } else if (msg.type === 'lobbyMeta') {
+      this._acceptAuthority(msg);
       this.phase = msg.phase;
       this.mapId = msg.mapId;
       this.mode = msg.mode || this.mode || 'ffa';
@@ -182,6 +205,7 @@ export class MultiplayerClient extends EventTarget {
       this._renderPhase(msg.votes, msg.modeVotes);
       this.dispatchEvent(new CustomEvent('meta', { detail: msg }));
     } else if (msg.type === 'phaseChanged') {
+      this._acceptAuthority(msg);
       this.phase = msg.phase;
       this.mapId = msg.mapId;
       this.mode = msg.mode || this.mode || 'ffa';
@@ -192,8 +216,10 @@ export class MultiplayerClient extends EventTarget {
       this._renderPhase();
       this.dispatchEvent(new CustomEvent('phase', { detail: msg }));
     } else if (msg.type === 'remoteInput') {
+      if (msg.authorityEpoch !== this.authorityEpoch) return;
       this.dispatchEvent(new CustomEvent('remoteInput', { detail: msg }));
     } else if (msg.type === 'snapshot') {
+      if (!this._acceptSnapshot(msg)) return;
       this.lastSnapshot = msg;
       this.snapshotCount++;
       this.lastSnapshotAt = performance.now();
@@ -210,7 +236,33 @@ export class MultiplayerClient extends EventTarget {
   }
 
   sendHostSnapshot(snapshot) {
-    this.send({ type: 'hostSnapshot', snapshot });
+    this.hostSnapshotSeq++;
+    this.send({
+      type: 'hostSnapshot',
+      authorityEpoch: this.authorityEpoch,
+      seq: this.hostSnapshotSeq,
+      snapshot,
+    });
+  }
+
+  _acceptAuthority(msg) {
+    const next = Math.max(0, Math.floor(Number(msg.authorityEpoch) || 0));
+    if (!next || next === this.authorityEpoch) return;
+    this.authorityEpoch = next;
+    this.hostSnapshotSeq = 0;
+    this.lastSnapshotSeq = -1;
+    this.lastSnapshot = null;
+  }
+
+  _acceptSnapshot(msg) {
+    const epoch = Math.max(0, Math.floor(Number(msg.authorityEpoch) || 0));
+    const seq = Math.floor(Number(msg.seq));
+    if (!epoch || !Number.isFinite(seq)) return false;
+    if (this.authorityEpoch && epoch !== this.authorityEpoch) return false;
+    if (!this.authorityEpoch) this._acceptAuthority(msg);
+    if (seq <= this.lastSnapshotSeq) return false;
+    this.lastSnapshotSeq = seq;
+    return true;
   }
 
   shouldHost() {
@@ -228,7 +280,7 @@ export class MultiplayerClient extends EventTarget {
     this.status.textContent = 'Connecting...';
     this._clearReconnect();
     this.ensureConnected();
-    if (this.ws?.readyState === WebSocket.OPEN) this.send({ type: 'hello', name });
+    if (this.ws?.readyState === WebSocket.OPEN) this.send({ type: 'hello', name, resumeToken: this.resumeToken });
   }
 
   _scheduleReconnect() {
