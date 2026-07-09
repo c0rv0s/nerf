@@ -771,8 +771,11 @@ function buildArena(scene) {
 
   // Outer walls (drop below the basement floor)
   for (const [x, z, w, d] of [[0, -59, 162, 4], [0, 59, 162, 4], [-79, 0, 4, 122], [79, 0, 4, 122]]) {
-    addBox(scene, world, x, 6, z, w, 24, d, 0xc8461e, { tex: 'panel' });
+    addBox(scene, world, x, 9, z, w, 30, d, 0xc8461e, { tex: 'panel' });
   }
+  // Main ceiling at the top of the perimeter walls so indoor shots ricochet
+  // instead of escaping upward.
+  addBox(scene, world, 0, 24.35, 0, 162, 0.5, 122, 0x2e6da0, { tex: 'checker', repeat: [20, 15] });
   // Glow stripes + lights
   for (const [x, z, w, d] of [[0, -56.8, 150, 0.3], [0, 56.8, 150, 0.3], [-76.8, 0, 0.3, 112], [76.8, 0, 0.3, 112]]) {
     addBox(scene, world, x, 7, z, w, 0.9, d, 0xffd23c, { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.2 });
@@ -1154,6 +1157,7 @@ function buildFortress(scene) {
   scene.background = new THREE.Color(0x87b5d8);
   scene.fog = new THREE.Fog(0x9cc3e0, 120, 420);
   baseLighting(scene, 0xbfdfff, 0x554433, [-70, 110, 50], 120);
+  addDaytimeSkyDome(scene);
 
   // Ground slabs split by trench (z −7..7, floor top −4)
   addBox(scene, world, 0, -0.5, 26, 154, 1, 38, 0xa8905e, { tex: 'checker', repeat: [20, 5] });
@@ -1732,9 +1736,10 @@ function buildAsteroids(scene) {
    (8/16/24/crown 30 with the gold), edge bridges, ramps and pad chains up. */
 function buildCanopy(scene) {
   const world = newWorld({ killY: -20, waypointLinkDist: 24, waypointLinkDy: 4.6 });
-  scene.background = new THREE.Color(0x14291f);
-  scene.fog = new THREE.Fog(0x14291f, 110, 320);
+  scene.background = new THREE.Color(0x8fcbe6);
+  scene.fog = new THREE.Fog(0x47684e, 120, 330);
   baseLighting(scene, 0xa8d8a0, 0x1c3020, [60, 120, -40], 130);
+  addDaytimeSkyDome(scene);
 
   // Mossy ground split by twin RIVERS (channels x −58..−50 and x 50..58,
   // bed −4.8, water −0.55): swim them, cross the plank bridges, or duck into
@@ -2085,6 +2090,7 @@ function buildCity(scene) {
   scene.background = new THREE.Color(0x0b1026);
   scene.fog = new THREE.Fog(0x0b1026, 120, 380);
   baseLighting(scene, 0x7788cc, 0x101018, [-60, 110, 40], 130);
+  addNightSkyDome(scene);
 
   // Street (split into bands leaving two subway stair openings)
   addBox(scene, world, -17.5, -0.5, -39.5, 139, 1, 55, 0x3a3f4a, { tex: 'neonfloor', repeat: [16, 7] });
@@ -3180,6 +3186,170 @@ function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
     material.uniforms.uTime.value = t;
   });
   return m;
+}
+
+function seededRandom(seed) {
+  return () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+}
+
+function addCanvasSkyDome(scene, draw, radius = 420) {
+  const width = 2048;
+  const height = 1024;
+  const skyC = document.createElement('canvas');
+  skyC.width = width;
+  skyC.height = height;
+  const sg = skyC.getContext('2d');
+  draw(sg, width, height);
+
+  const skyTex = new THREE.CanvasTexture(skyC);
+  skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.generateMipmaps = true;
+  skyTex.minFilter = THREE.LinearMipmapLinearFilter;
+  skyTex.magFilter = THREE.LinearFilter;
+
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(radius, 64, 32),
+    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false }));
+  sky.frustumCulled = false;
+  scene.add(sky);
+  return sky;
+}
+
+function addDaytimeSkyDome(scene) {
+  const rnd = seededRandom(0x5c0f4e57);
+  addCanvasSkyDome(scene, (sg, width, height) => {
+    const grad = sg.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#4f9ed8');
+    grad.addColorStop(0.38, '#7fc5eb');
+    grad.addColorStop(0.68, '#bfe7f4');
+    grad.addColorStop(0.86, '#d8f0cf');
+    grad.addColorStop(1, '#f5dfa3');
+    sg.fillStyle = grad;
+    sg.fillRect(0, 0, width, height);
+
+    const sunX = width * 0.22;
+    const sunY = height * 0.18;
+    const halo = sg.createRadialGradient(sunX, sunY, 12, sunX, sunY, width * 0.34);
+    halo.addColorStop(0, 'rgba(255,250,214,0.95)');
+    halo.addColorStop(0.18, 'rgba(255,244,188,0.42)');
+    halo.addColorStop(0.45, 'rgba(255,223,148,0.16)');
+    halo.addColorStop(1, 'rgba(255,223,148,0)');
+    sg.fillStyle = halo;
+    sg.fillRect(0, 0, width, height);
+    const sunDisc = sg.createRadialGradient(sunX - 6, sunY - 6, 3, sunX, sunY, 54);
+    sunDisc.addColorStop(0, '#fffdf2');
+    sunDisc.addColorStop(0.55, '#fff4a8');
+    sunDisc.addColorStop(1, 'rgba(255,214,116,0)');
+    sg.fillStyle = sunDisc;
+    sg.beginPath();
+    sg.arc(sunX, sunY, 58, 0, Math.PI * 2);
+    sg.fill();
+
+    const haze = sg.createRadialGradient(width * 0.52, height * 1.04, width * 0.05, width * 0.52, height * 1.04, width * 0.62);
+    haze.addColorStop(0, 'rgba(255,235,178,0.34)');
+    haze.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+    haze.addColorStop(1, 'rgba(255,255,255,0)');
+    sg.fillStyle = haze;
+    sg.fillRect(0, 0, width, height);
+
+    sg.save();
+    sg.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 42; i++) {
+      const x = rnd() * width;
+      const y = height * (0.08 + (rnd() ** 1.2) * 0.48);
+      const rx = 80 + rnd() * 280;
+      const ry = 18 + rnd() * 46;
+      sg.save();
+      sg.translate(x, y);
+      sg.rotate((rnd() - 0.5) * 0.18);
+      sg.scale(1, ry / rx);
+      const cloud = sg.createRadialGradient(0, 0, 0, 0, 0, rx);
+      cloud.addColorStop(0, `rgba(255,255,255,${0.16 + rnd() * 0.18})`);
+      cloud.addColorStop(0.52, `rgba(255,255,255,${0.06 + rnd() * 0.1})`);
+      cloud.addColorStop(1, 'rgba(255,255,255,0)');
+      sg.fillStyle = cloud;
+      sg.beginPath();
+      sg.arc(0, 0, rx, 0, Math.PI * 2);
+      sg.fill();
+      sg.restore();
+    }
+    sg.restore();
+
+    sg.save();
+    sg.globalCompositeOperation = 'multiply';
+    for (let i = 0; i < 12; i++) {
+      const x = rnd() * width;
+      const y = height * (0.18 + rnd() * 0.38);
+      const rx = 130 + rnd() * 260;
+      const ry = 18 + rnd() * 28;
+      sg.save();
+      sg.translate(x, y + ry * 0.38);
+      sg.rotate((rnd() - 0.5) * 0.12);
+      sg.scale(1, ry / rx);
+      const shade = sg.createRadialGradient(0, 0, 0, 0, 0, rx);
+      shade.addColorStop(0, 'rgba(84,128,170,0.045)');
+      shade.addColorStop(1, 'rgba(84,128,170,0)');
+      sg.fillStyle = shade;
+      sg.beginPath();
+      sg.arc(0, 0, rx, 0, Math.PI * 2);
+      sg.fill();
+      sg.restore();
+    }
+    sg.restore();
+  });
+}
+
+function addNightSkyDome(scene) {
+  const rnd = seededRandom(0x91e35a7b);
+  addCanvasSkyDome(scene, (sg, width, height) => {
+    const grad = sg.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#02030b');
+    grad.addColorStop(0.48, '#091129');
+    grad.addColorStop(0.78, '#132347');
+    grad.addColorStop(1, '#22143a');
+    sg.fillStyle = grad;
+    sg.fillRect(0, 0, width, height);
+
+    const glow = sg.createRadialGradient(width * 0.62, height * 0.18, 16, width * 0.62, height * 0.18, width * 0.28);
+    glow.addColorStop(0, 'rgba(175,205,255,0.3)');
+    glow.addColorStop(0.36, 'rgba(95,125,255,0.12)');
+    glow.addColorStop(1, 'rgba(95,125,255,0)');
+    sg.fillStyle = glow;
+    sg.fillRect(0, 0, width, height);
+
+    sg.save();
+    sg.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 340; i++) {
+      const x = rnd() * width;
+      const y = height * (0.03 + (rnd() ** 1.55) * 0.62);
+      const bright = 0.32 + rnd() * 0.64;
+      const radius = rnd() < 0.08 ? 1.45 + rnd() * 1.3 : 0.55 + rnd() * 0.75;
+      sg.shadowColor = `rgba(210,228,255,${bright * 0.7})`;
+      sg.shadowBlur = radius * 4;
+      sg.fillStyle = `rgba(235,244,255,${bright})`;
+      sg.beginPath();
+      sg.arc(x, y, radius, 0, Math.PI * 2);
+      sg.fill();
+    }
+    sg.restore();
+
+    const moonX = width * 0.72;
+    const moonY = height * 0.2;
+    const moon = sg.createRadialGradient(moonX, moonY, 4, moonX, moonY, 46);
+    moon.addColorStop(0, 'rgba(245,248,255,0.98)');
+    moon.addColorStop(0.4, 'rgba(212,226,255,0.72)');
+    moon.addColorStop(1, 'rgba(160,190,255,0)');
+    sg.fillStyle = moon;
+    sg.beginPath();
+    sg.arc(moonX, moonY, 46, 0, Math.PI * 2);
+    sg.fill();
+    sg.fillStyle = '#070c1f';
+    sg.beginPath();
+    sg.arc(moonX + 18, moonY - 8, 44, 0, Math.PI * 2);
+    sg.fill();
+  });
 }
 
 function addAtriumSkyDome(scene) {
