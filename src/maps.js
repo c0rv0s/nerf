@@ -93,6 +93,8 @@ const AI_TEX = {};
 const AI_TEX_SOURCES = {
   parasite: './textures/parasite.jpg',
   refractor: './textures/refractor.jpg',
+  'power-gold': './textures/power-gold.jpg',
+  'power-silver': './textures/power-silver.jpg',
   'atrium-gate-frame-atlas': './textures/atrium-gate-frame-atlas.jpg',
 };
 function makeNormalMap(img) {
@@ -141,6 +143,7 @@ export const texturesReady = Promise.all(
    'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
    'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
    'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
+   'power-gold', 'power-silver',
    'atrium-gate-frame-atlas']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
@@ -2527,9 +2530,10 @@ function buildCity(scene) {
 // or shoot through a doorway without committing to it. Colliders join the
 // world on the first update tick — AFTER the waypoint graph is built — so
 // bot paths still link through the openings.
-function addDoor(scene, world, x, y, z, w, h, d) {
-  const dmat = new THREE.MeshStandardMaterial({ color: 0x8a80a8, roughness: 0.55, metalness: 0.35,
-    emissive: 0x8a5fff, emissiveIntensity: 0.12 });
+function addDoor(scene, world, x, y, z, w, h, d, opts = {}) {
+  const gateColor = opts.color ?? 0x8a5fff;
+  const dmat = new THREE.MeshStandardMaterial({ color: opts.bodyColor ?? 0x8a80a8, roughness: 0.55, metalness: 0.35,
+    emissive: gateColor, emissiveIntensity: opts.runePhase == null ? 0.12 : 0.22 });
   const ai = AI_TEX.door;
   if (ai) {
     dmat.map = ai.map.clone();
@@ -2541,7 +2545,10 @@ function addDoor(scene, world, x, y, z, w, h, d) {
   mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
   const collider = { type: 'box', min: V(x - w / 2, y, z - d / 2), max: V(x + w / 2, y + h, z + d / 2) };
-  (world.doors ||= []).push({ mesh, collider, x, y, z, w, h, d, along: w >= d, off: 0 });
+  (world.doors ||= []).push({
+    mesh, collider, material: dmat, x, y, z, w, h, d,
+    along: w >= d, off: 0, runePhase: opts.runePhase ?? null,
+  });
   if (!world.updateDoors) {
     world._doorsArmed = false;
     world.updateDoors = (chars, dt) => {
@@ -2563,6 +2570,10 @@ function addDoor(scene, world, x, y, z, w, h, d) {
         dr.mesh.position.set(dr.x + ox, dr.y + dr.h / 2, dr.z + oz);
         dr.collider.min.set(dr.x - dr.w / 2 + ox, dr.y, dr.z - dr.d / 2 + oz);
         dr.collider.max.set(dr.x + dr.w / 2 + ox, dr.y + dr.h, dr.z + dr.d / 2 + oz);
+        if (dr.runePhase != null) {
+          const active = world.runePhase === dr.runePhase;
+          dr.material.emissiveIntensity = active ? 0.62 : 0.2;
+        }
       }
     };
   }
@@ -2619,16 +2630,30 @@ function addLava(scene, world, x, z, w, d, floorY = -1.1) {
   });
 }
 
-/* ============== SECRET MAP — THE SANCTUM (hidden gate in the lobby) ==============
-   An obsidian temple: obelisk chamber at the center, four rune rooms reached
-   through tight corridors, a crypt below (the gold), a balcony, rooftops via
-   pads, and a dark ambulatory ring around it all. */
+/* ============== SECRET MAP — THE RUNE ENGINE (hidden gate in the lobby) ==============
+   An obsidian labyrinth built around a suspended arcane machine. Four visually
+   distinct rune wings surround a vertical crypt-to-gallery combat spine; the
+   engine pulses through the wings and pre-opens two rune gates at a time. */
 function buildSanctum(scene) {
   const world = newWorld({ killY: -25, waypointLinkDist: 20, waypointLinkDy: 4.6 });
   scene.background = new THREE.Color(0x0a0714);
   scene.fog = new THREE.Fog(0x0a0714, 70, 220);
   baseLighting(scene, 0x8a7fb8, 0x1a1428, [40, 90, -30], 110);
   const STONE = 0x3e3358, FLOOR = 0x2c2440, DARK = 0x14101f;
+  const RUNE_COLORS = [0x62e8ff, 0xff7838, 0xd8f4ff, 0x57ffc1]; // archive, forge, storm, ossuary
+  const runeLights = [];
+
+  function addRuneBeacon(x, z, color, height = 4.2) {
+    addBox(scene, world, x, 0.65, z, 1.5, 1.3, 1.5, DARK, { tex: 'rock' });
+    addBox(scene, world, x, height * 0.5 + 0.7, z, 0.42, height, 0.42, color,
+      { collide: false, shadow: false, emissive: color, emissiveIntensity: 1.55 });
+    addBox(scene, world, x, height + 0.9, z, 1.15, 0.18, 1.15, color,
+      { collide: false, shadow: false, emissive: color, emissiveIntensity: 2.0 });
+    const light = new THREE.PointLight(color, 25, 24);
+    light.position.set(x, height * 0.7 + 1, z);
+    scene.add(light);
+    runeLights.push(light);
+  }
 
   // shell + floor (two stair holes over the crypt at x ±(30..40), z −2..2)
   for (const [x, z, w, d] of [[0, -50.5, 104, 3], [0, 50.5, 104, 3], [-50.5, 0, 3, 104], [50.5, 0, 3, 104]]) {
@@ -2646,7 +2671,9 @@ function buildSanctum(scene) {
   addBox(scene, world, 28, -0.5, -41.25, 9, 1, 17.5, FLOOR, { tex: 'panel', repeat: [1, 2] });
   addBox(scene, world, 28, -0.5, -12.75, 9, 1, 21.5, FLOOR, { tex: 'panel', repeat: [1, 3] });
   addBox(scene, world, -45, -0.5, 0, 10, 1, 4, FLOOR, { tex: 'panel' });
-  addBox(scene, world, 0, -0.5, 0, 60, 1, 4, FLOOR, { tex: 'panel', repeat: [8, 1] });
+  // Split the central cross-floor around a 6×4 aperture into the crypt.
+  addBox(scene, world, -16.5, -0.5, 0, 27, 1, 4, FLOOR, { tex: 'panel', repeat: [4, 1] });
+  addBox(scene, world, 16.5, -0.5, 0, 27, 1, 4, FLOOR, { tex: 'panel', repeat: [4, 1] });
   addBox(scene, world, 45, -0.5, 0, 10, 1, 4, FLOOR, { tex: 'panel' });
 
   // CRYPT (x −40..40, z −6..6, floor −6) + stair ramps down from the E/W rooms
@@ -2666,7 +2693,7 @@ function buildSanctum(scene) {
   cryptLight.position.set(0, -3, 0);
   scene.add(cryptLight);
 
-  // CENTER CHAMBER (36×36, walls h6, door mid each side) + obelisk dais
+  // CENTER CHAMBER (36×36) + suspended Rune Engine over the crypt aperture.
   for (const s of [1, -1]) {
     addBox(scene, world, -10, 3, 18 * s, 16, 6, 1.2, STONE, { tex: 'rock' });
     addBox(scene, world, 10, 3, 18 * s, 16, 6, 1.2, STONE, { tex: 'rock' });
@@ -2675,12 +2702,105 @@ function buildSanctum(scene) {
     addBox(scene, world, 0, 4.8, 18.8 * s, 24, 0.35, 0.25, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.4 });
     addBox(scene, world, 18.8 * s, 4.8, 0, 0.25, 0.35, 24, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.4 });
   }
-  addBox(scene, world, 0, 0.3, 0, 10, 0.6, 10, DARK, { tex: 'panel' });          // dais
-  addBox(scene, world, 0, 4.6, 0, 2.6, 8, 2.6, DARK, { tex: 'rock', repeat: [1, 3] }); // obelisk
-  addBox(scene, world, 0, 9.2, 0, 1.4, 1.2, 1.4, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.6 });
+  // Broken ring dais leaves the lift shaft readable from every entrance.
+  addBox(scene, world, 0, 0.3, 3.75, 10, 0.6, 2.5, DARK, { tex: 'panel' });
+  addBox(scene, world, 0, 0.3, -3.75, 10, 0.6, 2.5, DARK, { tex: 'panel' });
+  addBox(scene, world, 3.75, 0.3, 0, 2.5, 0.6, 5, DARK, { tex: 'panel' });
+  addBox(scene, world, -3.75, 0.3, 0, 2.5, 0.6, 5, DARK, { tex: 'panel' });
+
+  const engine = new THREE.Group();
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0x30234d, roughness: 0.28, metalness: 0.48,
+    emissive: 0x8a5fff, emissiveIntensity: 1.8,
+  });
+  const engineCore = new THREE.Mesh(new THREE.OctahedronGeometry(1.45, 1), coreMat);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xc9b4ff, transparent: true, opacity: 0.76,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const ringA = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.09, 7, 40), ringMat);
+  const ringB = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.07, 7, 36), ringMat.clone());
+  ringA.rotation.x = Math.PI / 2;
+  ringB.rotation.y = Math.PI / 2;
+  engine.add(engineCore, ringA, ringB);
+  engine.position.set(0, 7.2, 0);
+  scene.add(engine);
+  const motePositions = new Float32Array(90 * 3);
+  for (let i = 0; i < 90; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = 3.5 + Math.random() * 12;
+    motePositions[i * 3] = Math.cos(a) * r;
+    motePositions[i * 3 + 1] = 1 + Math.random() * 10;
+    motePositions[i * 3 + 2] = Math.sin(a) * r;
+  }
+  const moteGeo = new THREE.BufferGeometry();
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(motePositions, 3));
+  const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+    color: 0xbda5ff, size: 0.08, transparent: true, opacity: 0.5,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  scene.add(motes);
+  for (const [x, z] of [[-2.2, -2.2], [2.2, -2.2], [-2.2, 2.2], [2.2, 2.2]]) {
+    addBox(scene, world, x, 9.2, z, 0.16, 6.2, 0.16, 0x8a789e,
+      { collide: false, shadow: false, metalness: 0.75, roughness: 0.34 });
+  }
   const obLight = new THREE.PointLight(0x8a5fff, 55, 34);
-  obLight.position.set(0, 10, 0);
+  obLight.position.set(0, 7.2, 0);
   scene.add(obLight);
+
+  // Upper gallery: a readable combat loop above the ground-floor cross.
+  // Hard seam rule: straight runs end exactly where a dedicated corner tile
+  // begins. No coplanar overlap, no gap, and one consistent top height.
+  addBox(scene, world, 0, 5.2, 14, 24.8, 0.5, 3.2, STONE, { tex: 'rock', repeat: [6, 1] });
+  addBox(scene, world, 0, 5.2, -14, 24.8, 0.5, 3.2, STONE, { tex: 'rock', repeat: [6, 1] });
+  addBox(scene, world, 14, 5.2, 0, 3.2, 0.5, 24.8, STONE, { tex: 'rock', repeat: [1, 6] });
+  addBox(scene, world, -14, 5.2, 0, 3.2, 0.5, 24.8, STONE, { tex: 'rock', repeat: [1, 6] });
+  for (const [x, z] of [[14, 14], [-14, 14], [14, -14], [-14, -14]]) {
+    addBox(scene, world, x, 5.2, z, 3.2, 0.5, 3.2, STONE, { tex: 'rock' });
+  }
+  // Rail runs butt against their corner posts instead of intersecting them.
+  for (const [x, z, w, d] of [[0, 12.1, 23.96, .14], [0, -12.1, 23.96, .14], [12.1, 0, .14, 23.96], [-12.1, 0, .14, 23.96]]) {
+    addBox(scene, world, x, 6.15, z, w, 1.35, d, 0x8a5fff,
+      { shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.58 });
+  }
+  for (const [x, z] of [[12.1, 12.1], [-12.1, 12.1], [12.1, -12.1], [-12.1, -12.1]]) {
+    addBox(scene, world, x, 6.2, z, 0.24, 1.55, 0.24, 0xc9b4ff,
+      { shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.7 });
+  }
+  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 15.5, maxZ: 26.5,
+    h0: 5.45, h1: 6.5, color: STONE });
+  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -26.5, maxZ: -15.5,
+    h0: 6.5, h1: 5.45, color: STONE });
+
+  // A one-way arc lift makes the crypt a fast re-entry route instead of a dead end.
+  addJumpPad(scene, world, 0, -6, 0, 24, 5.5, 0, 0x8a5fff);
+
+  world.runeEngine = true;
+  world.runePhase = 0;
+  const runeColorObjects = RUNE_COLORS.map(c => new THREE.Color(c));
+  world.anim.push((dt, t) => {
+    const clock = t + (world.runeTimeOffset || 0);
+    const phase = Math.floor(clock / 12) % 4;
+    if (phase !== world.runePhase) {
+      world.runePhase = phase;
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(clock * 2.6);
+    engine.position.y = 7.2 + Math.sin(clock * 1.05) * 0.22;
+    engine.rotation.y = clock * 0.34;
+    ringA.rotation.z = clock * 0.72;
+    ringB.rotation.x = clock * -0.56;
+    motes.rotation.y = clock * 0.055;
+    motes.material.opacity = 0.34 + pulse * 0.28;
+    coreMat.emissive.copy(runeColorObjects[phase]);
+    coreMat.emissiveIntensity = 1.45 + pulse * 1.05;
+    ringMat.color.copy(runeColorObjects[phase]);
+    ringB.material.color.copy(runeColorObjects[(phase + 1) % 4]);
+    obLight.color.copy(runeColorObjects[phase]);
+    obLight.intensity = 42 + pulse * 28;
+    runeLights.forEach((light, i) => {
+      light.intensity = i === phase ? 40 + pulse * 12 : 15;
+    });
+  });
 
   // corridors to the four rooms (h4 — tight) with walkable roof slabs
   for (const s of [1, -1]) {
@@ -2718,22 +2838,87 @@ function buildSanctum(scene) {
   addJumpPad(scene, world, 20, 0, 40, 20, -7, 0, 0x8a5fff);
   addJumpPad(scene, world, -20, 0, -40, 20, 7, 0, 0x8a5fff);
 
+  /* ---- FOUR RUNE WINGS ----
+     Each room now has a distinct silhouette, cover rhythm, color, and route role. */
+
+  // NORTH — Astral Archive: tall index pillars and suspended cyan data-runes.
+  addRuneBeacon(-9.5, 34, RUNE_COLORS[0], 4.8);
+  addRuneBeacon(9.5, 34, RUNE_COLORS[0], 4.8);
+  for (const [x, z, h] of [[-7, 39, 3.4], [0, 35, 4.6], [7, 40, 2.8]]) {
+    addBox(scene, world, x, h / 2, z, 2.2, h, 2.2, 0x273a52, { tex: 'panel' });
+    addBox(scene, world, x, h + 0.15, z, 2.5, 0.18, 2.5, RUNE_COLORS[0],
+      { collide: false, shadow: false, emissive: RUNE_COLORS[0], emissiveIntensity: 1.25 });
+  }
+
+  // EAST — Ember Forge: hot floor channels, paired anvils, and an orange furnace frame.
+  addRuneBeacon(35, -7.2, RUNE_COLORS[1], 4.4);
+  addRuneBeacon(35, 7.2, RUNE_COLORS[1], 4.4);
+  for (const z of [-7.8, 7.8]) {
+    addBox(scene, world, 35, 0.06, z, 14, 0.12, 0.34, RUNE_COLORS[1],
+      { collide: false, shadow: false, emissive: RUNE_COLORS[1], emissiveIntensity: 1.65 });
+  }
+  addBox(scene, world, 29.5, 0.8, 5.6, 3.2, 1.6, 2.4, 0x36273a, { tex: 'rock' });
+  addBox(scene, world, 40.5, 0.8, -5.6, 3.2, 1.6, 2.4, 0x36273a, { tex: 'rock' });
+
+  // SOUTH — Storm Cloister: white-blue conductor pylons frame a fast center lane.
+  addRuneBeacon(-9, -34, RUNE_COLORS[2], 5.1);
+  addRuneBeacon(9, -34, RUNE_COLORS[2], 5.1);
+  for (const x of [-7, 7]) {
+    addBox(scene, world, x, 1.3, -40, 2.4, 2.6, 2.4, 0x34405a, { tex: 'panel' });
+    addBox(scene, world, x, 3.0, -40, 0.5, 0.9, 0.5, RUNE_COLORS[2],
+      { collide: false, shadow: false, emissive: RUNE_COLORS[2], emissiveIntensity: 1.8 });
+  }
+
+  // WEST — Echo Ossuary: low tomb cover below the existing sniper balcony.
+  addRuneBeacon(-35, -7.2, RUNE_COLORS[3], 3.8);
+  addRuneBeacon(-35, 7.2, RUNE_COLORS[3], 3.8);
+  for (const [x, z] of [[-31, -5.5], [-39, -5.5], [-31, 5.5], [-39, 5.5]]) {
+    addBox(scene, world, x, 0.62, z, 3.4, 1.24, 1.7, 0x203d3b, { tex: 'rock' });
+    addBox(scene, world, x, 1.27, z, 2.7, 0.08, 1.15, RUNE_COLORS[3],
+      { collide: false, shadow: false, emissive: RUNE_COLORS[3], emissiveIntensity: 0.72 });
+  }
+
+  // NW elevated shortcut uses the same butt-jointed construction: two runs
+  // and one unique 4m corner tile, all sharing a 5.5m top surface.
+  addBox(scene, world, -39, 5.25, 16, 4, 0.5, 24, STONE, { tex: 'rock', repeat: [1, 6] });
+  addBox(scene, world, -27, 5.25, 30, 20, 0.5, 4, STONE, { tex: 'rock', repeat: [5, 1] });
+  addBox(scene, world, -39, 5.25, 30, 4, 0.5, 4, STONE, { tex: 'rock' });
+  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -13, minZ: 28, maxZ: 32,
+    h0: 5.5, h1: 6.5, color: STONE });
+  // Rail endpoints meet two corner posts exactly; no rail volumes overlap.
+  for (const [x, z] of [[-40.9, 31.9], [-37.1, 28.1]]) {
+    addBox(scene, world, x, 6.2, z, .24, 1.55, .24, RUNE_COLORS[3],
+      { shadow: false, emissive: RUNE_COLORS[3], emissiveIntensity: 0.52 });
+  }
+  for (const [x, z, w, d] of [
+    [-40.9, 17.89, .12, 27.78],
+    [-37.1, 15.99, .12, 23.98],
+    [-26.99, 28.1, 19.98, .12],
+    [-28.89, 31.9, 23.78, .12],
+  ]) {
+    addBox(scene, world, x, 6.15, z, w, 1.35, d, RUNE_COLORS[3],
+      { shadow: false, emissive: RUNE_COLORS[3], emissiveIntensity: 0.52 });
+  }
+
+  // SE collapsed ambulatory: irregular cover breaks the old four-way symmetry.
+  addBox(scene, world, 40, 0.85, -40, 6.5, 1.7, 3.2, 0x302943, { tex: 'rock', flatShading: true });
+  addBox(scene, world, 44, 1.35, -35, 3.4, 2.7, 4.2, 0x29223b, { tex: 'rock', flatShading: true });
+  addBox(scene, world, 36.5, 0.55, -34, 4.6, 1.1, 2.8, 0x403653, { tex: 'rock', flatShading: true });
+
   // cavern ceiling: no open sky — discs ricochet back down (no shadow cast,
   // or the sun would flat-black the whole temple; faint glow sells the rock)
   addBox(scene, world, 0, 12.45, 0, 104, 0.9, 104, 0x241c38,
     { tex: 'rock', repeat: [12, 12], emissive: 0x2a1a4a, emissiveIntensity: 0.35, shadow: false });
 
-  // automatic doors on every doorway — no peeking, no doorway sniping
-  addDoor(scene, world, 0, 0, 18, 4.2, 5.9, 1.4);      // chamber
-  addDoor(scene, world, 0, 0, -18, 4.2, 5.9, 1.4);
-  addDoor(scene, world, 18, 0, 0, 1.4, 5.9, 4.2);
-  addDoor(scene, world, -18, 0, 0, 1.4, 5.9, 4.2);
-  addDoor(scene, world, 26.6, 0, 0, 1.4, 5.9, 4.2);    // E/W rooms
-  addDoor(scene, world, 43.4, 0, 0, 1.4, 5.9, 4.2);
-  addDoor(scene, world, -26.6, 0, 0, 1.4, 5.9, 4.2);
-  addDoor(scene, world, -43.4, 0, 0, 1.4, 5.9, 4.2);
-  addDoor(scene, world, 0, 0, 26.6, 4.2, 5.9, 1.4);    // N/S rooms + ring doors
-  addDoor(scene, world, 0, 0, -26.6, 4.2, 5.9, 1.4);
+  // Open central arches expose fights early. Four colored rune gates remain at
+  // the wing thresholds. Their glow follows the engine's visual pulse, but all
+  // doors remain strictly proximity-driven to preserve occlusion and stop
+  // long-range shots through unattended doorways.
+  addDoor(scene, world, 0, 0, 26.6, 4.2, 5.9, 1.4, { color: RUNE_COLORS[0], runePhase: 0 });
+  addDoor(scene, world, 26.6, 0, 0, 1.4, 5.9, 4.2, { color: RUNE_COLORS[1], runePhase: 1 });
+  addDoor(scene, world, 0, 0, -26.6, 4.2, 5.9, 1.4, { color: RUNE_COLORS[2], runePhase: 2 });
+  addDoor(scene, world, -26.6, 0, 0, 1.4, 5.9, 4.2, { color: RUNE_COLORS[3], runePhase: 3 });
+  // Only the two N/S ring thresholds retain ordinary automatic doors.
   addDoor(scene, world, 13.4, 0, 37.5, 1.4, 5.9, 5.2);
   addDoor(scene, world, 13.4, 0, -37.5, 1.4, 5.9, 5.2);
 
@@ -2758,21 +2943,21 @@ function buildSanctum(scene) {
   // Spawns
   for (const dz of [-44, -20, 20, 44]) world.spawns.blue.push(V(-47, 0.1, dz));
   for (const dz of [-44, -20, 20, 44]) world.spawns.red.push(V(47, 0.1, dz));
-  for (const [x, z] of [[44, 44], [-44, 44], [44, -44], [-44, -44], [0, 35], [0, -35],
+  for (const [x, z] of [[44, 44], [-44, 44], [44, -44], [-44, -44], [0, 30], [0, -35],
                         [35, 14], [-35, 6], [16, 22], [-16, 22], [22, -22], [-16, -22]]) {
     world.spawns.ffa.push(V(x, 0.1, z));
   }
 
   // Pickups
-  pk(world, 'gold', 0, -5.8, 0);                          // crypt heart
+  pk(world, 'gold', -8, -5.8, 0);                         // crypt heart, clear of the arc lift
   pk(world, 'silver', 0, 0.8, -3.2);                      // dais
   pk(world, 'shield', 0, 0.8, 3.2);
   pk(world, 'speed', 0, 0.2, -32);                        // S room
   pk(world, 'djump', 0, 0.2, 47);                         // north ambulatory
   pk(world, 'weapon', 0, 6.7, 35, { weapon: 'whomper' }); // N roof
-  pk(world, 'weapon', -39, 5.2, 4, { weapon: 'hyper' });  // W balcony
+  pk(world, 'weapon', -39, 5.2, 2, { weapon: 'hyper' });  // W balcony
   pk(world, 'weapon', 26, -5.8, 0, { weapon: 'zooka' });  // crypt
-  pk(world, 'weapon', 35, 0.2, 6, { weapon: 'scatter' });
+  pk(world, 'weapon', 35, 0.2, 4.8, { weapon: 'scatter' });
   pk(world, 'weapon', 0, 0.2, -37, { weapon: 'pulsar' });
   pk(world, 'weapon', 22, 0.2, 22, { weapon: 'sidewinder' });
   pk(world, 'weapon', -22, 0.2, 22, { weapon: 'parasite' });
@@ -2780,15 +2965,15 @@ function buildSanctum(scene) {
   pk(world, 'ammo', -39, 5.2, -1, { weapon: 'hyper' });
   pk(world, 'ammo', 20, -5.8, 0, { weapon: 'zooka' });
   pk(world, 'ammo', -28, 0.2, 22, { weapon: 'parasite' });
-  pk(world, 'ammo', 35, 0.2, -6, { weapon: 'scatter' });
+  pk(world, 'ammo', 35, 0.2, -4.8, { weapon: 'scatter' });
   pk(world, 'ammo', -5, 0.2, -35, { weapon: 'pulsar' });
   pk(world, 'ammo', -22, 0.2, -22, { weapon: 'sidewinder' });
   pk(world, 'health', 14, 0.2, 14);
   pk(world, 'health', -14, 0.2, -14);
   pk(world, 'health', 47, 0.2, 0);
   pk(world, 'health', -47, 0.2, 24);
-  pk(world, 'star', -26, -5.8, 0, { hidden: true });      // crypt west run
-  pk(world, 'star', 47, 0.2, -47, { hidden: true });      // ring corner brazier
+  pk(world, 'star', -26, -5.0, 0, { hidden: true });      // atop the crypt bridge
+  pk(world, 'star', 41, 0.2, -47, { hidden: true });      // broken SE ambulatory
   pk(world, 'star', 0, 6.7, -35, { hidden: true });       // S roof
   pk(world, 'star', -12, 0.2, 42, { hidden: true });      // N room corner
 
@@ -2800,15 +2985,21 @@ function buildSanctum(scene) {
     // corridors
     [0, 0, 22], [0, 0, -22], [22, 0, 0], [-22, 0, 0],
     // E/W rooms (skirting the stair holes) + hole ramps + crypt line
-    [30, 0, 6], [40, 0, 6], [35, 0, -6], [42, 0, 0],
+    [29, 0, 0], [40, 0, 6], [35, 0, -6], [42, 0, 0],
     [-30, 0, 6], [-40, 0, 6], [-35, 0, -6], [-42, 0, 0],
     [35, -2.85, 0], [-35, -2.85, 0],
     [28, -6, 0], [14, -6, 0], [0, -6, 0], [-14, -6, 0], [-28, -6, 0],
     // N/S rooms + their ring doors
-    [0, 0, 30], [-8, 0, 40], [8, 0, 40], [16, 0, 37.5],
-    [0, 0, -30], [-8, 0, -40], [8, 0, -40], [16, 0, -37.5],
+    [0, 0, 30], [-10, 0, 36], [8, 0, 40], [16, 0, 37.5],
+    [0, 0, -30], [-9.5, 0, -40], [8, 0, -40], [16, 0, -37.5],
     // W balcony ramp + deck
     [-38, 2.6, -7.3], [-39, 5, 2],
+    // Rune Engine upper gallery + north/south roof connectors
+    [0, 5.45, 14], [14, 5.45, 0], [0, 5.45, -14], [-14, 5.45, 0],
+    [14, 5.45, 14], [-14, 5.45, 14], [14, 5.45, -14], [-14, 5.45, -14],
+    [0, 5.8, 20], [0, 6.5, 28], [0, 5.8, -20], [0, 6.5, -28],
+    // NW balcony shortcut to the Astral Archive roof
+    [-39, 5.5, 12], [-39, 5.5, 24], [-39, 5.5, 30], [-27, 5.5, 30], [-14, 6.5, 30],
     // ambulatory ring (≤16 apart so it chains) + diagonal courts
     [47, 0, 0], [47, 0, 16], [47, 0, -16], [47, 0, 32], [47, 0, -32],
     [-47, 0, 0], [-47, 0, 16], [-47, 0, -16], [-47, 0, 32], [-47, 0, -32],
@@ -2824,6 +3015,11 @@ function buildSanctum(scene) {
   for (const [x, y, z] of wps) wp(world, x, y, z);
   world.manualLinks.push(
     [-38, 2.6, -7.3, -39, 5, 2, false],   // balcony ramp → deck (deck edge blocks LOS)
+    [0, -6, 0, 14, 5.45, 0, true],        // crypt arc lift → east gallery
+    [0, 5.45, 14, 0, 6.5, 28, false],     // north gallery ramp → archive roof
+    [0, 5.45, -14, 0, 6.5, -28, false],   // south gallery ramp → cloister roof
+    [-39, 5, 2, -39, 5.5, 12, false],     // west balcony → high ambulatory
+    [-27, 5.5, 30, -14, 6.5, 30, false],  // high ambulatory → archive roof
     [20, 0, 40, 0, 6.5, 35, true],        // pads → roofs
     [-20, 0, -40, 0, 6.5, -35, true],
   );
@@ -3939,7 +4135,7 @@ export const MAPS = [
     desc: 'Night rooftops over a denser street canyon: galleria, arcade block, back alleys, subway, and a rideable second-floor monorail loop. Gold on the tallest tower.',
     thumb: 'linear-gradient(135deg,#0b1026,#5a4a78)', build: buildCity },
   { id: 'sanctum', name: 'THE LABYRINTH', emoji: '🔮',
-    desc: 'An obsidian temple: rune rooms off a central obelisk chamber, a crypt below, rooftops above.',
+    desc: 'A suspended Rune Engine shifts four distinct wings around a crypt lift, upper gallery, rooftop routes, and collapsed shortcuts.',
     thumb: 'linear-gradient(135deg,#14101f,#8a5fff)', build: buildSanctum },
   { id: 'prism', name: 'PRISM RUN', emoji: '🌈',
     desc: 'Inside a neon tesseract in deep space: walk every wall, floor and ceiling. Gravity always pulls to the nearest surface — you never fall out.',

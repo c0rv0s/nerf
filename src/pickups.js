@@ -107,24 +107,70 @@ function makeMesh(def) {
     const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), glowMat(0xffe040, 1.4));
     g.add(star);
   } else { // gold / silver medal
-    const color = def.kind === 'gold' ? 0xffd23c : 0xdcdce8;
+    const gold = def.kind === 'gold';
+    const color = gold ? 0xffc928 : 0xdce7f4;
+    const edgeColor = gold ? 0xffee9a : 0xf7fbff;
+    const insetColor = gold ? 0x743900 : 0x536174;
     const quietWaterMedal = def.quietWaterMedal === true;
-    const medal = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.18, 20),
-      new THREE.MeshStandardMaterial({
-        color,
-        metalness: quietWaterMedal ? 0.35 : 0.9,
-        roughness: quietWaterMedal ? 0.62 : 0.25,
-        envMapIntensity: quietWaterMedal ? 0.18 : 1,
-        emissive: color,
-        emissiveIntensity: quietWaterMedal ? 0.2 : 0.5,
-      }));
-    medal.rotation.x = Math.PI / 2;
-    g.add(medal);
+    const metal = new THREE.MeshStandardMaterial({
+      color, metalness: quietWaterMedal ? 0.46 : 0.94,
+      roughness: quietWaterMedal ? 0.58 : (gold ? 0.2 : 0.15),
+      envMapIntensity: quietWaterMedal ? 0.25 : 1.25,
+      emissive: color, emissiveIntensity: quietWaterMedal ? 0.06 : 0.14,
+    });
+    const brightMetal = new THREE.MeshStandardMaterial({
+      color: edgeColor, metalness: 0.92, roughness: 0.16,
+      emissive: color, emissiveIntensity: quietWaterMedal ? 0.04 : 0.2,
+    });
+    const inset = new THREE.MeshStandardMaterial({
+      color: insetColor, metalness: 0.72, roughness: 0.3,
+      emissive: color, emissiveIntensity: quietWaterMedal ? 0.02 : 0.08,
+    });
+
+    // A layered, beveled relic rather than a flat glowing disc. The raised N
+    // reads from either side while the toothed rim gives it a trophy silhouette.
+    const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.12, 32), inset);
+    edge.rotation.x = Math.PI / 2;
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.63, 0.63, 0.2, 32), metal);
+    face.rotation.x = Math.PI / 2;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.64, 0.055, 8, 36), brightMetal);
+    const innerRim = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.025, 6, 30), inset);
+    g.add(edge, face, rim, innerRim);
+
+    const addEmblem = z => {
+      for (const [x, rot] of [[-0.18, 0], [0.18, 0], [0, -0.57]]) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.52, 0.065), inset);
+        bar.position.set(x, 0, z);
+        bar.rotation.z = rot;
+        g.add(bar);
+      }
+    };
+    addEmblem(0.125);
+    addEmblem(-0.125);
+
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6;
+      const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.055, 0.075), brightMetal);
+      tooth.position.set(Math.cos(a) * 0.78, Math.sin(a) * 0.78, 0);
+      tooth.rotation.z = a;
+      g.add(tooth);
+    }
     if (!quietWaterMedal) {
-      const glow = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8),
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.15 }));
-      g.add(glow);
-      const light = new THREE.PointLight(color, 60, 16);
+      const haloMat = new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: 0.62, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.94, 0.018, 5, 42), haloMat);
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(1.03, 0.012, 5, 32, Math.PI * 1.35), haloMat.clone());
+      arc.rotation.z = -0.65;
+      g.add(halo, arc);
+      for (const [x, y, s] of [[-0.92, 0.42, .11], [.86, -.5, .085], [.18, .96, .07]]) {
+        const spark = new THREE.Mesh(new THREE.OctahedronGeometry(s, 0),
+          new THREE.MeshBasicMaterial({ color: edgeColor }));
+        spark.position.set(x, y, 0);
+        g.add(spark);
+      }
+      const light = new THREE.PointLight(color, 24, 12);
       g.add(light);
     }
   }

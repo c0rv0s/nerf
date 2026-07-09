@@ -218,6 +218,14 @@ let multiplayerVotingTimer = 0;
 const lastSpawnByKey = new Map();
 const lastSpawnFaceByKey = new Map();
 
+function bindWorldPresentation(world, syncToMultiplayer = false) {
+  if (!world?.runeEngine) return;
+  if (syncToMultiplayer && Number.isFinite(multiplayer.phaseEndsAt)) {
+    const remaining = Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000);
+    world.runeTimeOffset = Math.max(0, MATCH_TIME - remaining);
+  }
+}
+
 function modeLabel(mode = selectedMode) {
   return mode === 'tdm' ? 'MODE: TEAM DEATHMATCH' : 'MODE: FREE FOR ALL';
 }
@@ -468,6 +476,7 @@ function startMatch(mapDef, mode = 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  bindWorldPresentation(world, false);
   world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
   buildWaypointGraph(world);
   scene.add(camera);
@@ -610,6 +619,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  bindWorldPresentation(world, true);
   world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
   buildWaypointGraph(world);
   scene.add(camera);
@@ -673,6 +683,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
 function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   startMatch(mapDef, mode);
   if (!G) return;
+  bindWorldPresentation(G.world, true);
   const playerSlot = multiplayerSlotById();
   const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
   G.multiplayerHost = true;
@@ -2540,6 +2551,7 @@ function stepMultiplayer(dt) {
   G.timeLeft = Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000);
   setListener(G.player.pos);
   G.world.update?.(dt, G.characters);
+  G.world.updateDoors?.(G.characters, dt);
   updateStormAudio();
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);

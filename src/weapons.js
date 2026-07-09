@@ -85,17 +85,42 @@ function blasterMats(color, textureName = null) {
   return { body: _blasterMats[bodyKey], energy: _blasterMats[key] };
 }
 
-// Powerup skins: the blaster shell goes metallic gold/silver while active.
+// Powerup skins: generated, seamless energized-metal finishes replace the
+// previous flat gold/silver tint while preserving each weapon's glow geometry.
 export function blasterSkin(kind) {
   if (!kind) return blasterMats(0).body; // the shared plastic shell material
   const key = 'skin-' + kind;
   if (!_blasterMats[key]) {
-    const c = kind === 'gold' ? 0xffd23c : 0xdfe2ea;
+    const gold = kind === 'gold';
+    const c = gold ? 0xffc62e : 0xcfe7ff;
+    const tex = aiTex(gold ? 'power-gold' : 'power-silver', 0.2, 0.2);
+    if (tex.normalScale) tex.normalScale.set(gold ? 0.18 : 0.08, gold ? 0.08 : 0.18);
     _blasterMats[key] = new THREE.MeshStandardMaterial({
-      color: c, metalness: 0.95, roughness: 0.22, envMapIntensity: 1.2,
-      emissive: c, emissiveIntensity: 0.12 });
+      color: 0xffffff,
+      metalness: gold ? 0.78 : 0.88,
+      roughness: gold ? 0.27 : 0.2,
+      envMapIntensity: 1.35,
+      emissive: c,
+      emissiveIntensity: gold ? 0.1 : 0.075,
+      ...tex,
+    });
+    _blasterMats[key].userData.baseEmissive = gold ? 0.1 : 0.075;
   }
   return _blasterMats[key];
+}
+
+// Slow material drift makes the temporary skin feel energized without
+// changing weapon geometry or creating extra viewmodel draw calls.
+export function updateBlasterSkin(kind, t) {
+  if (!kind) return;
+  const mat = _blasterMats['skin-' + kind];
+  if (!mat?.map) return;
+  const gold = kind === 'gold';
+  const x = t * (gold ? 0.018 : -0.012);
+  const y = Math.sin(t * 0.32) * 0.035;
+  mat.map.offset.set(x, y);
+  if (mat.normalMap) mat.normalMap.offset.copy(mat.map.offset);
+  mat.emissiveIntensity = mat.userData.baseEmissive + (0.5 + 0.5 * Math.sin(t * (gold ? 3.2 : 4.1))) * 0.055;
 }
 
 // Muzzle points −z, grip hangs down. Total length ≈ 1.2–1.7.

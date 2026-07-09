@@ -2,7 +2,7 @@
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
 import { moveCharacter, moveCharacterUp, cardinal, clamp } from './engine.js';
-import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, nextLoadedWeaponAfter } from './weapons.js';
+import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx } from './audio.js';
 
 export class Player {
@@ -262,6 +262,7 @@ export class Player {
 
     // Powerup timer
     if (this.powerup) {
+      updateBlasterSkin(this.powerup.kind, now * 0.001);
       this.powerup.timeLeft -= dt;
       if (this.powerup.timeLeft <= 0) {
         this.powerup = null;
