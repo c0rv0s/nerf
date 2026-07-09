@@ -2,6 +2,12 @@
 // { colliders, ramps, waypoints, spawns:{blue,red,ffa}, spawnsAll, pickups,
 //   jumpPads, manualLinks, gravity, jumpVel, killY, playerSpeed,
 //   waypointLinkDist, waypointLinkDy, update(dt) }
+//
+// Raised-route seam invariant: walkable slabs at the same elevation may share
+// a boundary, but their top faces must never overlap. Use a dedicated corner
+// slab for turns, make straight runs butt against it exactly, and terminate
+// rail runs at corner posts rather than crossing them. Ramps may meet a deck
+// at its edge or sit at a deliberately different elevation, never coplanar.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rand } from './engine.js';
@@ -259,8 +265,8 @@ function mergeStatic(scene, world) {
 }
 
 // Walkable slope. Rises along `axis` from h0 (at min end) to h1 (at max end).
-function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color, visualInset = 0 }) {
-  world.ramps.push({ axis, minX, maxX, minZ, maxZ, h0, h1 });
+function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color, visualInset = 0, supportPad0 = 0, supportPad1 = 0 }) {
+  world.ramps.push({ axis, minX, maxX, minZ, maxZ, h0, h1, supportPad0, supportPad1 });
   const len = axis === 'x' ? maxX - minX : maxZ - minZ;
   const width = axis === 'x' ? maxZ - minZ : maxX - minX;
   const dh = h1 - h0;
@@ -1781,10 +1787,10 @@ function buildCanopy(scene) {
   addBox(scene, world, 54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
   addBox(scene, world, -54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] }); // plank bridge
   addBox(scene, world, 54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] });
-  addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -4.8, h1: 0.3, color: 0x4a7a52 });
-  addRamp(scene, world, { axis: 'x', minX: -58, maxX: -51.5, minZ: -52, maxZ: -48, h0: 0.3, h1: -4.8, color: 0x4a7a52 });
-  addRamp(scene, world, { axis: 'x', minX: 50, maxX: 56.5, minZ: 28, maxZ: 32, h0: 0.3, h1: -4.8, color: 0x4a7a52 });
-  addRamp(scene, world, { axis: 'x', minX: 51.5, maxX: 58, minZ: -52, maxZ: -48, h0: -4.8, h1: 0.3, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -4.8, h1: 0, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: -58, maxX: -51.5, minZ: -52, maxZ: -48, h0: 0, h1: -4.8, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: 50, maxX: 56.5, minZ: 28, maxZ: 32, h0: 0, h1: -4.8, color: 0x4a7a52 });
+  addRamp(scene, world, { axis: 'x', minX: 51.5, maxX: 58, minZ: -52, maxZ: -48, h0: -4.8, h1: 0, color: 0x4a7a52 });
   // ground variety: dirt roads + flower meadows across the lawn
   addBox(scene, world, 10, 0.031, -40, 120, 0.06, 7, 0xb08a5a, { tex: 'dirt', repeat: [16, 1] });
   addBox(scene, world, -20, 0.036, 55, 22, 0.07, 18, 0xd8a8c8, { tex: 'flowers', repeat: [4, 3] });
@@ -1844,7 +1850,7 @@ function buildCanopy(scene) {
   addBox(scene, world, 4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
   addRamp(scene, world, { axis: 'z', minX: -6, maxX: -3, minZ: -5, maxZ: 5, h0: 4, h1: 0, color: 0x8a6a40 });
   addBox(scene, world, -3, 3.7, -5.75, 6, 0.6, 1.5, 0x8a6a40, { tex: 'crate' }); // landing abuts the flight-1 top (overlap shoves climbers off)
-  addRamp(scene, world, { axis: 'x', minX: 0, maxX: 6.5, minZ: -6.5, maxZ: -3.5, h0: 4, h1: 8, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'x', minX: 0, maxX: 8, minZ: -6.5, maxZ: -3.5, h0: 4, h1: 8, color: 0x8a6a40 });
   const roomLight = new THREE.PointLight(0xffb060, 25, 18);
   roomLight.position.set(0, 5, 0);
   scene.add(roomLight);
@@ -1871,7 +1877,7 @@ function buildCanopy(scene) {
   }
   // hedge-top balance beam: side ramp near the hedge's north end, then walk
   // the 2-wide top south (the south end abuts the big west ramp's corridor)
-  addRamp(scene, world, { axis: 'x', minX: -29, maxX: -22.5, minZ: 21, maxZ: 23.5, h0: 3.8, h1: 0, color: 0x4a7a3a });
+  addRamp(scene, world, { axis: 'x', minX: -29, maxX: -22.5, minZ: 21, maxZ: 23.5, h0: 3.5, h1: 0, color: 0x4a7a3a });
 
   // RANGER HUT (NE lawn): room with a west door, walkable roof, roof ramp
   const HUT = 0x8a6a40;
@@ -1881,7 +1887,7 @@ function buildCanopy(scene) {
   addBox(scene, world, 21.3, 1.85, 13.4, 0.6, 3.7, 2.8, HUT, { tex: 'crate' }); // west wall + door gap
   addBox(scene, world, 21.3, 1.85, 18.6, 0.6, 3.7, 2.8, HUT, { tex: 'crate' });
   addBox(scene, world, 26, 4, 16, 10.6, 0.6, 8.6, HUT, { tex: 'crate' });      // roof (top 4.3)
-  addRamp(scene, world, { axis: 'x', minX: 12.5, maxX: 21.2, minZ: 13, maxZ: 16.5, h0: 0, h1: 4.6, color: HUT });
+  addRamp(scene, world, { axis: 'x', minX: 12.5, maxX: 20.7, minZ: 13, maxZ: 16.5, h0: 0, h1: 4.3, color: HUT });
 
   // FALLEN LOG (SW lawn): crawl-through tunnel, walkable on top via stumps
   const LOG = 0x5e3f26;
@@ -1914,11 +1920,12 @@ function buildCanopy(scene) {
   addBox(scene, world, -3, 23.5, 0, 10, 1, 10, 0x8a6a40, { tex: 'crate' });
   addBox(scene, world, 4, 29.5, 0, 8, 1, 8, 0x9a7a4c, { tex: 'crate' });
 
-  // Edge bridges: west/east at 20, north/south at 10 (2cm below deck tops)
-  addBox(scene, world, -45, 19.48, 0, 3, 1, 78, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
-  addBox(scene, world, 45, 19.48, 0, 3, 1, 78, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
-  addBox(scene, world, 0, 9.48, -45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
-  addBox(scene, world, 0, 9.48, 45, 78, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
+  // Edge bridges butt exactly into the deck edges at the same height. Their
+  // runs stop at z/x ±38, leaving no 2cm lip and no coplanar overlap.
+  addBox(scene, world, -45, 19.5, 0, 3, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
+  addBox(scene, world, 45, 19.5, 0, 3, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
+  addBox(scene, world, 0, 9.5, -45, 76, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
+  addBox(scene, world, 0, 9.5, 45, 76, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
   addVine(scene, world, -46.72, -18, 0.2, 19.1, 1.05, -0.18, 0, 1, 0);  // hanging from west bridge
   addVine(scene, world, 46.72, 16, 0.2, 19.1, 1.05, 0.18, 0, -1, 0);    // hanging from east bridge
   addVine(scene, world, -46.72, 30, 0.2, 19.1, 1.0, -0.18, 0, 1, 0);    // west bridge south drop
@@ -1941,12 +1948,12 @@ function buildCanopy(scene) {
   addVine(scene, world, 61.18, -3, 0.2, 3.8, 0.8, 0.16, 0, -1, 0);      // east hedge lane
 
   // Ramps: ground ↔ center deck 8; bridges ↔ center 16 / center 8
-  addRamp(scene, world, { axis: 'x', minX: 12, maxX: 42, minZ: -2, maxZ: 2, h0: 8, h1: 0, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'x', minX: -42, maxX: -12, minZ: -2, maxZ: 2, h0: 0, h1: 8, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'x', minX: -39, maxX: -9, minZ: -2, maxZ: 2, h0: 20, h1: 16, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'x', minX: 9, maxX: 39, minZ: -2, maxZ: 2, h0: 16, h1: 20, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -39, maxZ: -12, h0: 10, h1: 8, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 12, maxZ: 39, h0: 8, h1: 10, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'x', minX: 10, maxX: 42, minZ: -2, maxZ: 2, h0: 8, h1: 0, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'x', minX: -42, maxX: -10, minZ: -2, maxZ: 2, h0: 0, h1: 8, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'x', minX: -43.5, maxX: -7, minZ: -2, maxZ: 2, h0: 20, h1: 16, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'x', minX: 7, maxX: 43.5, minZ: -2, maxZ: 2, h0: 16, h1: 20, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -43.5, maxZ: -10, h0: 10, h1: 8, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 10, maxZ: 43.5, h0: 8, h1: 10, color: 0x8a6a40 });
 
   // Pads: ground → corner decks, center tier chain up to the crown
   addJumpPad(scene, world, -30, 0, -30, 24, -11.5, -11.5, 0x9dff70);
@@ -2110,8 +2117,13 @@ function buildCity(scene) {
 
   // SUBWAY: two ramps into one sealed underground room. Keep the interiors
   // open; only perimeter walls seal the void.
-  addRamp(scene, world, { axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2, h0: -6, h1: 0, color: 0x2f3542 });
-  addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: -1, maxZ: 13, h0: -6, h1: 0, color: 0x2f3542 });
+  addRamp(scene, world, {
+    axis: 'z', minX: -34, maxX: -26, minZ: -12, maxZ: -2,
+    h0: -6, h1: 0, color: 0x2f3542, supportPad1: 0.8,
+  });
+  // South subway exit stops exactly at the street slab's z=12 edge. The old
+  // extra meter ran beneath that slab, producing a visible lip at the crest.
+  addRamp(scene, world, { axis: 'z', minX: 28, maxX: 36, minZ: -1, maxZ: 12, h0: -6, h1: 0, color: 0x2f3542 });
   addBox(scene, world, 1, -6.5, -6.8, 74, 1, 14.4, 0x2f3542, { tex: 'panel', repeat: [10, 2] });
   addBox(scene, world, -32, -6.5, 7.2, 8, 1, 13.6, 0x2f3542, { tex: 'panel', repeat: [1, 2] });
   addBox(scene, world, 36, -6.5, 7.2, 4, 1, 13.6, 0x2f3542, { tex: 'panel', repeat: [1, 2] });
@@ -2253,9 +2265,9 @@ function buildCity(scene) {
   // ramps + decks: south ramp up, west mezzanine, north ramp up, east gallery
   addRamp(scene, world, { axis: 'x', minX: -18, maxX: -2, minZ: 23.5, maxZ: 27, h0: 8, h1: 0, color: galIn });
   addBox(scene, world, -21.25, 7.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
-  // crests 0.5 above the gallery deck and overlaps its edge — a flush joint
-  // at this slope wedges the capsule against the deck's side face instead
-  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -5.4, minZ: 45, maxZ: 48.5, h0: 8, h1: 16.5, color: galIn });
+  // The upper flight ends flush against the gallery's west edge (x = −6),
+  // sharing a boundary and height but never overlapping its top face.
+  addRamp(scene, world, { axis: 'x', minX: -18, maxX: -6, minZ: 45, maxZ: 48.5, h0: 8, h1: 16, color: galIn });
   addBox(scene, world, -2.75, 15.6, 36, 6.5, 0.8, 25, galIn, { tex: 'arcade', repeat: [2, 6] });
   // bare catwalks across the void at 16 — the z=30 one ends at the window
   addBox(scene, world, -15.25, 15.6, 30, 18.5, 0.8, 2.5, 0x8a80a8, { tex: 'arcade', repeat: [5, 1] });
@@ -2685,8 +2697,8 @@ function buildSanctum(scene) {
   addBox(scene, world, -40.35, -3.5, 0, 0.7, 5.1, 13.4, STONE, { tex: 'rock' });
   // feet face the crypt CENTER — pointed outward, the slab undersides pinch
   // you against the floor before you can reach the climbable end (a gold trap)
-  addRamp(scene, world, { axis: 'x', minX: 30, maxX: 40, minZ: -2, maxZ: 2, h0: -6, h1: 0.3, color: STONE });
-  addRamp(scene, world, { axis: 'x', minX: -40, maxX: -30, minZ: -2, maxZ: 2, h0: 0.3, h1: -6, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: 30, maxX: 40, minZ: -2, maxZ: 2, h0: -6, h1: 0, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: -40, maxX: -30, minZ: -2, maxZ: 2, h0: 0, h1: -6, color: STONE });
   addBox(scene, world, 0, -1.6, 5.9, 60, 0.3, 0.2, 0x30ffc8, { collide: false, shadow: false, emissive: 0x30ffc8, emissiveIntensity: 1.4 });
   addBox(scene, world, 0, -1.6, -5.9, 60, 0.3, 0.2, 0x30ffc8, { collide: false, shadow: false, emissive: 0x30ffc8, emissiveIntensity: 1.4 });
   const cryptLight = new THREE.PointLight(0x30ffc8, 30, 40);
@@ -2823,7 +2835,7 @@ function buildSanctum(scene) {
   }
   // W room balcony (top 5) + its ramp along the south wall
   addBox(scene, world, -39.4, 4.7, 1.5, 8, 0.6, 14.6, STONE, { tex: 'rock' });
-  addRamp(scene, world, { axis: 'x', minX: -43, maxX: -33, minZ: -8.8, maxZ: -5.8, h0: 5.3, h1: 0, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: -43, maxX: -33, minZ: -8.8, maxZ: -5.8, h0: 5, h1: 0, color: STONE });
 
   // N/S ROOMS (z ±(26..44), x −14..14) with walkable roofs (pads in the ring)
   for (const s of [1, -1]) {
@@ -2928,8 +2940,8 @@ function buildSanctum(scene) {
   // and a molten stretch of the crypt, crossed by a narrow plank
   addLava(scene, world, -21, 0, 10, 11.3, -7.1);
   addBox(scene, world, -21, -5.65, 0, 10.5, 0.7, 3, 0x1a1428, { tex: 'rock', repeat: [3, 1] });
-  addRamp(scene, world, { axis: 'x', minX: -28.2, maxX: -26.2, minZ: -1.5, maxZ: 1.5, h0: -6, h1: -5.28, color: 0x1a1428 });
-  addRamp(scene, world, { axis: 'x', minX: -15.8, maxX: -13.8, minZ: -1.5, maxZ: 1.5, h0: -5.28, h1: -6, color: 0x1a1428 });
+  addRamp(scene, world, { axis: 'x', minX: -28.2, maxX: -26.2, minZ: -1.5, maxZ: 1.5, h0: -6, h1: -5.3, color: 0x1a1428 });
+  addRamp(scene, world, { axis: 'x', minX: -15.8, maxX: -13.8, minZ: -1.5, maxZ: 1.5, h0: -5.3, h1: -6, color: 0x1a1428 });
 
   // ambulatory braziers
   for (const [x, z] of [[47, 47], [-47, 47], [47, -47], [-47, -47]]) {

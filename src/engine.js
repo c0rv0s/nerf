@@ -69,6 +69,22 @@ function inRampFootprint(r, x, z, pad = 0) {
   return x >= r.minX - pad && x <= r.maxX + pad && z >= r.minZ - pad && z <= r.maxZ + pad;
 }
 
+// Support can continue a short distance invisibly beneath a destination deck.
+// This is collision-only: the rendered ramp still ends at the exact seam.
+function rampSupportY(r, x, z, pad = 0) {
+  const along = r.axis === 'x' ? x : z;
+  const min = r.axis === 'x' ? r.minX : r.minZ;
+  const max = r.axis === 'x' ? r.maxX : r.maxZ;
+  const cross = r.axis === 'x' ? z : x;
+  const crossMin = r.axis === 'x' ? r.minZ : r.minX;
+  const crossMax = r.axis === 'x' ? r.maxZ : r.maxX;
+  if (cross < crossMin - pad || cross > crossMax + pad) return null;
+  if (along < min - pad - (r.supportPad0 || 0) || along > max + pad + (r.supportPad1 || 0)) return null;
+  if (along <= min) return r.h0;
+  if (along >= max) return r.h1;
+  return rampSurfaceY(r, x, z);
+}
+
 // Push a sphere out of colliders. Mutates pos; returns ground normal y (0 if airborne).
 function resolveSphere(pos, radius, colliders, out) {
   for (const c of colliders) {
@@ -118,6 +134,23 @@ export function moveCharacter(char, world, dt) {
   char.pos.addScaledVector(char.vel, dt);
 
   const r = char.radius;
+  // Snap to an approaching ramp before resolving adjacent box faces. Without
+  // this pre-pass, a flush deck can push the capsule sideways at the ramp's
+  // crest before the normal post-collision ramp snap gets a chance to hold it
+  // up, creating a tiny but flow-breaking "jump lip" at an otherwise perfect
+  // seam. Rising players are excluded so ramps still block jumps from below.
+  let rampSupported = false;
+  if (char.vel.y <= 0.01) {
+    for (const ramp of world.ramps) {
+      const surf = rampSupportY(ramp, char.pos.x, char.pos.z, r + 0.2);
+      if (surf == null) continue;
+      if (char.pos.y <= surf + 0.12 && char.pos.y > surf - 1.1) {
+        char.pos.y = Math.max(char.pos.y, surf);
+        if (char.vel.y < 0) char.vel.y = 0;
+        rampSupported = true;
+      }
+    }
+  }
   const out = { hit: false, ny: 0, nx: 0, nz: 0 };
   const sphereYs = [r, char.height * 0.5, char.height - r];
   const sp = new THREE.Vector3();
@@ -130,7 +163,7 @@ export function moveCharacter(char, world, dt) {
     }
   }
 
-  let grounded = false;
+  let grounded = rampSupported;
   if (out.hit) {
     if (out.ny > 0.55) { grounded = true; if (char.vel.y < 0) char.vel.y = 0; }
     else if (out.ny < -0.55 && char.vel.y > 0) char.vel.y = 0; // bonked head
@@ -149,15 +182,15 @@ export function moveCharacter(char, world, dt) {
   // walking). In every other case the slab is a solid oriented box — sides and
   // underside block like any wall.
   for (const ramp of world.ramps) {
-    if (!inRampFootprint(ramp, char.pos.x, char.pos.z, char.radius + 0.2)) continue;
-    const surf = rampSurfaceY(ramp, char.pos.x, char.pos.z);
+    const surf = rampSupportY(ramp, char.pos.x, char.pos.z, char.radius + 0.2);
+    if (surf == null) continue;
     // Snap onto the surface only when walking/falling — never while rising,
     // or a jump from below would teleport the character through the slab.
     if (char.vel.y <= 0.01 && char.pos.y <= surf + 0.02 && char.pos.y > surf - 1.1) {
       char.pos.y = surf;
       if (char.vel.y < 0) char.vel.y = 0;
       grounded = true;
-    } else {
+    } else if (inRampFootprint(ramp, char.pos.x, char.pos.z, char.radius + 0.2)) {
       const obb = rampOBB(ramp);
       for (const sy of sphereYs) {
         sp.set(char.pos.x, char.pos.y + sy, char.pos.z);
