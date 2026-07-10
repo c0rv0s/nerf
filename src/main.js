@@ -2102,12 +2102,13 @@ document.addEventListener('pointerlockchange', () => {
   if (G && !G.over) {
     const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
     const multiplayerPanelOpen = multiplayer.overlay && !multiplayer.overlay.hidden;
+    const multiplayerChatOpen = multiplayer.isChatOpen();
     G.paused = multiplayerMatch ? false : !locked;
-    setStyle(clickcatch, 'display', (locked || multiplayerPanelOpen) ? 'none' : 'flex');
+    setStyle(clickcatch, 'display', (locked || multiplayerPanelOpen || multiplayerChatOpen) ? 'none' : 'flex');
     setText(document.getElementById('catchtitle'),
       locked ? '' : (multiplayerMatch ? 'CLICK TO RESUME' : '⏸ PAUSED — CLICK TO RESUME'));
     // pause menu extras (matches only): live scoreboard + quit
-    const showPause = !locked && !G.atrium && !multiplayerPanelOpen;
+    const showPause = !locked && !G.atrium && !multiplayerPanelOpen && !multiplayerChatOpen;
     setStyle(quitBtn, 'display', showPause ? '' : 'none');
     setStyle(volumeControl, 'display', showPause ? 'block' : 'none');
     setText(quitBtn, multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM');
@@ -2186,6 +2187,13 @@ document.addEventListener('wheel', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (!G) return;
+  if (multiplayer.isChatOpen()) return;
+  if (e.code === 'KeyT' && multiplayer.openChat()) {
+    e.preventDefault();
+    G.player.firing = false;
+    document.exitPointerLock?.();
+    return;
+  }
   G.player.keys[e.code] = true;
   if (e.code === 'Space') { G.player.wantJump = true; e.preventDefault(); }
   if (e.code === 'Tab') { G.showBoard = true; e.preventDefault(); }
@@ -2202,6 +2210,7 @@ document.addEventListener('keydown', (e) => {
 });
 document.addEventListener('keyup', (e) => {
   if (!G) return;
+  if (multiplayer.isChatOpen()) return;
   G.player.keys[e.code] = false;
   if (e.code === 'Tab') G.showBoard = false;
 });

@@ -35,6 +35,7 @@ export class MultiplayerClient extends EventTarget {
     this.reconnectLobbyId = null;
     this.reconnectTimer = null;
     this._buildUI();
+    this._buildChat();
     window.addEventListener('pagehide', () => this._closeForPageHide());
   }
 
@@ -149,6 +150,32 @@ export class MultiplayerClient extends EventTarget {
     this.lastSnapshotSeq = -1;
     this.slots = [];
     this.lastSnapshot = null;
+    this._clearChat();
+  }
+
+  isChatOpen() {
+    return !!this.chatInput && !this.chatInput.hidden;
+  }
+
+  openChat() {
+    if (!this.connected || !this.lobbyId || !this.chatInput || this.isChatOpen()) return false;
+    this.chatInput.hidden = false;
+    this.chatInput.value = '';
+    this.chatInput.focus();
+    return true;
+  }
+
+  closeChat() {
+    if (!this.isChatOpen()) return false;
+    this.chatInput.hidden = true;
+    this.chatInput.value = '';
+    this.chatInput.blur();
+    return true;
+  }
+
+  sendChat(text) {
+    const message = String(text || '').trim().slice(0, 120);
+    if (message) this.send({ type: 'chat', text: message });
   }
 
   exitLobby() {
@@ -171,6 +198,7 @@ export class MultiplayerClient extends EventTarget {
       this.playerId = msg.id;
     } else if (msg.type === 'joinedLobby') {
       const wasReconnecting = this.reconnecting;
+      if (this.lobbyId && this.lobbyId !== msg.lobbyId) this._clearChat();
       this._acceptAuthority(msg);
       this.slotId = msg.slotId;
       this.lobbyId = msg.lobbyId;
@@ -228,6 +256,8 @@ export class MultiplayerClient extends EventTarget {
       this.mode = msg.mode || this.mode || 'ffa';
       this.phaseEndsAt = msg.phaseEndsAt;
       this.dispatchEvent(new CustomEvent('snapshot', { detail: msg }));
+    } else if (msg.type === 'chat') {
+      this._addChatMessage(msg.name, msg.text);
     } else if (msg.type === 'pong') {
       this.lastPong = performance.now() - msg.t;
     } else if (msg.type === 'error') {
@@ -429,6 +459,54 @@ export class MultiplayerClient extends EventTarget {
     this.body = this.overlay.querySelector('#mpBody');
     this.status = this.overlay.querySelector('#mpStatus');
     this._renderNameEntry();
+  }
+
+  _buildChat() {
+    const style = document.createElement('style');
+    style.textContent = `
+      #mpChat{position:fixed;left:18px;bottom:150px;z-index:21;width:min(420px,calc(100vw - 36px));pointer-events:none;color:#fff;font-family:Arial,sans-serif;font-weight:bold;text-shadow:0 2px 3px #000}
+      #mpChatMessages{display:flex;flex-direction:column;gap:4px;min-height:24px;justify-content:flex-end}
+      .mp-chat-line{padding:4px 7px;border-radius:3px;background:rgba(8,10,24,.68);overflow-wrap:anywhere;font-size:14px;line-height:1.25}
+      .mp-chat-name{color:#ffd23c;margin-right:6px}
+      #mpChatInput{width:100%;margin-top:7px;padding:9px 11px;border:1px solid rgba(255,210,60,.8);border-radius:3px;background:rgba(8,10,24,.94);color:#fff;font:700 14px Arial,sans-serif;pointer-events:auto;outline:none}
+      #mpChatInput:focus{box-shadow:0 0 0 2px rgba(92,179,255,.75)}
+      @media (max-width:720px){#mpChat{left:10px;bottom:132px;width:calc(100vw - 20px)}.mp-chat-line{font-size:12px}}
+    `;
+    document.head.append(style);
+    this.chat = document.createElement('div');
+    this.chat.id = 'mpChat';
+    this.chat.innerHTML = '<div id="mpChatMessages"></div><input id="mpChatInput" hidden maxlength="120" autocomplete="off" placeholder="Type a message…">';
+    document.body.append(this.chat);
+    this.chatMessages = this.chat.querySelector('#mpChatMessages');
+    this.chatInput = this.chat.querySelector('#mpChatInput');
+    this.chatInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.code === 'Enter') {
+        this.sendChat(this.chatInput.value);
+        this.closeChat();
+        document.getElementById('game')?.requestPointerLock?.();
+      } else if (e.code === 'Escape') {
+        this.closeChat();
+        document.getElementById('game')?.requestPointerLock?.();
+      }
+    });
+  }
+
+  _addChatMessage(name, text) {
+    if (!this.chatMessages || typeof text !== 'string') return;
+    const line = document.createElement('div');
+    line.className = 'mp-chat-line';
+    const sender = document.createElement('span');
+    sender.className = 'mp-chat-name';
+    sender.textContent = `${String(name || 'Player')}:`;
+    line.append(sender, document.createTextNode(text));
+    this.chatMessages.append(line);
+    while (this.chatMessages.children.length > 6) this.chatMessages.firstElementChild.remove();
+  }
+
+  _clearChat() {
+    this.closeChat();
+    this.chatMessages?.replaceChildren();
   }
 
   _renderNameEntry() {

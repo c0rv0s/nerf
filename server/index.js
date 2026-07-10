@@ -27,6 +27,8 @@ const RECONNECT_GRACE_MS = 12 * 1000;
 const MAX_INPUTS_PER_SECOND = 75;
 const MAX_SNAPSHOTS_PER_SECOND = 30;
 const MAX_CONTROL_MESSAGES_PER_SECOND = 12;
+const MAX_CHAT_MESSAGES_PER_SECOND = 3;
+const CHAT_MAX_LENGTH = 120;
 const INPUT_POSITION_SLOP = 3;
 const INPUT_MAX_METERS_PER_SECOND = 140;
 const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
@@ -36,6 +38,7 @@ const DEFAULT_MODE = 'ffa';
 const TEAM_COLORS = { blue: '#5cb3ff', red: '#ff5c5c' };
 const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor']);
 const WORLD_EVENT_IDS = new Set(['lava', 'water', 'storm', 'void']);
+const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(?:er|ing)?|motherfucker|nigg(?:er|a)|piss|shit|slut|wanker|whore)\b/gi;
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
@@ -206,6 +209,7 @@ function handleMessage(conn, msg) {
   conn.lastSeen = Date.now();
   const rateLimit = msg.type === 'input' ? MAX_INPUTS_PER_SECOND
     : msg.type === 'hostSnapshot' ? MAX_SNAPSHOTS_PER_SECOND
+      : msg.type === 'chat' ? MAX_CHAT_MESSAGES_PER_SECOND
       : MAX_CONTROL_MESSAGES_PER_SECOND;
   if (!allowMessage(conn, msg.type, rateLimit)) return;
   if (msg.type === 'hello') {
@@ -226,6 +230,12 @@ function handleMessage(conn, msg) {
     if (!lobby || lobby.phase !== 'voting' || !MODES.includes(msg.mode)) return;
     lobby.modeVotes.set(conn.id, msg.mode);
     broadcastLobbyMeta(lobby);
+  } else if (msg.type === 'chat') {
+    const lobby = lobbies.get(conn.lobbyId);
+    const slot = lobby?.slots.find(s => s.connId === conn.id);
+    const text = cleanChat(msg.text);
+    if (!slot || !slot.human || !text) return;
+    broadcast(lobby, { type: 'chat', name: slot.name, text });
   } else if (msg.type === 'input') {
     const lobby = lobbies.get(conn.lobbyId);
     const slot = lobby?.slots.find(s => s.connId === conn.id);
@@ -295,6 +305,15 @@ function allowMessage(conn, type, limit) {
 
 function cleanName(name) {
   return String(name || 'Player').replace(/[^\w .'-]/g, '').trim().slice(0, 18) || 'Player';
+}
+
+function cleanChat(text) {
+  return String(text || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, CHAT_MAX_LENGTH)
+    .replace(PROFANITY, match => '*'.repeat(match.length));
 }
 
 function cleanResumeToken(token) {
