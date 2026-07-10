@@ -1836,7 +1836,7 @@ function buildCanopy(scene) {
   addDecal(scene, 'hazard', -79.94, 8, 20, 10, Math.PI / 2);
   addDecal(scene, 'target', 0, 12, -2.56, 4, Math.PI);
   for (const [x, z, w, d] of [[0, -83, 172, 6], [0, 83, 172, 6], [-83, 0, 6, 172], [83, 0, 6, 172]]) {
-    addBox(scene, world, x, 14, z, w, 40, d, 0xecf6e4, { tex: 'canopy-wall', repeat: [10, 3] });
+    addBox(scene, world, x, 14, z, w, 40, d, 0xf4fbf2, { tex: 'canopy-wall', repeat: [10, 3] });
   }
   // Perimeter wall vines — scattered climbs at varied start/end heights.
   for (const [x, z, y0, y1, r, leanX, leanZ, exitX, exitZ] of [
@@ -1906,7 +1906,9 @@ function buildCanopy(scene) {
     [-18, 35, 2, 18], [2, 35, 18, 2],
     [-39, -34, 18, 2], [-15, -16, 2, 18],
   ]) {
-    addBox(scene, world, hx, 1.75, hz, hw, 3.5, hd, 0x3a6b30, { tex: 'rock' });
+    addBox(scene, world, hx, 1.75, hz, hw, 3.5, hd, 0x588a42, {
+      tex: 'grass', repeat: [Math.max(1, Math.round(Math.max(hw, hd) / 6)), 1],
+    });
     (world.foliageZones ||= []).push({
       minX: hx - hw / 2 - 0.45, maxX: hx + hw / 2 + 0.45,
       minY: -0.1, maxY: 3.7,
