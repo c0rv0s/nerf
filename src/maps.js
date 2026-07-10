@@ -97,6 +97,7 @@ const TEXES = { checker: texChecker, panel: texPanel, crate: texCrate, rock: tex
 // A normal map is derived from each image's luminance so surfaces catch light.
 const AI_TEX = {};
 const AI_TEX_SOURCES = {
+  'canopy-wall': './textures/canopy-wall.jpg',
   parasite: './textures/parasite.jpg',
   refractor: './textures/refractor.jpg',
   'power-gold': './textures/power-gold.jpg',
@@ -146,6 +147,7 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
+   'canopy-wall',
    'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
    'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
    'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
@@ -1756,17 +1758,25 @@ function buildCanopy(scene) {
   // the covered flooded tunnels. A submerged connector runs under the south
   // lawn between the two riverbeds.
   addBox(scene, world, -70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
-  addBox(scene, world, 0, -0.5, 0, 100, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [10, 16] });
+  // The center lawn is tiled around a 6x10 opening beneath the south bridge.
+  // That opening is the surfaced end of the secret connector branch below.
+  addBox(scene, world, -26.5, -0.5, 0, 47, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [5, 16] });
+  addBox(scene, world, 26.5, -0.5, 0, 47, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [5, 16] });
+  addBox(scene, world, 0, -0.5, -21, 6, 1, 122, 0x5d9c46, { tex: 'rock', repeat: [1, 12] });
+  addBox(scene, world, 0, -0.5, 66, 6, 1, 32, 0x5d9c46, { tex: 'rock', repeat: [1, 3] });
   addBox(scene, world, 70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
   addBox(scene, world, -54, -5.3, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });   // riverbed
   addBox(scene, world, 54, -5.3, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });
+  const addRiverSide = (x, z, d) => addBox(scene, world, x, -2.45, z, 0.7, 4.8, d, 0x4a7a52, {
+    tex: 'rock', repeat: [Math.max(1, Math.round(d / 10)), 1],
+  });
   const riverSide = (x, gapZ = null) => {
     if (gapZ == null) {
-      addBox(scene, world, x, -2.45, 0, 0.7, 4.8, 164, 0x4a7a52);
+      addRiverSide(x, 0, 164);
       return;
     }
-    addBox(scene, world, x, -2.45, (gapZ - 4 - 82) / 2, 0.7, 4.8, 82 + gapZ - 4, 0x4a7a52);
-    addBox(scene, world, x, -2.45, (gapZ + 4 + 82) / 2, 0.7, 4.8, 82 - gapZ - 4, 0x4a7a52);
+    addRiverSide(x, (gapZ - 4 - 82) / 2, 82 + gapZ - 4);
+    addRiverSide(x, (gapZ + 4 + 82) / 2, 82 - gapZ - 4);
   };
   riverSide(-57.6);        // channel sides — inset 5cm from the bank faces
   riverSide(-50.4, 64);    // gap opens into the underwater connector
@@ -1777,10 +1787,23 @@ function buildCanopy(scene) {
   addWaterfall(scene, world, -54, -79.86, 8.4, 28.6, -0.55, 28, 1);
   addWaterfall(scene, world, 54, 79.86, 8.4, 28.6, -0.55, 28, -1);
   addBox(scene, world, 0, -5.3, 64, 108, 1, 8, 0x3f6e5e, { tex: 'rock', repeat: [12, 1] });   // underwater connector bed
-  addBox(scene, world, 0, -2.45, 59.6, 108, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
+  // Split the north wall around the branch mouth at x 0.
+  addBox(scene, world, -28.7, -2.45, 59.6, 50.6, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [6, 1] });
+  addBox(scene, world, 28.7, -2.45, 59.6, 50.6, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [6, 1] });
   addBox(scene, world, 0, -2.45, 68.4, 108, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
   addBox(scene, world, 0, -0.1, 64, 108, 0.3, 8.8, 0x4a7a52, { tex: 'rock', repeat: [12, 1] }); // low ceiling keeps it underwater
   addWater(scene, world, 0, -0.55, 64, 108, 7.8, 5.4);
+  // Secret flooded branch: north from the connector, then a ramp up through
+  // the lawn beneath the south bridge for a third entrance into the system.
+  addBox(scene, world, 0, -5.3, 55, 6, 1, 10, 0x3f6e5e, { tex: 'rock', repeat: [1, 2] });
+  addBox(scene, world, -3.35, -2.45, 50, 0.7, 4.8, 20, 0x4a7a52, { tex: 'rock', repeat: [1, 3] });
+  addBox(scene, world, 3.35, -2.45, 50, 0.7, 4.8, 20, 0x4a7a52, { tex: 'rock', repeat: [1, 3] });
+  addRamp(scene, world, { axis: 'z', minX: -3, maxX: 3, minZ: 40, maxZ: 50,
+    h0: 0, h1: -4.8, color: 0x4a7a52, visualInset: 0.16 });
+  addWater(scene, world, 0, -0.55, 50, 6.4, 20, 5.4);
+  const branchLight = new THREE.PointLight(0x30e0ff, 18, 14);
+  branchLight.position.set(0, -2.2, 55);
+  scene.add(branchLight);
   addBox(scene, world, -54, -0.1, 4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });   // flooded tunnel covers
   addBox(scene, world, -54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
   addBox(scene, world, 54, -0.1, -4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });
@@ -1813,7 +1836,22 @@ function buildCanopy(scene) {
   addDecal(scene, 'hazard', -79.94, 8, 20, 10, Math.PI / 2);
   addDecal(scene, 'target', 0, 12, -2.56, 4, Math.PI);
   for (const [x, z, w, d] of [[0, -83, 172, 6], [0, 83, 172, 6], [-83, 0, 6, 172], [83, 0, 6, 172]]) {
-    addBox(scene, world, x, 14, z, w, 40, d, 0x2e4d2a, { tex: 'rock' });
+    addBox(scene, world, x, 14, z, w, 40, d, 0xecf6e4, { tex: 'canopy-wall', repeat: [10, 3] });
+  }
+  // Perimeter wall vines — scattered climbs at varied start/end heights.
+  for (const [x, z, y0, y1, r, leanX, leanZ, exitX, exitZ] of [
+    [-52, -79.2, 0.2, 6.8, 0.85, 0, -0.18, 0, -1],
+    [18, -79.2, 0.2, 28.6, 0.95, 0, -0.16, 0, -1],
+    [58, -79.2, 10.4, 23.2, 0.9, 0, -0.2, 0, -1],
+    [-38, 79.2, 0.2, 14.5, 0.85, 0, 0.18, 0, 1],
+    [12, 79.2, 13.1, 31.4, 0.9, 0, 0.16, 0, 1],
+    [64, 79.2, 0.2, 4.6, 0.8, 0, 0.2, 0, 1],
+    [-79.2, -58, 0.2, 26.2, 0.95, -0.18, 0, -1, 0],
+    [-79.2, 8, 8.2, 19.8, 0.85, -0.16, 0, -1, 0],
+    [79.2, -22, 0.2, 11.2, 0.85, 0.18, 0, 1, 0],
+    [79.2, 44, 16.6, 33.1, 0.95, 0.2, 0, 1, 0],
+  ]) {
+    addVine(scene, world, x, z, y0, y1, r, leanX, leanZ, exitX, exitZ);
   }
 
   // Trunks: NE/NW/SE solid; the SW tree is HOLLOW — slip in the ground door,
@@ -1960,7 +1998,10 @@ function buildCanopy(scene) {
   addJumpPad(scene, world, 30, 0, -30, 24, 11.5, -11.5, 0x9dff70);
   addJumpPad(scene, world, -30, 0, 30, 24, -11.5, 11.5, 0x9dff70);
   addJumpPad(scene, world, 30, 0, 30, 24, 11.5, 11.5, 0x9dff70);
-  addJumpPad(scene, world, 9, 8, 0, 22, -2, 0, 0xffd23c);     // 8 → 16
+  // Opposite corner from the center-tree vines and outside the upper deck's
+  // footprint. The gentle diagonal enters that footprint only once high
+  // enough to clear its underside.
+  addJumpPad(scene, world, -8, 8, 8, 22, 3, -1.05, 0xffd23c);  // 8 → 16
   addJumpPad(scene, world, 7, 16, 0, 22, -8, 0, 0xffd23c);    // 16 → 24 (offset west)
   addJumpPad(scene, world, -6, 24, 0, 20, 8.3, 0, 0xffd23c);  // 24 → crown (offset east)
 
@@ -2001,6 +2042,8 @@ function buildCanopy(scene) {
   pk(world, 'weapon', 30, 0.2, 24, { weapon: 'zooka' });
   pk(world, 'weapon', -25, 0.2, 25, { weapon: 'scatter' });
   pk(world, 'weapon', 25, 0.2, -25, { weapon: 'pulsar' });
+  pk(world, 'speed', -46, -3.1, 64);                         // just inside the west connector entrance
+  pk(world, 'weapon', 0, -4.35, 55, { weapon: 'hyper' });    // secret branch stash
   pk(world, 'weapon', -20, 6.1, 0, { weapon: 'parasite' });      // west ramp
   pk(world, 'ammo', 39, 20.2, 44, { weapon: 'whomper' });
   pk(world, 'ammo', 0, 0.2, -26, { weapon: 'sidewinder' });
@@ -2024,6 +2067,7 @@ function buildCanopy(scene) {
 
   // Waypoints: auto grid on the ground, hand-placed for the canopy levels
   const blocked = (x, z) => {
+    if (Math.abs(x) < 4 && z > 39 && z < 51) return true; // surfaced tunnel opening
     const p = V(x, 1, z);
     for (const c of world.colliders) {
       if (c.type !== 'box') continue;
@@ -2056,6 +2100,8 @@ function buildCanopy(scene) {
     [54, -2.6, -20], [54, -2.6, 4], [54, -2.6, 24], [54, -2.6, 40], [54, -2.6, 56],
     [53, -1.2, 30], [55, -1.2, -50],
     [-40, -2.6, 64], [-18, -2.6, 64], [0, -2.6, 64], [18, -2.6, 64], [40, -2.6, 64],
+    [0, -2.6, 59], [0, -3.5, 55], [0, -4.4, 51],           // secret branch corridor
+    [0, -3.4, 48], [0, -1.9, 45], [0, -0.5, 42], [0, 0, 39], // branch ramp + surface exit
     [-54, 0, -40], [-54, 0, 10], [-54, 0, 46],
     [54, 0, -40], [54, 0, 10], [54, 0, 46],
     // center tree-base room + interior stairs
@@ -2063,7 +2109,7 @@ function buildCanopy(scene) {
     // SW hollow tree: door, shaft, ledge, attic, top exit
     [-45, 0, -38], [-45, 0, -45], [-45, 10, -47.4], [-45, 20, -44.5], [-45, 20, -40],
     // center tiers (+ pad spots)
-    [0, 8, -7], [0, 8, 7], [-7, 8, 0], [9, 8, 0],
+    [0, 8, -7], [0, 8, 7], [-7, 8, 0], [-8, 8, 8],
     [0, 16, 4.5], [7, 16, 0], [-5, 16, -4], [-5, 16, 4],
     [-3, 24, 3], [-6, 24, 0],
     [4, 30, 0],
@@ -2084,7 +2130,8 @@ function buildCanopy(scene) {
     [-30, 0, 30, -45, 10, 45, true], [30, 0, 30, 45, 10, 45, true],
     [-45, 0, -45, -45, 10, -47.4, true],  // SW tree shaft pads
     [-45, 10, -47.4, -45, 20, -44.5, true],
-    [9, 8, 0, 7, 16, 0, true],        // pad chain up the center tree
+    [0, -2.6, 64, 0, -3.5, 55], [0, -3.5, 55, 0, 0, 39], // connector branch and exit
+    [-8, 8, 8, -5, 16, 4, true],      // pad chain up the center tree
     [7, 16, 0, -3, 24, 3, true],
     [-6, 24, 0, 4, 30, 0, true],
     [4, 30, 0, 0, 8, 7, true],        // step off the crown to descend
@@ -3649,19 +3696,31 @@ function addCanopyStorm(scene, world) {
   rain.frustumCulled = false;
   scene.add(rain);
 
-  const boltPoints = 9;
-  const boltPositions = new Float32Array(boltPoints * 3);
-  const boltGeo = new THREE.BufferGeometry();
-  boltGeo.setAttribute('position', new THREE.BufferAttribute(boltPositions, 3));
-  const boltMat = new THREE.LineBasicMaterial({
-    color: 0xe6fbff,
+  const boltPoints = 11;
+  const boltMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
     transparent: true,
     opacity: 0,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
   });
-  const bolt = new THREE.Line(boltGeo, boltMat);
+  const boltGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x8fe8ff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  // LineBasicMaterial is only one pixel wide in WebGL, which made the old
+  // lightning effectively disappear against the bright sky. Use a real tube
+  // for the white-hot core plus a wider translucent tube for its glow.
+  const emptyBoltGeo = () => new THREE.CylinderGeometry(0.01, 0.01, 0.01, 3);
+  const bolt = new THREE.Mesh(emptyBoltGeo(), boltMat);
   bolt.frustumCulled = false;
   scene.add(bolt);
+  const boltGlow = new THREE.Mesh(emptyBoltGeo(), boltGlowMat);
+  boltGlow.frustumCulled = false;
+  scene.add(boltGlow);
 
   const forkCount = 8;
   const forkPositions = new Float32Array(forkCount * 2 * 3);
@@ -3677,26 +3736,29 @@ function addCanopyStorm(scene, world) {
   forks.frustumCulled = false;
   scene.add(forks);
 
-  const impact = new THREE.Mesh(new THREE.CircleGeometry(3.6, 32),
-    new THREE.MeshBasicMaterial({ color: 0xbff8ff, transparent: true, opacity: 0, depthWrite: false }));
-  impact.rotation.x = -Math.PI / 2;
-  scene.add(impact);
-
   const flashLight = new THREE.PointLight(0xdff7ff, 0, 260);
   scene.add(flashLight);
 
   const strikeAt = (x, z, characters = []) => {
-    const topY = 50;
+    const topY = 62;
     const hitY = 0.12;
+    const points = [];
     for (let i = 0; i < boltPoints; i++) {
       const p = i / (boltPoints - 1);
-      const j = i * 3;
-      const jag = i === 0 || i === boltPoints - 1 ? 0 : 2.4;
-      boltPositions[j] = x + rand(-jag, jag);
-      boltPositions[j + 1] = topY + (hitY - topY) * p;
-      boltPositions[j + 2] = z + rand(-jag, jag);
+      const jag = i === 0 || i === boltPoints - 1 ? 0 : 2.8;
+      points.push(new THREE.Vector3(
+        x + rand(-jag, jag),
+        topY + (hitY - topY) * p,
+        z + rand(-jag, jag),
+      ));
     }
-    boltGeo.attributes.position.needsUpdate = true;
+    const curve = new THREE.CatmullRomCurve3(points, false, 'chordal');
+    const coreGeo = new THREE.TubeGeometry(curve, 48, 0.16, 5, false);
+    const glowGeo = new THREE.TubeGeometry(curve, 48, 0.42, 6, false);
+    bolt.geometry.dispose();
+    boltGlow.geometry.dispose();
+    bolt.geometry = coreGeo;
+    boltGlow.geometry = glowGeo;
     for (let i = 0; i < forkCount; i++) {
       const baseP = rand(0.16, 0.82);
       const baseY = topY + (hitY - topY) * baseP;
@@ -3712,7 +3774,6 @@ function addCanopyStorm(scene, world) {
       forkPositions[j + 5] = baseZ + rand(-len, len);
     }
     forkGeo.attributes.position.needsUpdate = true;
-    impact.position.set(x, hitY + 0.02, z);
     flashLight.position.set(x, 22, z);
     storm.flashT = 0.72;
     world.onLightningStrike?.({ x, y: hitY, z });
@@ -3740,8 +3801,8 @@ function addCanopyStorm(scene, world) {
     if (scene.background?.isColor) scene.background.copy(baseBackground).lerp(stormBackground, 0.82 * mix).lerp(flashSky, 0.32 * flash);
     if (scene.fog && baseFog) {
       scene.fog.color.copy(baseFog.color).lerp(stormFog, 0.8 * mix).lerp(flashFog, 0.36 * flash);
-      scene.fog.near = THREE.MathUtils.lerp(baseFog.near, 44, mix);
-      scene.fog.far = THREE.MathUtils.lerp(baseFog.far, 145, mix);
+      scene.fog.near = THREE.MathUtils.lerp(baseFog.near, 36, mix);
+      scene.fog.far = THREE.MathUtils.lerp(baseFog.far, 120, mix);
     }
 
     if (mix > 0.01) {
@@ -3762,8 +3823,8 @@ function addCanopyStorm(scene, world) {
     }
 
     boltMat.opacity = flash;
+    boltGlowMat.opacity = flash * 0.34;
     forkMat.opacity = flash * 0.72;
-    impact.material.opacity = flash * 0.58;
     flashLight.intensity = flash * 360;
 
     if (!active) return;

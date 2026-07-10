@@ -1451,6 +1451,7 @@ function makeEndTextSprite(text, {
   font = 'bold 46px "Arial Black", Arial',
   sub = '',
   subColor = '#dbe8ff',
+  border = null,
   scale = [4.8, 1.2],
 } = {}) {
   const canvas = document.createElement('canvas');
@@ -1463,6 +1464,11 @@ function makeEndTextSprite(text, {
     g.beginPath();
     g.roundRect(12, 12, width - 24, height - 24, 20);
     g.fill();
+    if (border) {
+      g.lineWidth = 7;
+      g.strokeStyle = border;
+      g.stroke();
+    }
   }
   g.textAlign = 'center';
   g.textBaseline = 'middle';
@@ -1487,6 +1493,7 @@ function makeEndTextSprite(text, {
     map: tex,
     transparent: true,
     depthWrite: false,
+    toneMapped: false,
   }));
   sprite.scale.set(scale[0], scale[1], 1);
   sprite.userData.tex = tex;
@@ -1615,13 +1622,17 @@ function buildVictoryScene({ ranked, title, color, stats }) {
     });
 
     const name = makeEndTextSprite(ch.isPlayer ? 'YOU' : ch.name.toUpperCase(), {
-      color: ch.color || '#ffffff',
+      color: '#ffffff',
       sub: `${ch.score} PTS`,
-      bg: 'rgba(4,10,12,.46)',
-      scale: [2.8, 0.7],
-      font: 'bold 34px "Arial Black", Arial',
+      subColor: '#dbe8ff',
+      bg: 'rgba(3,7,14,.92)',
+      border: ch.color || '#ffd23c',
+      scale: [3.05, 0.8],
+      font: 'bold 38px "Arial Black", Arial',
     });
-    name.position.set(spec.x, spec.h + 3.0, 0.05);
+    name.position.set(spec.x, spec.h + 2.72, 0.05);
+    name.material.depthTest = false;
+    name.renderOrder = 20;
     stage.add(name);
   });
 
