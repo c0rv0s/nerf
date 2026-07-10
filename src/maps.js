@@ -1839,8 +1839,9 @@ function buildCanopy(scene) {
     addBox(scene, world, x, 14, z, w, 40, d, 0xf4fbf2, { tex: 'canopy-wall', repeat: [10, 3] });
   }
   // Perimeter wall vines — scattered climbs at varied start/end heights.
+  // Keep x ≈ ±54 clear on the north/south wall faces (river-mouth waterfalls).
   for (const [x, z, y0, y1, r, leanX, leanZ, exitX, exitZ] of [
-    [-52, -79.2, 0.2, 6.8, 0.85, 0, -0.18, 0, -1],
+    [-28, -79.2, 0.2, 6.8, 0.85, 0, -0.18, 0, -1],
     [18, -79.2, 0.2, 28.6, 0.95, 0, -0.16, 0, -1],
     [58, -79.2, 10.4, 23.2, 0.9, 0, -0.2, 0, -1],
     [-38, 79.2, 0.2, 14.5, 0.85, 0, 0.18, 0, 1],
