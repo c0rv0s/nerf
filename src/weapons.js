@@ -5,6 +5,8 @@ import { pointHitsWorld, rand, shellInnerNormal } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
 export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor'];
 
 export const WEAPONS = {
@@ -32,6 +34,7 @@ export const WEAPONS = {
   parasite:   { name: 'PARASITE',      slot: 8, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
                 pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
                 bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
+                homingRange: 38, homingTurn: 0.58, childHomingRange: 34, childHomingTurn: 0.72,
                 trail: true, sound: 'hyper' },
   refractor:  { name: 'REFRACTOR',     slot: 9, dmg: 22, rof: 0.5, speed: 0,   spread: 0,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,
@@ -408,6 +411,8 @@ export class ProjectileSystem {
       pierced: weapon.pierce ? new Set() : null,
       ignore: opts.ignore ? new Set(opts.ignore) : null,
       damage: opts.damage ?? weapon.dmg,
+      homingRange: opts.homingRange ?? weapon.homingRange,
+      homingTurn: opts.homingTurn ?? weapon.homingTurn,
       noSplit: opts.noSplit === true,
       shotGroup: opts.shotGroup || this.makeShotGroup(owner, weapon),
     });
@@ -452,6 +457,8 @@ export class ProjectileSystem {
         size: p.weapon.size * 0.82,
         life: 2.2,
         bounce: p.weapon.childBounce ?? p.weapon.bounce,
+        homingRange: p.weapon.childHomingRange ?? p.weapon.homingRange,
+        homingTurn: p.weapon.childHomingTurn ?? p.weapon.homingTurn,
         ignore: [ch],
         noSplit: true,
         shotGroup: p.shotGroup,
@@ -480,6 +487,37 @@ export class ProjectileSystem {
     const foot = ch.pos.clone().addScaledVector(up, ch.radius || 0.45);
     const head = ch.pos.clone().addScaledVector(up, Math.max(ch.height - (ch.radius || 0.45), ch.height * 0.55));
     return this.distancePointToSegment(p.pos, foot, head) < radius;
+  }
+
+  steerHomingProjectile(p, characters, dt) {
+    if (!p.homingRange || !p.homingTurn) return;
+
+    let target = null;
+    let closestDistSq = p.homingRange * p.homingRange;
+    for (const ch of characters) {
+      if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
+          p.pierced?.has(ch) || p.ignore?.has(ch)) continue;
+      const distSq = ch.pos.distanceToSquared(p.pos);
+      if (distSq < closestDistSq) {
+        closestDistSq = distSq;
+        target = ch;
+      }
+    }
+    if (!target) return;
+
+    const speed = p.vel.length();
+    if (speed < 1e-4) return;
+    const desired = target.pos.clone();
+    desired.addScaledVector(target.up || WORLD_UP, target.height * 0.55);
+    desired.sub(p.pos).normalize();
+    const current = p.vel.multiplyScalar(1 / speed);
+    const angle = current.angleTo(desired);
+    if (angle < 1e-4) return;
+
+    // Turn at a capped rate so Parasite nudges toward its nearest enemy instead
+    // of snapping onto targets, even when a split ball starts far off-course.
+    current.lerp(desired, Math.min(1, (p.homingTurn * dt) / angle)).normalize();
+    p.vel.copy(current).multiplyScalar(speed);
   }
 
   updateBeams(dt, characters) {
@@ -528,6 +566,7 @@ export class ProjectileSystem {
       const p = this.projectiles[pi];
       p.life -= dt;
       if (p.weapon.gravity) p.vel.y -= this.world.gravity * 0.9 * dt;
+      this.steerHomingProjectile(p, characters, dt);
       if (p.weapon.trail) {
         p.trailT += dt;
         if (p.trailT > 0.05) { p.trailT = 0; this.fx.spawnPuff(p.pos, p.weapon.color, 0.25); }
