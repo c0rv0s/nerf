@@ -4156,7 +4156,7 @@ export function buildAtrium(scene) {
     g.font = 'bold 27px Arial';
     g.fillStyle = '#dde2ff';
     const lines = ['WASD — move', 'Mouse — aim + shoot', 'Space — jump',
-      '1–9 / wheel — weapons', 'Tab — scoreboard', 'Esc — pause', 'G — toggle glow',
+      '1–9 / wheel — weapons', 'Tab — scoreboard', 'F — fullscreen · G — glow', 'Esc — pause',
       '', 'Walk into a gate to play!'];
     lines.forEach((t, i) => g.fillText(t, 256, 128 + i * 42));
     const tex = new THREE.CanvasTexture(c);

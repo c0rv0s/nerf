@@ -83,7 +83,7 @@ multiplayer lobbies. Railway uses `npm start` via `railway.json`.
 ## Controls
 
 WASD move · mouse aim · left-click shoot · Space jump · 1–8/scroll switch
-weapon · Tab scoreboard · Esc release mouse.
+weapon · Tab scoreboard · F fullscreen · Esc release mouse.
 
 ## Code layout
 

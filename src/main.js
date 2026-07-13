@@ -2185,6 +2185,14 @@ document.addEventListener('mouseup', (e) => {
 document.addEventListener('wheel', (e) => {
   if (G && document.pointerLockElement === canvas) G.player.cycleWeapon(e.deltaY > 0 ? 1 : -1);
 });
+
+function enterFullscreen() {
+  if (document.fullscreenElement) return;
+  document.documentElement.requestFullscreen?.().catch?.((err) => {
+    console.warn('Could not enter fullscreen:', err);
+  });
+}
+
 document.addEventListener('keydown', (e) => {
   if (!G) return;
   if (multiplayer.isChatOpen()) return;
@@ -2195,6 +2203,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   G.player.keys[e.code] = true;
+  if (e.code === 'KeyF' && !e.repeat) { enterFullscreen(); e.preventDefault(); }
   if (e.code === 'Space') { G.player.wantJump = true; e.preventDefault(); }
   if (e.code === 'Tab') { G.showBoard = true; e.preventDefault(); }
   const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'].indexOf(e.code);
