@@ -21,14 +21,15 @@ export const WEAPONS = {
                 texture: 'pulsar', sound: 'pulsar' },
   sidewinder: { name: 'SIDEWINDER',   slot: 4, dmg: 18, rof: 1.6, speed: 55,  spread: 0.01,
                 pellets: 1, ammo: 0, pickupAmmo: 10, color: 0x8aff30, size: 0.17,
-                disc: true, bounce: 6, bounceDmgGain: 5, texture: 'sidewinder', sound: 'disc' },
+                disc: true, bounce: 6, bounceDmgGain: 5, homingRange: 38, homingTurn: 0.58, homingTurnGain: 0.04,
+                texture: 'sidewinder', sound: 'disc' },
   zooka:      { name: 'BALLZOOKA',    slot: 5, dmg: 42, rof: 0.8, speed: 38,  spread: 0.005,
                 pellets: 1, ammo: 0, pickupAmmo: 6, color: 0xffe040, size: 0.35,
                 splash: 5.5, splashDmg: 32, gravity: true, trail: true, texture: 'zooka', sound: 'zooka' },
   whomper:    { name: 'WHOMPER',      slot: 6, dmg: 85, rof: 0.5, speed: 42,  spread: 0.004,
                 pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.42,
                 splash: 10, splashDmg: 50, texture: 'whomper', sound: 'whomp' },
-  hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 320, spread: 0.001,
+  hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 420, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
                 pierce: 2, trail: true, texture: 'hyper', sound: 'hyper' },
   parasite:   { name: 'PARASITE',      slot: 8, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
@@ -413,6 +414,11 @@ export class ProjectileSystem {
       damage: opts.damage ?? weapon.dmg,
       homingRange: opts.homingRange ?? weapon.homingRange,
       homingTurn: opts.homingTurn ?? weapon.homingTurn,
+      homingTurnGain: opts.homingTurnGain ?? weapon.homingTurnGain,
+      limitedTarget: opts.limitedTarget || null,
+      limitedTargetHits: opts.limitedTargetHits || null,
+      limitedTargetHitLimit: opts.limitedTargetHitLimit ?? 0,
+      limitedTargetMinBounces: opts.limitedTargetMinBounces ?? 0,
       noSplit: opts.noSplit === true,
       shotGroup: opts.shotGroup || this.makeShotGroup(owner, weapon),
     });
@@ -448,6 +454,7 @@ export class ProjectileSystem {
     base.normalize();
     const count = p.weapon.split || 3;
     const spread = 0.9;
+    const originalTargetHits = { count: 0 };
     for (let i = 0; i < count; i++) {
       const angle = count === 1 ? 0 : -spread + (spread * 2 * i) / (count - 1);
       const dir = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle).normalize();
@@ -459,7 +466,10 @@ export class ProjectileSystem {
         bounce: p.weapon.childBounce ?? p.weapon.bounce,
         homingRange: p.weapon.childHomingRange ?? p.weapon.homingRange,
         homingTurn: p.weapon.childHomingTurn ?? p.weapon.homingTurn,
-        ignore: [ch],
+        limitedTarget: ch,
+        limitedTargetHits: originalTargetHits,
+        limitedTargetHitLimit: 1,
+        limitedTargetMinBounces: 1,
         noSplit: true,
         shotGroup: p.shotGroup,
       });
@@ -489,6 +499,12 @@ export class ProjectileSystem {
     return this.distancePointToSegment(p.pos, foot, head) < radius;
   }
 
+  hitLimitReached(p, ch) {
+    return p.limitedTarget === ch &&
+      (p.bounced < p.limitedTargetMinBounces ||
+        p.limitedTargetHits?.count >= p.limitedTargetHitLimit);
+  }
+
   steerHomingProjectile(p, characters, dt) {
     if (!p.homingRange || !p.homingTurn) return;
 
@@ -496,7 +512,7 @@ export class ProjectileSystem {
     let closestDistSq = p.homingRange * p.homingRange;
     for (const ch of characters) {
       if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
-          p.pierced?.has(ch) || p.ignore?.has(ch)) continue;
+          p.pierced?.has(ch) || p.ignore?.has(ch) || this.hitLimitReached(p, ch)) continue;
       const distSq = ch.pos.distanceToSquared(p.pos);
       if (distSq < closestDistSq) {
         closestDistSq = distSq;
@@ -583,8 +599,9 @@ export class ProjectileSystem {
         // hit a character?
         for (const ch of characters) {
           if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
-              p.pierced?.has(ch) || p.ignore?.has(ch)) continue;
+              p.pierced?.has(ch) || p.ignore?.has(ch) || this.hitLimitReached(p, ch)) continue;
           if (this.projectileTouchesCharacter(ch, p)) {
+            if (p.limitedTarget === ch) p.limitedTargetHits.count++;
             this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
             if (p.weapon.split && !p.noSplit) {
@@ -611,6 +628,7 @@ export class ProjectileSystem {
             p.vel.multiplyScalar(0.95);
             p.bounced++;
             if (p.weapon.bounceDmgGain) p.damage += p.weapon.bounceDmgGain;
+            if (p.homingTurnGain) p.homingTurn += p.homingTurnGain;
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.3);
           } else {
             dead = true;
