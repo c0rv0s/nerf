@@ -2442,7 +2442,7 @@ function step(dt) {
 
   G.world.updateDoors?.(G.characters, dt); // proximity doors (Labyrinth)
 
-  // lava burns ~34 hp/s in three pulses per second
+  // Lava hurts immediately on entry, then burns ~34 hp/s in three pulses per second.
   if (G.world.lavaZones) {
     for (const ch of G.characters) {
       if (!ch.alive) continue;
@@ -2450,12 +2450,16 @@ function step(dt) {
         ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
         ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ && ch.pos.y < zn.maxY);
       if (burning) {
-        ch._lavaT = (ch._lavaT || 0) + dt;
+        if (ch._lavaT == null) {
+          ch._lavaT = 0;
+          applyDamage(ch, 11.3, LAVA);
+        }
+        ch._lavaT += dt;
         if (ch._lavaT > 0.33) { ch._lavaT = 0; applyDamage(ch, 11.3, LAVA); }
         const wade = Math.max(0, 1 - 3 * dt);  // molten sludge — wading is slow
         ch.vel.x *= wade;
         ch.vel.z *= wade;
-      } else ch._lavaT = 0;
+      } else ch._lavaT = null;
     }
   }
 
