@@ -197,11 +197,26 @@
     width:min(94vw,1040px); text-align:center; font-size:clamp(11px,1.6vw,14px);
     color:#ffd23c; font-family:Arial,sans-serif; font-weight:900; letter-spacing:.8px;
     text-transform:uppercase; text-shadow:0 2px 8px #000; }
+  #highscoreform { position:absolute; left:50%; bottom:12%; transform:translateX(-50%);
+    display:none; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px 10px;
+    width:min(92vw,690px); padding:13px 16px; border:2px solid #ffd75e; border-radius:12px;
+    background:linear-gradient(135deg,rgba(44,29,5,.96),rgba(7,11,20,.96));
+    box-shadow:0 0 28px rgba(255,211,90,.28); pointer-events:auto; }
+  #highscorestatus { flex:1 0 100%; color:#ffd75e; text-align:center;
+    font:900 13px/1.25 Arial,sans-serif; letter-spacing:.8px; }
+  #highscorename { flex:1 1 260px; min-width:0; padding:10px 12px; border:2px solid #c89c35;
+    border-radius:7px; background:#fff8e7; color:#17100a; text-transform:uppercase;
+    font:900 17px/1 Arial,sans-serif; letter-spacing:1px; outline:none; }
+  #highscorename:focus { border-color:#fff0a6; box-shadow:0 0 0 3px rgba(255,215,94,.25); }
+  #highscoresubmit { padding:9px 18px; border-radius:7px; border:2px solid #fff0a6;
+    background:#bd741f; color:#fff; cursor:pointer; font:900 14px/1.1 Arial,sans-serif;
+    letter-spacing:.7px; }
+  #highscoresubmit:disabled { cursor:default; opacity:.68; }
   .bigbtn { pointer-events:auto; font:inherit; font-size:20px; padding:12px 34px; border-radius:10px;
     border:3px solid #ffd23c; background:#c8461e; color:#fff; cursor:pointer; letter-spacing:1px; }
   .bigbtn:hover { background:#e85a28; }
-  #againbtn { position:absolute; left:50%; bottom:6%; transform:translateX(-50%); }
-  #endscorehint { position:absolute; left:50%; bottom:2.2%; transform:translateX(-50%);
+  #againbtn { position:absolute; left:50%; bottom:5%; transform:translateX(-50%); }
+  #endscorehint { position:absolute; left:50%; bottom:1.4%; transform:translateX(-50%);
     width:min(92vw,760px); text-align:center; font-size:clamp(12px,1.7vw,16px);
     color:#dfe7ff; font-family:Arial,sans-serif; font-weight:900; letter-spacing:.5px;
     text-shadow:0 2px 8px #000; }
@@ -393,10 +408,15 @@
   <div id="endtitle"></div>
   <div id="endstats"></div>
   <div id="endawards"></div>
+  <form id="highscoreform" autocomplete="off">
+    <div id="highscorestatus"></div>
+    <input id="highscorename" name="champion" maxlength="18" placeholder="ENTER YOUR NAME" aria-label="Champion name">
+    <button id="highscoresubmit" type="submit">SUBMIT SCORE</button>
+  </form>
   <button class="bigbtn" id="againbtn">BACK TO LOBBY</button>
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
-<script type="module" src="./src/main.js?v=4"></script>
+<script type="module" src="./src/main.js?v=5"></script>
 </body>
 </html>

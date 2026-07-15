@@ -5,7 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MAPS, buildAtrium, texturesReady } from './maps.js';
+import { MAPS, buildAtrium, buildHallOfFame, texturesReady } from './maps.js';
 import { buildWaypointGraph, pick, rand, rampSurfaceY } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
@@ -17,7 +17,7 @@ import { multiplayer } from './multiplayer.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
-const MULTIPLAYER_PODIUM_HOLD_MS = 6000;
+const MULTIPLAYER_PODIUM_HOLD_MS = 15000;
 const REMOTE_HUMAN_SNAP_DIST = 8;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
 const REMOTE_HUMAN_MAX_PREDICT = 0.18;
@@ -246,6 +246,7 @@ setInterval(() => {
 
 document.getElementById('againbtn').addEventListener('click', () => {
   setStyle(document.getElementById('endscreen'), 'display', 'none');
+  resetHighScoreForm();
   endMatch(true);
 });
 
@@ -463,6 +464,91 @@ function startAtrium() {
   setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   requestPointerLock();
   hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(tick);
+}
+
+async function refreshHallLeaderboard(world = G?.world) {
+  try {
+    const response = await fetch('/api/leaderboard', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Leaderboard request failed (${response.status})`);
+    const data = await response.json();
+    if (G?.hallOfFame && G.world === world) {
+      world.setLeaderboard?.(Array.isArray(data.entries) ? data.entries : []);
+    }
+  } catch (err) {
+    console.warn('Could not load Hall of Fame:', err);
+    if (G?.hallOfFame && G.world === world) hud.message('HALL OF FAME IS TEMPORARILY VEILED', '#ff8c6d');
+  }
+}
+
+function startHallOfFame() {
+  teardown();
+  musicStop();
+  camera.fov = 75;
+  camera.near = 0.1;
+  camera.far = 900;
+  camera.updateProjectionMatrix();
+  const scene = new THREE.Scene();
+  scene.environment = envTexture;
+  const world = buildHallOfFame(scene);
+  world.spawnsAll = [...world.spawns.ffa];
+  buildWaypointGraph(world);
+  scene.add(camera);
+  renderPass.scene = scene;
+
+  const fxPool = new FXPool(scene);
+  const player = new Player(camera, world);
+  player.color = '#ffd75e';
+  player.team = 'ffa-you';
+  player.score = 0;
+  const characters = [player];
+  const projectiles = new ProjectileSystem(scene, world, {
+    spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
+    characters: () => characters,
+    onDamage: () => {},
+  });
+  const pickups = new PickupManager(scene, [], { onPickup });
+  world.onPad = () => {};
+  world.getPickups = () => pickups.items;
+
+  G = {
+    atrium: true,
+    hallOfFame: true,
+    mapDef: null,
+    mode: selectedMode,
+    scene,
+    world,
+    player,
+    characters,
+    projectiles,
+    pickups,
+    fxPool,
+    scores: { blue: 0, red: 0 },
+    timeLeft: MATCH_TIME,
+    respawnTimers: new Map(),
+    over: false,
+    paused: document.pointerLockElement !== canvas,
+    showBoard: false,
+    lastT: performance.now(),
+  };
+  syncRenderQuality();
+  const spawn = world.spawns.ffa[0].clone();
+  spawn.y += 2.6;
+  player.spawn(spawn);
+  player.yaw = 0;
+  player.update(0, () => {});
+  renderer.compile(scene, camera);
+
+  hud.show(true);
+  hud.clearAwards();
+  hud.msgTimer = 0;
+  setStyle(hud.els.msg, 'opacity', '0');
+  setStyle(document.getElementById('scores'), 'display', 'none');
+  setText(document.getElementById('catchtitle'), 'CLICK TO ENTER THE HALL');
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  requestPointerLock();
+  refreshHallLeaderboard(world);
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
 }
@@ -1665,6 +1751,88 @@ function buildVictoryScene({ ranked, title, color, stats }) {
   return scene;
 }
 
+function resetHighScoreForm() {
+  const form = document.getElementById('highscoreform');
+  const input = document.getElementById('highscorename');
+  const button = document.getElementById('highscoresubmit');
+  setStyle(form, 'display', 'none');
+  setText(document.getElementById('highscorestatus'), '');
+  if (input) input.disabled = false;
+  if (button) {
+    button.disabled = false;
+    setText(button, 'SUBMIT SCORE');
+  }
+}
+
+function highScoreCandidate() {
+  if (!G?.mapDef?.id || !G.player) return null;
+  return {
+    name: '',
+    score: Math.max(0, Math.round(G.player.score || 0)),
+    map: G.mapDef.id,
+    gameType: G.mode === 'tdm' ? 'tdm' : 'ffa',
+    playType: G.multiplayer || G.multiplayerHost ? 'multiplayer' : 'single',
+    awards: { ...(G.player.awards || {}) },
+  };
+}
+
+async function prepareHighScoreSubmission() {
+  resetHighScoreForm();
+  const candidate = highScoreCandidate();
+  if (!candidate) return;
+  G.highScoreCandidate = candidate;
+  try {
+    const response = await fetch(`/api/leaderboard?score=${encodeURIComponent(candidate.score)}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Qualification request failed (${response.status})`);
+    const data = await response.json();
+    if (!G?.over || G.highScoreCandidate !== candidate || !data.qualifies) return;
+    const input = document.getElementById('highscorename');
+    let savedName = candidate.playType === 'multiplayer' ? multiplayer.name : '';
+    try { savedName = localStorage.getItem('nerf-arena-champion-name') || savedName; } catch { /* ignore */ }
+    if (input) input.value = savedName.slice(0, 18);
+    setText(document.getElementById('highscorestatus'), `YOUR ${candidate.score.toLocaleString()} POINTS QUALIFY FOR THE TOP 100`);
+    setStyle(document.getElementById('highscoreform'), 'display', 'flex');
+  } catch (err) {
+    console.warn('Could not check Hall of Fame qualification:', err);
+  }
+}
+
+async function submitHighScore(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const candidate = G?.highScoreCandidate;
+  const input = document.getElementById('highscorename');
+  const button = document.getElementById('highscoresubmit');
+  const status = document.getElementById('highscorestatus');
+  const name = String(input?.value || '').trim();
+  if (!candidate || !name) {
+    setText(status, 'ENTER YOUR NAME TO CLAIM YOUR PLACE');
+    input?.focus();
+    return;
+  }
+  if (input) input.disabled = true;
+  if (button) button.disabled = true;
+  setText(status, 'INSCRIBING YOUR NAME IN GOLD…');
+  try {
+    const response = await fetch('/api/leaderboard', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...candidate, name }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not submit high score');
+    try { localStorage.setItem('nerf-arena-champion-name', name.slice(0, 18)); } catch { /* ignore */ }
+    candidate.submitted = true;
+    setText(status, `IMMORTALIZED AT #${data.rank} IN THE HALL OF FAME`);
+    setText(button, 'ENTERED');
+    sfx('powerup');
+  } catch (err) {
+    if (input) input.disabled = false;
+    if (button) button.disabled = false;
+    setText(status, String(err.message || 'COULD NOT SUBMIT').toUpperCase());
+  }
+}
+
 function showVictoryPodium(result) {
   const oldScene = G.scene;
   if (G.multiplayer || G.multiplayerHost) G.mpPodiumStartedAt ||= performance.now();
@@ -1703,6 +1871,7 @@ function showVictoryPodium(result) {
   setText(document.getElementById('endstats'), result.stats);
   setText(document.getElementById('endawards'), awardsLine(G.player.awards));
   setStyle(end, 'display', 'flex');
+  prepareHighScoreSubmission();
   document.exitPointerLock?.();
   sfx('powerup');
 }
@@ -2075,6 +2244,7 @@ const musicSlider = document.getElementById('musicslider');
 const musicValue = document.getElementById('musicvalue');
 const effectsSlider = document.getElementById('effectsslider');
 const effectsValue = document.getElementById('effectsvalue');
+const highScoreForm = document.getElementById('highscoreform');
 setGameVolume(gameVolume, false);
 setMusicMix(musicMix, false);
 setEffectsMix(effectsMix, false);
@@ -2134,6 +2304,8 @@ volumeControl.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeSlider.addEventListener('input', () => setGameVolume(Number(volumeSlider.value) / 100));
 musicSlider.addEventListener('input', () => setMusicMix(Number(musicSlider.value) / 100));
 effectsSlider.addEventListener('input', () => setEffectsMix(Number(effectsSlider.value) / 100));
+highScoreForm?.addEventListener('submit', submitHighScore);
+highScoreForm?.addEventListener('pointerdown', (e) => e.stopPropagation());
 quitBtn.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();               // don't let the overlay re-lock the pointer
@@ -2354,6 +2526,14 @@ function tick(now) {
   updateUnderwaterFx(dt);
   updateFoliageFx(dt);
   renderFrame();
+  if (G.pendingHall) {
+    startHallOfFame();
+    return;
+  }
+  if (G.pendingAtrium) {
+    startAtrium();
+    return;
+  }
   if (G.pendingMap) { // walked into a lobby gate — swap to that arena
     const map = G.pendingMap;
     startMatch(map, selectedMode);
@@ -2370,6 +2550,12 @@ function renderFrame() {
 // Lobby-only logic: gate triggers and the mode toggle pad
 function stepAtrium(dt) {
   G.padCooldown -= dt;
+  const hall = G.world.hallPortal;
+  if (hall && Math.hypot(G.player.pos.x - hall.x, G.player.pos.z - hall.z) < 2.8) {
+    G.pendingHall = true;
+    sfx('powerup');
+    return;
+  }
   const mp = G.world.multiplayerPortal;
   if (mp && !openingMultiplayer &&
       Math.hypot(G.player.pos.x - mp.x, G.player.pos.z - mp.z) < 2.8) {
@@ -2402,6 +2588,14 @@ function stepAtrium(dt) {
   }
 }
 
+function stepHallOfFame() {
+  const exit = G.world.hallExitPortal;
+  if (exit && Math.hypot(G.player.pos.x - exit.x, G.player.pos.z - exit.z) < 2.8) {
+    G.pendingAtrium = true;
+    sfx('powerup');
+  }
+}
+
 function updateStormAudio() {
   setRainAmbience(G?.world?.storm?.mix || 0);
 }
@@ -2417,7 +2611,8 @@ function step(dt) {
     return;
   }
 
-  if (G.atrium) stepAtrium(dt);
+  if (G.hallOfFame) stepHallOfFame(dt);
+  else if (G.atrium) stepAtrium(dt);
   else G.timeLeft -= dt;
   setListener(G.player.pos); // distance-based sfx volume
 
@@ -2643,6 +2838,7 @@ window.__step = (seconds) => {
 };
 window.__start = (id, mode) => startMatch(MAPS.find(m => m.id === id), mode || selectedMode);
 window.__lobby = () => startAtrium();
+window.__hall = () => startHallOfFame();
 
 // Boot straight into the lobby — pick your arena by walking into its gate.
 // (Wait for textures so the first build isn't placeholder canvases; 3s cap.)

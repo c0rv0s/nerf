@@ -3,10 +3,26 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const PORT = Number(process.env.PORT || 3000);
+const { Pool } = pg;
+const databaseUrl = process.env.DATABASE_URL || '';
+let leaderboardPool = databaseUrl ? new Pool({
+  connectionString: databaseUrl,
+  ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined,
+  max: 5,
+}) : null;
+const memoryLeaderboard = [];
+let memoryLeaderboardId = 1;
+const leaderboardReady = initializeLeaderboard().catch(async (err) => {
+  console.error('PostgreSQL leaderboard unavailable; using memory storage:', err.message);
+  const failedPool = leaderboardPool;
+  leaderboardPool = null;
+  await failedPool?.end().catch(() => {});
+});
 
 const envSeconds = (name, fallback) => {
   const value = Number(process.env[name]);
@@ -14,7 +30,7 @@ const envSeconds = (name, fallback) => {
 };
 const MATCH_TIME = envSeconds('MATCH_TIME', 5 * 60);
 const VOTE_TIME = envSeconds('VOTE_TIME', 10);
-const PODIUM_TIME = envSeconds('PODIUM_TIME', 6);
+const PODIUM_TIME = envSeconds('PODIUM_TIME', 15);
 const MAX_LOBBIES = 5;
 const SLOTS = 8;
 const TICK_HZ = 30;
@@ -71,13 +87,207 @@ const lobbies = new Map();
 const reconnectReservations = new Map();
 let nextLobbyNum = 1;
 
-function serveStatic(req, res) {
+async function initializeLeaderboard() {
+  if (!leaderboardPool) return;
+  await leaderboardPool.query(`
+    CREATE TABLE IF NOT EXISTS leaderboard_scores (
+      id BIGSERIAL PRIMARY KEY,
+      name VARCHAR(18) NOT NULL,
+      score INTEGER NOT NULL CHECK (score >= 0 AND score <= 500000),
+      map_id VARCHAR(32) NOT NULL,
+      game_type VARCHAR(3) NOT NULL CHECK (game_type IN ('ffa', 'tdm')),
+      play_type VARCHAR(12) NOT NULL CHECK (play_type IN ('single', 'multiplayer')),
+      awards JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await leaderboardPool.query(`
+    ALTER TABLE leaderboard_scores
+    ADD COLUMN IF NOT EXISTS awards JSONB NOT NULL DEFAULT '{}'::jsonb
+  `);
+  await leaderboardPool.query(`
+    CREATE INDEX IF NOT EXISTS leaderboard_scores_rank_idx
+    ON leaderboard_scores (score DESC, created_at ASC, id ASC)
+  `);
+}
+
+function leaderboardRow(row, rank) {
+  return {
+    rank,
+    name: row.name,
+    score: Number(row.score),
+    map: row.map_id,
+    gameType: row.game_type,
+    playType: row.play_type,
+    awards: sanitizeAwards(row.awards),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  };
+}
+
+async function getLeaderboard() {
+  await leaderboardReady;
+  if (leaderboardPool) {
+    const { rows } = await leaderboardPool.query(`
+      SELECT id, name, score, map_id, game_type, play_type, awards, created_at
+      FROM leaderboard_scores
+      ORDER BY score DESC, created_at ASC, id ASC
+      LIMIT 100
+    `);
+    return rows.map((row, i) => leaderboardRow(row, i + 1));
+  }
+  return [...memoryLeaderboard]
+    .sort((a, b) => b.score - a.score || a.id - b.id)
+    .slice(0, 100)
+    .map((row, i) => leaderboardRow(row, i + 1));
+}
+
+async function addLeaderboardScore(entry) {
+  await leaderboardReady;
+  if (leaderboardPool) {
+    const client = await leaderboardPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(1414213562)');
+      const inserted = await client.query(`
+        INSERT INTO leaderboard_scores (name, score, map_id, game_type, play_type, awards)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        RETURNING id
+      `, [entry.name, entry.score, entry.map, entry.gameType, entry.playType, JSON.stringify(entry.awards)]);
+      const id = inserted.rows[0].id;
+      await client.query(`
+        DELETE FROM leaderboard_scores
+        WHERE id NOT IN (
+          SELECT id FROM leaderboard_scores
+          ORDER BY score DESC, created_at ASC, id ASC
+          LIMIT 100
+        )
+      `);
+      const ranked = await client.query(`
+        SELECT rank FROM (
+          SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC, created_at ASC, id ASC) AS rank
+          FROM leaderboard_scores
+        ) scores WHERE id = $1
+      `, [id]);
+      await client.query('COMMIT');
+      return ranked.rows[0] ? Number(ranked.rows[0].rank) : null;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+  const row = {
+    id: memoryLeaderboardId++,
+    ...entry,
+    map_id: entry.map,
+    game_type: entry.gameType,
+    play_type: entry.playType,
+    awards: entry.awards,
+    created_at: new Date().toISOString(),
+  };
+  memoryLeaderboard.push(row);
+  memoryLeaderboard.sort((a, b) => b.score - a.score || a.id - b.id);
+  memoryLeaderboard.splice(100);
+  const index = memoryLeaderboard.findIndex(candidate => candidate.id === row.id);
+  return index >= 0 ? index + 1 : null;
+}
+
+function cleanLeaderboardName(value) {
+  const clean = String(value || '').replace(/[<>\u0000-\u001f]/g, '').replace(PROFANITY, '****').trim();
+  return clean.slice(0, 18);
+}
+
+function cleanScorePayload(body) {
+  const mapIds = new Set(MAPS.map(map => map.id));
+  const name = cleanLeaderboardName(body?.name);
+  const score = Number(body?.score);
+  const map = String(body?.map || '');
+  const gameType = String(body?.gameType || '');
+  const playType = String(body?.playType || '');
+  const awards = sanitizeAwards(body?.awards);
+  if (!name || !Number.isInteger(score) || score < 0 || score > 500000 ||
+      !mapIds.has(map) || !MODES.includes(gameType) || !['single', 'multiplayer'].includes(playType)) return null;
+  return { name, score, map, gameType, playType, awards };
+}
+
+async function readJsonBody(req, limit = 4096) {
+  let total = 0;
+  const chunks = [];
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > limit) throw new Error('Request body too large');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  res.end(JSON.stringify(body));
+}
+
+async function serveRequest(req, res) {
   if (req.url === '/healthz') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, lobbies: lobbies.size, players: connections.size }));
+    sendJson(res, 200, {
+      ok: true,
+      lobbies: lobbies.size,
+      players: connections.size,
+      leaderboard: leaderboardPool ? 'postgres' : 'memory',
+    });
     return;
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname === '/api/leaderboard' && req.method === 'GET') {
+    const entries = await getLeaderboard();
+    const hasRequestedScore = url.searchParams.has('score');
+    const requestedScore = hasRequestedScore ? Number(url.searchParams.get('score')) : NaN;
+    const cutoff = entries.length < 100 ? null : entries[99].score;
+    const qualifies = Number.isInteger(requestedScore) && requestedScore >= 0
+      ? entries.length < 100 || requestedScore > cutoff
+      : undefined;
+    sendJson(res, 200, {
+      entries,
+      cutoff,
+      ...(qualifies === undefined ? {} : { qualifies }),
+      storage: leaderboardPool ? 'postgres' : 'memory',
+    });
+    return;
+  }
+  if (url.pathname === '/api/leaderboard' && req.method === 'POST') {
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      sendJson(res, 400, { error: 'Invalid request body' });
+      return;
+    }
+    const entry = cleanScorePayload(body);
+    if (!entry) {
+      sendJson(res, 400, { error: 'Invalid high score' });
+      return;
+    }
+    const current = await getLeaderboard();
+    const cutoff = current.length < 100 ? null : current[99].score;
+    if (current.length >= 100 && entry.score <= cutoff) {
+      sendJson(res, 409, { error: 'Score no longer qualifies', cutoff });
+      return;
+    }
+    const rank = await addLeaderboardScore(entry);
+    if (!rank) {
+      sendJson(res, 409, { error: 'Score no longer qualifies' });
+      return;
+    }
+    sendJson(res, 201, { ok: true, rank });
+    return;
+  }
+  if (url.pathname.startsWith('/api/')) {
+    sendJson(res, 404, { error: 'Not found' });
+    return;
+  }
   const pathname = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
   const file = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   const full = resolve(join(ROOT, file));
@@ -97,7 +307,13 @@ function serveStatic(req, res) {
   createReadStream(full).pipe(res);
 }
 
-const httpServer = createServer(serveStatic);
+const httpServer = createServer((req, res) => {
+  serveRequest(req, res).catch((err) => {
+    console.error('Request failed:', err);
+    if (!res.headersSent) sendJson(res, 500, { error: 'Server error' });
+    else res.end();
+  });
+});
 httpServer.on('upgrade', (req, socket) => {
   if (new URL(req.url, `http://${req.headers.host}`).pathname !== '/ws') {
     socket.destroy();

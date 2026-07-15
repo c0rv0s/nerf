@@ -446,7 +446,7 @@ function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff,
   });
 }
 
-function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exitX = 0, exitZ = 0, visualTopPad = 0.16) {
+function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exitX = 0, exitZ = 0, visualTopPad = 0.16, visualWidth = null) {
   const zone = { x, z, minY: Math.min(y0, y1), maxY: Math.max(y0, y1), r, grabR: Math.max(r, 1.28) };
   const exitLen = Math.hypot(exitX, exitZ);
   if (exitLen > 0.001) {
@@ -497,7 +497,7 @@ function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exit
   const visualTopY = topY - Math.min(visualTopPad, h * 0.18);
   const visualBottomY = bottomY + Math.min(0.04, h * 0.02);
   const stripH = Math.max(0.7, visualTopY - visualBottomY);
-  const width = Math.max(0.95, Math.min(1.45, zone.grabR * 1.05));
+  const width = visualWidth ?? Math.max(0.95, Math.min(1.45, zone.grabR * 1.05));
   const leaf = new THREE.Mesh(new THREE.PlaneGeometry(width, stripH, 1, Math.max(1, Math.floor(stripH / 1.6))), matVine);
   leaf.quaternion.copy(quat);
   // Keep the sheet visibly on the outside face while the invisible climb zone
@@ -4031,7 +4031,7 @@ function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz) {
 }
 
 export function buildAtrium(scene) {
-  const world = newWorld({ killY: -30 });
+  const world = newWorld({ killY: -30, playerSpeed: 12.5 });
   scene.background = new THREE.Color(0xd99cb0);
   scene.fog = new THREE.Fog(0xd99cb0, 120, 340);
   baseLighting(scene, 0xffe0c8, 0x8a6a90, [-40, 80, 30], 90);
@@ -4080,50 +4080,34 @@ export function buildAtrium(scene) {
   fLight.position.set(0, 3, -28);
   scene.add(fLight);
 
-  // multiplayer portal: central always-on lobby entry
-  addBox(scene, world, 0, 0.18, 10, 6.4, 0.36, 6.4, 0x141a38, { tex: 'panel' });
-  addBox(scene, world, 0, 0.46, 10, 5.2, 0.16, 5.2, 0xffd23c, {
-    collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.1,
-  });
-  addBox(scene, world, -3.2, 2.4, 10, 0.35, 4.8, 0.35, 0x30e0ff, {
-    collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.2,
-  });
-  addBox(scene, world, 3.2, 2.4, 10, 0.35, 4.8, 0.35, 0xff40a0, {
-    collide: false, shadow: false, emissive: 0xff40a0, emissiveIntensity: 1.2,
-  });
-  addBox(scene, world, 0, 4.9, 10, 6.8, 0.35, 0.35, 0xffd23c, {
-    collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.2,
-  });
-  makeSign(scene, 0, 6.2, 13.4, 12, '#ffd23c', 'MULTIPLAYER', 0, true);
-  world.multiplayerPortal = { x: 0, z: 10 };
-  const mpLight = new THREE.PointLight(0xffd23c, 24, 24);
-  mpLight.position.set(0, 4, 10);
-  scene.add(mpLight);
-
   // rooftop billboard above the north wall
   makeSign(scene, 0, 15.5, -48.5, 26, '#ff4d2e', 'NERF ARENA BLAST REVIVAL');
   addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
   addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
 
-  // gate bays: [map, name, color, wall(n/w/e), offset]
+  // Gate bays. The long side walls hold the six arenas; the axial gates are
+  // reserved for the Hall of Fame ahead and multiplayer behind the spawn.
   world.portals = [];
   const bays = [
-    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'n', 0],
-    ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 14],
-    ['asteroids', 'ASTEROID BELT', 0x8fb8d8, 'w', -14],
-    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 14],
-    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -14],
-    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 's', 0],  // behind you at spawn
+    ['hall', 'HALL OF FAME', 0xffd45a, 'n', 0, 'hall'],
+    ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 24, 'map'],
+    ['asteroids', 'ASTEROID BELT', 0x8fb8d8, 'w', 0, 'map'],
+    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', -24, 'map'],
+    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 24, 'map'],
+    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', 0, 'map'],
+    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', -24, 'map'],
+    ['multiplayer', 'MULTIPLAYER', 0x30e0ff, 's', 0, 'multiplayer'],
   ];
-  for (const [id, name, color, wall, off] of bays) {
+  for (const [id, name, color, wall, off, kind] of bays) {
     const horiz = wall === 'n' || wall === 's';
     const sgn = (wall === 'e' || wall === 's') ? 1 : -1;
     const px = horiz ? off : sgn * 31.2, pz = horiz ? sgn * 47.2 : off;  // back face flush with wall
+    const frameId = id === 'hall' ? 'arena' : id === 'multiplayer' ? 'sanctum' : id;
     if (horiz) {
-      addAtriumGateBrickFrame(scene, world, id, color, px, pz, true);
+      addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, true);
       addMagicPortal(scene, world, px, 3.7, pz + sgn * 0.82, 7.8, 7.8, color, sgn === -1 ? 0 : Math.PI);
     } else {
-      addAtriumGateBrickFrame(scene, world, id, color, px, pz, false);
+      addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, false);
       addMagicPortal(scene, world, px + sgn * 0.82, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
     }
     // sign panel flat on the wall above the gate (inner faces: z ±48, x ±32)
@@ -4133,7 +4117,10 @@ export function buildAtrium(scene) {
     const L = new THREE.PointLight(color, 26, 20);
     L.position.set(horiz ? px : px - sgn * 2.5, 4.5, horiz ? pz - sgn * 2.5 : pz);
     scene.add(L);
-    world.portals.push({ x: horiz ? px : px + sgn * 0.5, z: horiz ? pz + sgn * 0.5 : pz, map: id, name });
+    const trigger = { x: horiz ? px : px + sgn * 0.5, z: horiz ? pz + sgn * 0.5 : pz };
+    if (kind === 'hall') world.hallPortal = trigger;
+    else if (kind === 'multiplayer') world.multiplayerPortal = trigger;
+    else world.portals.push({ ...trigger, map: id, name });
   }
   world.portals.push({ x: 44, z: 11.5, map: 'prism', name: '???' });
 
@@ -4183,16 +4170,429 @@ export function buildAtrium(scene) {
   addBox(scene, world, -15, 3.6, 30.4, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
   addDecal(scene, 'poster1', -24, 6, -47.94, 8, 0);
   addDecal(scene, 'target', 27, 6, -47.94, 8, 0);
-  addDecal(scene, 'hazard', -31.94, 6, 30, 8, Math.PI / 2);
-  addDecal(scene, 'hazard', 31.94, 6, -30, 8, -Math.PI / 2);
-  for (const [x, z, c] of [[-20, -46.9, 0xff40a0], [20, -46.9, 0x30e0ff]]) {
-    addBox(scene, world, x, 8, z, 14, 0.8, 0.3, c, { collide: false, shadow: false, emissive: c, emissiveIntensity: 1.5 });
+  // Keep the side posters in the open end bays rather than behind the newly
+  // relocated Fortress and Blast gates.
+  addDecal(scene, 'hazard', -31.94, 6, 38, 8, Math.PI / 2);
+  addDecal(scene, 'hazard', 31.94, 6, -38, 8, -Math.PI / 2);
+  // Mount the north-wall glow strips above the poster line, close to the wall,
+  // so they frame the Hall of Fame without washing across either poster.
+  for (const [x, z, c] of [[-19, -47.78, 0xff40a0], [19, -47.78, 0x30e0ff]]) {
+    addBox(scene, world, x, 11.35, z, 11.5, 0.55, 0.22, c, { collide: false, shadow: false, emissive: c, emissiveIntensity: 1.5 });
   }
 
   world.spawns.ffa.push(V(0, 0.1, 43));
   world.spawns.blue.push(V(0, 0.1, 43));
   world.spawns.red.push(V(0, 0.1, 43));
   wp(world, 0, 0, 20);
+  mergeStatic(scene, world);
+  return world;
+}
+
+const HALL_MAP_NAMES = {
+  arena: 'BLAST COMPLEX',
+  fortress: 'FORTRESS FALLS',
+  asteroids: 'ASTEROID BELT',
+  canopy: 'CANOPY',
+  city: 'NEON HEIGHTS',
+  sanctum: 'THE LABYRINTH',
+  prism: 'PRISM RUN',
+};
+
+const HALL_AWARD_LABELS = [
+  ['multi2', 'DOUBLE KILL'], ['multi3', 'TRIPLE KILL'], ['multi4', 'QUAD KILL'],
+  ['multi5', 'PENTA KILL'], ['multi6', 'HEXA KILL'], ['multi7', 'SEPTUPLE KILL'],
+  ['oneShot2', 'ONE SHOT, TWO KILLS'], ['oneShot3', 'ONE SHOT, THREE KILLS'],
+  ['oneShot4', 'ONE SHOT, FOUR KILLS'], ['oneShot5', 'ONE SHOT, FIVE KILLS'],
+  ['oneShot6', 'ONE SHOT, SIX KILLS'], ['oneShot7', 'ONE SHOT, SEVEN KILLS'],
+];
+
+function hallAwardParts(awards = {}) {
+  const known = new Set(HALL_AWARD_LABELS.map(([key]) => key));
+  const parts = HALL_AWARD_LABELS
+    .filter(([key]) => Number(awards[key]) > 0)
+    .map(([key, label]) => `${label} ×${Math.floor(Number(awards[key]))}`);
+  for (const [key, count] of Object.entries(awards || {})) {
+    if (known.has(key) || !Number.isFinite(Number(count)) || Number(count) <= 0) continue;
+    const label = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toUpperCase();
+    parts.push(`${label} ×${Math.floor(Number(count))}`);
+  }
+  return parts;
+}
+
+function drawHallAwards(g, awards, x, y, maxWidth, maxLines = 2, align = 'left', fontSize = 13, lineHeight = 18) {
+  const parts = hallAwardParts(awards);
+  const phrases = parts.length ? parts : ['NONE'];
+  let size = fontSize;
+  let lines = [];
+  do {
+    g.font = `800 ${size}px Arial`;
+    lines = [];
+    let line = 'AWARDS:';
+    for (const phrase of phrases) {
+      const next = line === 'AWARDS:' ? `${line} ${phrase}` : `${line}  •  ${phrase}`;
+      if (line !== 'AWARDS:' && g.measureText(next).width > maxWidth) {
+        lines.push(line);
+        line = phrase;
+      } else {
+        line = next;
+      }
+    }
+    lines.push(line);
+    size -= 1;
+  } while (lines.length > maxLines && size >= 8);
+  g.textAlign = align;
+  g.fillStyle = parts.length ? '#f2cf68' : '#737d91';
+  lines.forEach((line, index) => g.fillText(line, x, y + index * lineHeight));
+}
+
+function drawHallEntry(g, entry, rank, y, width) {
+  const occupied = !!entry;
+  const medal = rank === 1 ? '#ffd75e' : rank === 2 ? '#dce6f3' : rank === 3 ? '#d28a4d' : '#e8c86a';
+  g.fillStyle = occupied ? 'rgba(17,23,39,.94)' : 'rgba(17,23,39,.58)';
+  g.fillRect(22, y, width - 44, 116);
+  g.fillStyle = medal;
+  g.font = '900 27px Arial';
+  g.textAlign = 'left';
+  g.fillText(String(rank).padStart(2, '0'), 38, y + 32);
+  if (!occupied) {
+    g.fillStyle = '#7f8797';
+    g.font = '700 20px Arial';
+    g.fillText('AWAITING A CHAMPION', 94, y + 32);
+    g.font = '600 14px Arial';
+    g.fillText('THIS PLACE IS UNCLAIMED', 94, y + 60);
+    drawHallAwards(g, {}, 94, y + 88, width - 132, 1, 'left', 12, 16);
+    return;
+  }
+  const name = String(entry.name || 'PLAYER').toUpperCase().slice(0, 18);
+  g.fillStyle = '#fff7df';
+  g.font = '900 24px Arial';
+  g.fillText(name, 94, y + 30);
+  g.fillStyle = '#ffd75e';
+  g.font = '900 23px Arial';
+  g.textAlign = 'right';
+  g.fillText(Number(entry.score || 0).toLocaleString(), width - 38, y + 30);
+  g.textAlign = 'left';
+  g.fillStyle = '#aebbd2';
+  g.font = '700 13px Arial';
+  const map = HALL_MAP_NAMES[entry.map] || String(entry.map || 'UNKNOWN').toUpperCase();
+  const mode = entry.gameType === 'tdm' ? 'TEAM DEATHMATCH' : 'FREE FOR ALL';
+  const play = entry.playType === 'multiplayer' ? 'MULTIPLAYER' : 'SINGLE PLAYER';
+  g.fillText(`${map}  •  ${mode}  •  ${play}`, 94, y + 57);
+  drawHallAwards(g, entry.awards, 94, y + 83, width - 132, 2, 'left', 13, 18);
+}
+
+function makeHallLeaderboardBoard(scene, x, y, z, yaw, startRank) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 768;
+  canvas.height = 700;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const draw = (entries = []) => {
+    const g = canvas.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, canvas.height);
+    grad.addColorStop(0, '#4a3410');
+    grad.addColorStop(0.08, '#17121a');
+    grad.addColorStop(1, '#080b14');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.strokeStyle = '#e7bd4c';
+    g.lineWidth = 12;
+    g.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+    g.fillStyle = '#f7d979';
+    g.font = '900 25px "Arial Black", Arial';
+    g.textAlign = 'center';
+    g.fillText(`IMMORTAL RANKS ${startRank}–${startRank + 4}`, canvas.width / 2, 44);
+    for (let i = 0; i < 5; i++) drawHallEntry(g, entries[startRank + i - 1], startRank + i, 65 + i * 124, canvas.width);
+    tex.needsUpdate = true;
+  };
+  draw();
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(13.8, 12.55), new THREE.MeshStandardMaterial({
+    map: tex,
+    emissive: 0x4d350b,
+    emissiveIntensity: 0.18,
+    roughness: 0.48,
+    metalness: 0.08,
+  }));
+  mesh.position.set(x, y, z);
+  mesh.rotation.y = yaw;
+  scene.add(mesh);
+  return draw;
+}
+
+function makeHallPodiumCard(scene, x, y, z, place) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const placeColor = ['#ffd75e', '#e6edf8', '#d89050'][place - 1];
+  const draw = (entries = []) => {
+    const entry = entries[place - 1];
+    const g = canvas.getContext('2d');
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.fillStyle = 'rgba(8,10,18,.95)';
+    g.beginPath(); g.roundRect(12, 12, 616, 336, 30); g.fill();
+    g.lineWidth = 12; g.strokeStyle = placeColor; g.stroke();
+    g.textAlign = 'center';
+    g.fillStyle = placeColor;
+    g.font = '900 72px "Arial Black", Arial';
+    g.fillText(String(place), 320, 78);
+    if (!entry) {
+      g.fillStyle = '#8c93a3';
+      g.font = '800 30px Arial';
+      g.fillText('AWAITING A CHAMPION', 320, 190);
+      g.font = '700 20px Arial';
+      g.fillText('THE THRONE IS UNCLAIMED', 320, 242);
+    } else {
+      g.fillStyle = '#fff8e6';
+      g.font = '900 36px Arial';
+      g.fillText(String(entry.name || 'PLAYER').toUpperCase().slice(0, 18), 320, 130);
+      g.fillStyle = placeColor;
+      g.font = '900 37px Arial';
+      g.fillText(`${Number(entry.score || 0).toLocaleString()} POINTS`, 320, 176);
+      const map = HALL_MAP_NAMES[entry.map] || String(entry.map || 'UNKNOWN').toUpperCase();
+      const mode = entry.gameType === 'tdm' ? 'TEAM DEATHMATCH' : 'FREE FOR ALL';
+      const play = entry.playType === 'multiplayer' ? 'MULTIPLAYER' : 'SINGLE PLAYER';
+      g.fillStyle = '#b9c3d7';
+      g.font = '700 18px Arial';
+      g.fillText(map, 320, 212);
+      g.fillText(`${mode}  •  ${play}`, 320, 242);
+      drawHallAwards(g, entry.awards, 320, 271, 570, 4, 'center', 15, 19);
+    }
+    tex.needsUpdate = true;
+  };
+  draw();
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(8.2, 4.6), new THREE.MeshBasicMaterial({ map: tex }));
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  return draw;
+}
+
+function addHallColumn(scene, world, x, z, height = 84) {
+  const marble = new THREE.MeshStandardMaterial({ color: 0xfff1cf, roughness: 0.5, metalness: 0.02 });
+  const gold = new THREE.MeshStandardMaterial({ color: 0xd5a72f, roughness: 0.3, metalness: 0.62 });
+  const shaftHeight = height - 1.8;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.22, shaftHeight, 24), marble);
+  shaft.position.set(x, 1.08 + shaftHeight / 2, z);
+  shaft.castShadow = shaft.receiveShadow = true;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.8, 0.72, 24), gold);
+  base.position.set(x, 0.72, z);
+  const capital = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.18, 1.1, 24), gold);
+  capital.position.set(x, height + 0.05, z);
+  scene.add(shaft, base, capital);
+  world.colliders.push({ type: 'box', min: V(x - 1.05, 0, z - 1.05), max: V(x + 1.05, height + 0.6, z + 1.05) });
+}
+
+function addHallReflectingPool(scene, world, x, z, w, d) {
+  addBox(scene, world, x, 0.06, z, w + 0.8, 0.12, d + 0.8, 0xb88b2c, { collide: false, emissive: 0x543500, emissiveIntensity: 0.12 });
+  addBox(scene, world, x, 0.13, z, w, 0.16, d, 0x173e55, { collide: false, emissive: 0x08263a, emissiveIntensity: 0.22 });
+  addWater(scene, world, x, 0.24, z, w - 0.65, d - 0.65, 0.38);
+  for (const side of [-1, 1]) {
+    addBox(scene, world, x + side * (w / 2 + 0.24), 0.24, z, 0.48, 0.48, d + 0.75, 0xd5a72f, { collide: false });
+  }
+  for (const end of [-1, 1]) {
+    addBox(scene, world, x, 0.24, z + end * (d / 2 + 0.24), w + 0.75, 0.48, 0.48, 0xd5a72f, { collide: false });
+  }
+  for (const [offset, height] of [[-50, 3.2], [0, 4.2], [50, 3.2]]) {
+    const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.16, height, 10), new THREE.MeshBasicMaterial({
+      color: 0xc8f5ff,
+      transparent: true,
+      opacity: 0.76,
+    }));
+    jet.position.set(x, 0.24 + height / 2, z + offset);
+    scene.add(jet);
+    const light = new THREE.PointLight(0x8de8ff, 9, 18);
+    light.position.set(x, 1.2, z + offset);
+    scene.add(light);
+    world.anim.push((dt, t) => {
+      jet.scale.y = 0.84 + Math.sin(t * 2.2 + offset) * 0.12;
+      jet.material.opacity = 0.64 + Math.sin(t * 3.1 + offset) * 0.12;
+    });
+  }
+}
+
+function addHallGoldPowerupOrnament(scene) {
+  const z = 110.05;
+  const centerY = 44;
+  const bronze = new THREE.MeshStandardMaterial({
+    color: 0x4b2505,
+    metalness: 0.74,
+    roughness: 0.3,
+  });
+  const brightGold = new THREE.MeshStandardMaterial({
+    color: 0xffd75e,
+    emissive: 0x6c4100,
+    emissiveIntensity: 0.28,
+    metalness: 0.86,
+    roughness: 0.2,
+  });
+  const powerGold = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    ...aiTex('power-gold', 1, 1),
+    emissive: 0x5d3500,
+    emissiveIntensity: 0.18,
+    metalness: 0.64,
+    roughness: 0.3,
+  });
+
+  // A flat octagonal mosaic made from the gold-powerup artwork. Layered rings
+  // and a shallow N relief make it read as palace ornament, never as a pickup.
+  const back = new THREE.Mesh(new THREE.CircleGeometry(16.4, 8), bronze);
+  back.position.set(0, centerY, z + 0.14);
+  back.rotation.y = Math.PI;
+  const face = new THREE.Mesh(new THREE.CircleGeometry(14.7, 8), powerGold);
+  face.position.set(0, centerY, z);
+  face.rotation.y = Math.PI;
+  const outerRing = new THREE.Mesh(new THREE.RingGeometry(14.65, 16.05, 8), brightGold);
+  outerRing.position.set(0, centerY, z - 0.08);
+  outerRing.rotation.y = Math.PI;
+  const innerRing = new THREE.Mesh(new THREE.RingGeometry(12.55, 13.05, 8), brightGold);
+  innerRing.position.set(0, centerY, z - 0.11);
+  innerRing.rotation.y = Math.PI;
+  scene.add(back, face, outerRing, innerRing);
+
+  for (const [x, rotation, height] of [[-4.1, 0, 10.2], [4.1, 0, 10.2], [0, -0.68, 12.8]]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.35, height, 0.62), bronze);
+    bar.position.set(x, centerY, z - 0.48);
+    bar.rotation.z = rotation;
+    scene.add(bar);
+  }
+
+  const glow = new THREE.PointLight(0xffc928, 9, 44);
+  glow.position.set(0, centerY, 101);
+  scene.add(glow);
+}
+
+export function buildHallOfFame(scene) {
+  const world = newWorld({ killY: -20, playerSpeed: 12.5 });
+  scene.background = new THREE.Color(0x98c9f0);
+  scene.fog = new THREE.Fog(0xe8d9b8, 180, 360);
+  baseLighting(scene, 0xfff0c2, 0x7385a3, [-35, 120, 30], 135);
+  addDaytimeSkyDome(scene);
+
+  const halfWidth = 34;
+  const halfLength = 112;
+  const ceilingY = 92;
+
+  // A genuinely monumental Olympus-inspired nave: more than five times the
+  // former ceiling height, wider walls, and a much longer ceremonial axis.
+  addBox(scene, world, 0, -0.5, 0, halfWidth * 2, 1, halfLength * 2, 0xf4e5c6, { tex: 'checker', repeat: [15, 46] });
+  addBox(scene, world, -halfWidth, ceilingY / 2, 0, 2, ceilingY, halfLength * 2, 0xffefcf);
+  addBox(scene, world, halfWidth, ceilingY / 2, 0, 2, ceilingY, halfLength * 2, 0xffefcf);
+  addBox(scene, world, 0, ceilingY / 2, -halfLength, halfWidth * 2, ceilingY, 2, 0xffefcf);
+  addBox(scene, world, 0, ceilingY / 2, halfLength, halfWidth * 2, ceilingY, 2, 0xffefcf);
+  addBox(scene, world, 0, ceilingY, 0, halfWidth * 2, 1.6, halfLength * 2, 0xc99a2f);
+  addBox(scene, world, 0, 0.08, 0, 9, 0.16, halfLength * 2 - 12, 0xb07d1e, { collide: false, emissive: 0x5a3400, emissiveIntensity: 0.16 });
+  for (let z = -99; z <= 99; z += 18) {
+    addBox(scene, world, 0, ceilingY - 0.9, z, halfWidth * 2 - 2, 0.72, 0.8, 0xe9c65f, { collide: false, emissive: 0x6a4800, emissiveIntensity: 0.1 });
+  }
+  for (const x of [-22, 0, 22]) {
+    addBox(scene, world, x, ceilingY - 0.86, 0, 0.72, 0.78, halfLength * 2 - 2, 0xe9c65f, { collide: false, emissive: 0x6a4800, emissiveIntensity: 0.1 });
+  }
+
+  for (let z = -90; z <= 90; z += 18) {
+    addHallColumn(scene, world, -26.5, z, 84);
+    addHallColumn(scene, world, 26.5, z, 84);
+  }
+
+  // Great hanging rings illuminate the enormous upper volume and make its
+  // height legible from the floor instead of reading as an empty void.
+  for (const z of [-72, -36, 0, 36, 72]) {
+    const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 31, 8), new THREE.MeshStandardMaterial({
+      color: 0x9b731d,
+      metalness: 0.72,
+      roughness: 0.3,
+    }));
+    chain.position.set(0, 75.5, z);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.22, 12, 36), new THREE.MeshStandardMaterial({
+      color: 0xf0cc65,
+      emissive: 0x6a4300,
+      emissiveIntensity: 0.32,
+      metalness: 0.76,
+      roughness: 0.24,
+    }));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, 59.8, z);
+    scene.add(chain, ring);
+    const light = new THREE.PointLight(0xffdf8a, 18, 76);
+    light.position.set(0, 58.8, z);
+    scene.add(light);
+  }
+
+  // Twin reflecting pools flank the gold processional carpet. Three fountain
+  // jets in each pool keep the long hall alive without obstructing the route.
+  addHallReflectingPool(scene, world, -13, 5, 7, 150);
+  addHallReflectingPool(scene, world, 13, 5, 7, 150);
+
+  // Hanging vine curtains fill the high side walls between leaderboard boards.
+  const vineGaps = [73, 55, 37, 19, 1, -17, -35, -53, -71];
+  vineGaps.forEach((z, i) => {
+    const bottom = 19 + (i % 3) * 4;
+    const top = 82 + (i % 2) * 4;
+    addVine(scene, world, -32.75, z, bottom, top, 0.95, 0, 0, 1, 0, 0.4, 3.2);
+    addVine(scene, world, 32.75, z, bottom, top, 0.95, 0, 0, -1, 0, 0.4, 3.2);
+  });
+
+  // Return portal at the entrance, behind the player when they arrive.
+  addBox(scene, world, 0, 5.2, 110.8, 15, 10.4, 1.1, 0xd0a338, { emissive: 0x6b4700, emissiveIntensity: 0.22 });
+  addMagicPortal(scene, world, 0, 5.2, 110.15, 11.2, 8.8, 0x73dcff, Math.PI);
+  makeSign(scene, 0, 14.5, 110.1, 22, '#73dcff', 'RETURN TO THE ATRIUM', Math.PI);
+  addHallGoldPowerupOrnament(scene);
+  world.hallExitPortal = { x: 0, z: 106.5 };
+
+  // The back wall is now a proper monument with large, separately spaced title
+  // bands above the champion cards rather than a stack of overlapping signs.
+  makeSign(scene, 0, 45, -110.85, 42, '#ffd75e', 'THE IMMORTAL HALL OF FAME', 0);
+  makeSign(scene, 0, 33, -110.8, 30, '#fff1c9', 'TOP 100 CHAMPIONS', 0);
+
+  const leaderboardDraws = [];
+  for (let i = 0; i < 10; i++) {
+    const z = 82 - i * 18;
+    leaderboardDraws.push(makeHallLeaderboardBoard(scene, -32.85, 11.5, z, Math.PI / 2, i * 10 + 1));
+    leaderboardDraws.push(makeHallLeaderboardBoard(scene, 32.85, 11.5, z, -Math.PI / 2, i * 10 + 6));
+  }
+
+  // Far-end dais and the three champion thrones.
+  addBox(scene, world, 0, 0.4, -95, 34, 0.8, 20, 0xc3962e);
+  addBox(scene, world, 0, 0.92, -96, 31, 0.32, 16.5, 0xffedba);
+  const podiumSpecs = [
+    { x: 0, h: 5.6, w: 7.4, color: 0xe0b538, cardY: 22 },
+    { x: -10, h: 3.8, w: 7, color: 0xcbd4df, cardY: 16.5 },
+    { x: 10, h: 2.9, w: 7, color: 0xbd7441, cardY: 16.5 },
+  ];
+  const podiumDraws = [];
+  for (let i = 0; i < podiumSpecs.length; i++) {
+    const spec = podiumSpecs[i];
+    addBox(scene, world, spec.x, 1.08 + spec.h / 2, -96, spec.w, spec.h, 6.5, spec.color);
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(i === 0 ? 0.82 : 0.68, 20, 14), new THREE.MeshStandardMaterial({
+      color: spec.color,
+      emissive: spec.color,
+      emissiveIntensity: 0.24,
+      metalness: 0.65,
+      roughness: 0.22,
+    }));
+    orb.position.set(spec.x, 1.8 + spec.h, -96);
+    scene.add(orb);
+    podiumDraws.push(makeHallPodiumCard(scene, spec.x, spec.cardY, -110.7, i + 1));
+  }
+  const crown = new THREE.PointLight(0xffd75e, 42, 38);
+  crown.position.set(0, 25, -94);
+  scene.add(crown);
+
+  world.setLeaderboard = (entries = []) => {
+    for (const draw of leaderboardDraws) draw(entries);
+    for (const draw of podiumDraws) draw(entries);
+  };
+  world.spawns.ffa.push(V(0, 0.1, 96));
+  world.spawns.blue.push(V(0, 0.1, 96));
+  world.spawns.red.push(V(0, 0.1, 96));
+  wp(world, 0, 0, 92);
+  wp(world, 0, 0, 48);
+  wp(world, 0, 0, 4);
+  wp(world, 0, 0, -40);
+  wp(world, 0, 0, -82);
   mergeStatic(scene, world);
   return world;
 }

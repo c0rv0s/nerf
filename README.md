@@ -24,8 +24,24 @@ npm start
 # then open http://localhost:3000
 ```
 
-The Node server serves the same static files and hosts `/ws` for the continuous
-multiplayer lobbies. Railway uses `npm start` via `railway.json`.
+The Node server serves the same static files, hosts `/ws` for continuous
+multiplayer lobbies, and exposes the Hall of Fame API at `/api/leaderboard`.
+Railway uses `npm start` via `railway.json`.
+
+## Hall of Fame database
+
+The Hall of Fame uses PostgreSQL whenever `DATABASE_URL` is present. On
+Railway, add a PostgreSQL service to the project and reference its
+`DATABASE_URL` from the game service. The server creates the leaderboard table
+and ranking index automatically on startup. Without `DATABASE_URL`, local
+development uses an in-memory top 100 that resets when the server restarts.
+
+- Enter the **HALL OF FAME** through the gold portal at the far end of the atrium.
+- All 100 ranked places are displayed along the hall walls; the top three are
+  repeated on the champion podium at the far end.
+- Qualifying players can enter a name on the post-match podium. Each entry
+  records score, map, game type, whether it was single-player or multiplayer,
+  and every award earned during that match.
 
 ## Multiplayer
 
@@ -34,7 +50,7 @@ multiplayer lobbies. Railway uses `npm start` via `railway.json`.
 - Up to five lobbies are supported, with eight competitor slots per lobby.
 - Humans replace bots when they join. If a human joins mid-match, their score
   starts at 0.
-- Each cycle is 10 seconds of map voting, 5 minutes of play, then a 6-second
+- Each cycle is 10 seconds of map voting, 5 minutes of play, then a 15-second
   winner podium before the next vote.
 
 ## The game
