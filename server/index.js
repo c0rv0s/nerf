@@ -1311,21 +1311,8 @@ function pruneStaleConnections() {
   }
 }
 
-function dist2(a, b) {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return dx * dx + dz * dz;
-}
-
 function rand(a, b) {
   return a + Math.random() * (b - a);
-}
-
-function angleDiff(a, b) {
-  let d = a - b;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return d;
 }
 
 httpServer.listen(PORT, () => {

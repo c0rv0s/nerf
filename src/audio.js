@@ -56,10 +56,6 @@ export function setMasterVolume(value) {
   if (masterBus) masterBus.gain.value = 0.8 * masterVolume * effectsVolume;
 }
 
-export function getMasterVolume() {
-  return masterVolume;
-}
-
 export function setEffectsVolume(value) {
   effectsVolume = Math.max(0, Math.min(1, Number(value) || 0));
   if (masterBus) masterBus.gain.value = 0.8 * masterVolume * effectsVolume;

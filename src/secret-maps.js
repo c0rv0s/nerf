@@ -12,7 +12,7 @@ export function unlockSecretMap(mapId) {
   } catch { /* localStorage may be unavailable */ }
 }
 
-export function isSecretMapUnlocked(mapId) {
+function isSecretMapUnlocked(mapId) {
   if (!SECRET_MAP_IDS.has(mapId)) return false;
   try {
     return localStorage.getItem(unlockStorageKey(mapId)) === 'true';

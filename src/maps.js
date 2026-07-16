@@ -5328,7 +5328,7 @@ function buildMeteorSurfaceIndex(world, cellSize = 16) {
 /* ============== SECRET MAP — OLYMPUS MONS (340×340, 103m tall) =============
    A Palutena-style cliff temple: recovery basin, floating return routes,
    waterfall undercroft, indoor armories, open court, and connected roof city. */
-export function buildOlympusMons(scene) {
+function buildOlympusMons(scene) {
   const world = newWorld({
     killY: -34,
     matchTime: 10 * 60,

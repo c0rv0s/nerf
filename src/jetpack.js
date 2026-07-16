@@ -1,9 +1,9 @@
 // Shared death-bound jetpack state so players and bots obey identical fuel,
 // cooldown, and thrust rules.
-export const JETPACK_FUEL_SECONDS = 8;
-export const JETPACK_COOLDOWN_SECONDS = 4;
-export const JETPACK_MAX_RISE_SPEED = 12;
-export const JETPACK_THRUST = 40;
+const JETPACK_FUEL_SECONDS = 8;
+const JETPACK_COOLDOWN_SECONDS = 4;
+const JETPACK_MAX_RISE_SPEED = 12;
+const JETPACK_THRUST = 40;
 
 export function createJetpack() {
   return { fuel: JETPACK_FUEL_SECONDS, cooldown: 0, active: false };

@@ -4,7 +4,7 @@ import { canVoteForMap } from './secret-maps.js';
 
 const WS_PATH = '/ws';
 
-export class MultiplayerClient extends EventTarget {
+class MultiplayerClient extends EventTarget {
   constructor() {
     super();
     this.ws = null;
