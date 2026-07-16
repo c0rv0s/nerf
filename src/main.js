@@ -16,6 +16,7 @@ import { sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume, 
 import { multiplayer } from './multiplayer.js';
 import { createJetpack } from './jetpack.js';
 import { unlockSecretMap } from './secret-maps.js';
+import { byId, setStyle, setText } from './dom.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -45,18 +46,6 @@ const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills:
 const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, team: 'meteor' };
 const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
 
-function setText(el, value) {
-  if (!el) return;
-  const next = String(value);
-  if (el.textContent !== next) el.textContent = next;
-}
-
-function setStyle(el, prop, value) {
-  if (!el) return;
-  const next = value == null ? '' : String(value);
-  if (el.style[prop] !== next) el.style[prop] = next;
-}
-
 // Soundtrack — matches only, never the lobby.
 const MUSIC = [
   { title: 'Foam Dart Rumble', src: './music/track1.mp3' },
@@ -73,7 +62,7 @@ let musicIdx = Math.floor(Math.random() * MUSIC.length);
 let currentTrackTitle = '';
 
 function updateTrackTitle() {
-  const el = document.getElementById('tracktitle');
+  const el = byId('tracktitle');
   setText(el, currentTrackTitle || 'No track playing');
 }
 

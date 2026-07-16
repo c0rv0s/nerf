@@ -1,31 +1,20 @@
 // DOM HUD: health, ammo, weapon slots, scores, killfeed, messages, scoreboard.
 // Mode-aware: FFA shows YOU vs leader; TDM shows blue vs red.
 import { WEAPONS, WEAPON_ORDER } from './weapons.js';
-
-const $ = (id) => document.getElementById(id);
-const setText = (el, value) => {
-  const next = String(value);
-  if (el.textContent !== next) el.textContent = next;
-};
-const setStyle = (el, prop, value) => {
-  if (el.style[prop] !== value) el.style[prop] = value;
-};
-const setClass = (el, value) => {
-  if (el.className !== value) el.className = value;
-};
+import { byId, setClass, setStyle, setText } from './dom.js';
 
 export class HUD {
   constructor() {
     this.els = {
-      hud: $('hud'), health: $('healthnum'), shield: $('shieldnum'), fill: $('healthfill'),
-      ammo: $('ammonum'), wname: $('weaponname'), slots: $('wslots'),
-      left: $('scoreBlue'), right: $('scoreRed'), timer: $('timer'), top3: $('top3'),
-      feed: $('killfeed'), msg: $('message'), power: $('powerup'),
-      jetpack: $('jetpackstatus'),
-      awards: $('awards'),
-      vignette: $('vignette'), hit: $('hitmarker'),
-      respawn: $('respawn'), respawnCount: $('respawncount'),
-      board: $('scoreboard'),
+      hud: byId('hud'), health: byId('healthnum'), shield: byId('shieldnum'), fill: byId('healthfill'),
+      ammo: byId('ammonum'), ammoWrap: byId('ammo'), wname: byId('weaponname'), slots: byId('wslots'),
+      left: byId('scoreBlue'), right: byId('scoreRed'), timer: byId('timer'), top3: byId('top3'),
+      feed: byId('killfeed'), msg: byId('message'), power: byId('powerup'),
+      jetpack: byId('jetpackstatus'),
+      awards: byId('awards'),
+      vignette: byId('vignette'), hit: byId('hitmarker'),
+      respawn: byId('respawn'), respawnCount: byId('respawncount'),
+      board: byId('scoreboard'),
     };
     this.msgTimer = 0;
     this.hitTimer = 0;
@@ -49,7 +38,7 @@ export class HUD {
     const w = WEAPONS[player.weapon];
     setText(e.wname, w.name);
     setText(e.ammo, player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] ?? 0);
-    $('ammo').classList.toggle('low-ammo', player.weapon !== 'blaster' && (player.ammo[player.weapon] ?? 0) <= 2);
+    e.ammoWrap.classList.toggle('low-ammo', player.weapon !== 'blaster' && (player.ammo[player.weapon] ?? 0) <= 2);
 
     // weapon slots
     const weaponOrder = world?.availableWeapons || WEAPON_ORDER.filter(id => !WEAPONS[id].secretMapOnly);
