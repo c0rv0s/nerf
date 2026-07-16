@@ -10,7 +10,7 @@
 // at its edge or sit at a deliberately different elevation, never coplanar.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { rand } from './engine.js';
+import { rand, pointInZoneXZ } from './engine.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -152,6 +152,7 @@ export const texturesReady = Promise.all(
    'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
    'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
    'power-gold', 'power-silver',
+   'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
    'atrium-gate-frame-atlas']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
@@ -336,7 +337,7 @@ function waterNormalTex() {
   return _waterNormal;
 }
 
-function addWater(scene, world, x, y, z, w, d, depth = 4) {
+function addWater(scene, world, x, y, z, w, d, depth = 4, opts = {}) {
   world.waterZones ||= [];
   world.waterZones.push({
     minX: x - w / 2, maxX: x + w / 2,
@@ -344,25 +345,30 @@ function addWater(scene, world, x, y, z, w, d, depth = 4) {
     surfaceY: y, bottomY: y - depth,
   });
 
-  const n = waterNormalTex().clone();
-  n.needsUpdate = true;
-  n.repeat.set(w / 9, d / 9);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
-    new THREE.MeshStandardMaterial({
+  const n = opts.unlit ? null : waterNormalTex().clone();
+  if (n) {
+    n.needsUpdate = true;
+    n.repeat.set(w / 9, d / 9);
+  }
+  const material = opts.unlit
+    ? new THREE.MeshBasicMaterial({
+      color: opts.color ?? 0x216f93, transparent: true, opacity: opts.opacity ?? 0.5,
+      depthWrite: false,
+    })
+    : new THREE.MeshStandardMaterial({
       color: 0x11557f, transparent: true, opacity: 0.58, roughness: 0.08, metalness: 0.05,
       normalMap: n, normalScale: new THREE.Vector2(0.75, 0.75),
       envMapIntensity: 1.15, emissive: 0x06283f, emissiveIntensity: 0.12,
       depthWrite: false,
-    }));
+    });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), material);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(x, y, z);
   scene.add(mesh);
-  world.anim.push((dt, t) => {
-    n.offset.set(t * 0.018, t * 0.03);
-  });
+  if (n) world.anim.push((dt, t) => n.offset.set(t * 0.018, t * 0.03));
 }
 
-function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0) {
+function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style = {}) {
   world.waterfallZones ||= [];
   world.waterfallZones.push({
     minX: x - w / 2, maxX: x + w / 2,
@@ -370,8 +376,8 @@ function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0) {
     minY: bottomY - 0.4, maxY: topY + 0.4,
   });
 
-  addBox(scene, world, x, topY + 0.3, z + flowZ * 0.5, w + 1.4, 0.6, 1.2, 0x4a7a52,
-    { tex: 'rock', repeat: [2, 1] });
+  addBox(scene, world, x, topY + 0.3, z + flowZ * 0.5, w + 1.4, 0.6, 1.2,
+    style.lipColor ?? 0x4a7a52, { tex: style.lipTex ?? 'rock', repeat: [2, 1] });
   const streams = [];
   for (const [dx, dz, ww, opacity, phase] of [
     [0, 0, w, 0.7, 0],
@@ -446,7 +452,7 @@ function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff,
   });
 }
 
-function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exitX = 0, exitZ = 0, visualTopPad = 0.16, visualWidth = null) {
+function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exitX = 0, exitZ = 0, visualTopPad = 0.16, visualWidth = null, vineColor = 0x5fc84d) {
   const zone = { x, z, minY: Math.min(y0, y1), maxY: Math.max(y0, y1), r, grabR: Math.max(r, 1.28) };
   const exitLen = Math.hypot(exitX, exitZ);
   if (exitLen > 0.001) {
@@ -485,10 +491,11 @@ function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exit
   map.repeat.set(1, Math.max(1, h / 4));
   map.needsUpdate = true;
   const matVine = new THREE.MeshStandardMaterial({
-    map, color: 0x5fc84d, roughness: 0.95, metalness: 0,
+    map, color: vineColor, roughness: 0.95, metalness: 0,
     transparent: false, alphaTest: 0.34, side: THREE.DoubleSide,
     depthWrite: true,
-    emissive: 0x0b2a0f, emissiveIntensity: 0.04,
+    emissive: vineColor === 0x5fc84d ? 0x0b2a0f : 0x3b0609,
+    emissiveIntensity: vineColor === 0x5fc84d ? 0.04 : 0.14,
   });
   const quat = new THREE.Quaternion().setFromUnitVectors(
     new THREE.Vector3(0, 0, 1),
@@ -532,7 +539,7 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
     if (!collide) return;
-    const collider = { type: 'box', min: V(0, 0, 0), max: V(0, 0, 0) };
+    const collider = { type: 'box', dynamic: true, min: V(0, 0, 0), max: V(0, 0, 0) };
     world.colliders.push(collider);
     boxes.push({ lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider });
   };
@@ -541,7 +548,7 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
     mesh.position.set(lx, ly, lz);
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
-    const collider = { type: 'box', min: V(0, 0, 0), max: V(0, 0, 0) };
+    const collider = { type: 'box', dynamic: true, min: V(0, 0, 0), max: V(0, 0, 0) };
     world.colliders.push(collider);
     const door = { lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider, mesh, openDir, open: 0 };
     boxes.push(door);
@@ -1518,19 +1525,34 @@ function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
   geo.computeVertexNormals();
   geo.translate(x, y - thick / 2, z);
   bake(geo, 3);
-  // boulder keel below (decor only)
+  // Boulder keel under the slab. Its rounded top can poke above wide decks,
+  // so pair it with a sphere collider instead of letting players clip through.
   const r = Math.min(w, d) * 0.5;
+  const keelX = x + rand(-1, 1);
+  const keelY = y - thick - r * 0.5;
+  const keelZ = z + rand(-1, 1);
   const keel = new THREE.IcosahedronGeometry(r, 1);
   keel.scale(1, 0.85, 1);
   keel.rotateX(rand(0, 3)); keel.rotateY(rand(0, 3)); keel.rotateZ(rand(0, 3));
-  keel.translate(x + rand(-1, 1), y - thick - r * 0.5, z + rand(-1, 1));
+  keel.translate(keelX, keelY, keelZ);
   bake(keel, 2);
+  world.colliders.push({ type: 'sphere', center: V(keelX, keelY, keelZ), radius: r * 0.85 });
 }
 
 function buildAsteroids(scene) {
   const world = newWorld({
     gravity: 5, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
     waypointLinkDist: 45, waypointLinkDy: 16,
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite'],
+    cometField: {
+      minInterval: 13.34, maxInterval: 26.67,
+      spawnRadius: 230, flightLife: 16,
+      minSpeed: 27, maxSpeed: 36,
+      health: 150, radius: 1.36,
+      maxElevation: 15, laneSpread: 42,
+      outerTailLength: 26, innerTailLength: 17,
+      fadeIn: 1, maxActive: 2,
+    },
   });
   scene.background = new THREE.Color(0x05060f);
   scene.add(new THREE.HemisphereLight(0x5566aa, 0x221833, 2.4));
@@ -2609,7 +2631,7 @@ function addDoor(scene, world, x, y, z, w, h, d, opts = {}) {
   mesh.position.set(x, y + h / 2, z);
   mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
-  const collider = { type: 'box', min: V(x - w / 2, y, z - d / 2), max: V(x + w / 2, y + h, z + d / 2) };
+  const collider = { type: 'box', dynamic: true, min: V(x - w / 2, y, z - d / 2), max: V(x + w / 2, y + h, z + d / 2) };
   (world.doors ||= []).push({
     mesh, collider, material: dmat, x, y, z, w, h, d,
     along: w >= d, off: 0, runePhase: opts.runePhase ?? null,
@@ -2693,6 +2715,142 @@ function addLava(scene, world, x, z, w, d, floorY = -1.1) {
     minX: x - w / 2 + 0.2, maxX: x + w / 2 - 0.2,
     minZ: z - d / 2 + 0.2, maxZ: z + d / 2 - 0.2, maxY: floorY + 1.0,
   });
+}
+
+// A jagged lava lake whose damaging area follows the rendered polygon. This is
+// intentionally separate from the compact rectangular arena pits above: broad
+// natural caverns look artificial when every shoreline is ruler-straight.
+function addScragglyLava(scene, world, x, z, w, d, floorY, seed) {
+  const rnd = seededRandom(seed);
+  const outline = [
+    [-0.50, -0.34], [-0.37, -0.49], [-0.13, -0.43], [0.10, -0.50], [0.34, -0.43],
+    [0.50, -0.31], [0.43, -0.10], [0.50, 0.10], [0.39, 0.30], [0.48, 0.49],
+    [0.22, 0.43], [-0.02, 0.50], [-0.27, 0.41], [-0.50, 0.48], [-0.42, 0.20],
+    [-0.50, -0.03], [-0.41, -0.23],
+  ].map(([px, pz]) => [
+    x + (px + (rnd() - 0.5) * 0.055) * w,
+    z + (pz + (rnd() - 0.5) * 0.055) * d,
+  ]);
+
+  const shape = new THREE.Shape();
+  outline.forEach(([px, pz], i) => {
+    if (i === 0) shape.moveTo(px, -pz);
+    else shape.lineTo(px, -pz);
+  });
+  shape.closePath();
+
+  const lmat = new THREE.MeshStandardMaterial({
+    color: 0xff8040, roughness: 0.35, emissive: 0xff5a10, emissiveIntensity: 0.9,
+    side: THREE.DoubleSide,
+  });
+  const ai = AI_TEX.lava;
+  if (ai) {
+    lmat.map = ai.map.clone();
+    lmat.map.needsUpdate = true;
+    lmat.map.repeat.set(Math.max(1, Math.round(w / 10)), Math.max(1, Math.round(d / 10)));
+    lmat.emissiveMap = lmat.map;
+    lmat.color = new THREE.Color(0xffffff);
+    lmat.emissive = new THREE.Color(0xcc7040);
+  }
+  const surfY = floorY + 0.85;
+  const lava = new THREE.Mesh(new THREE.ShapeGeometry(shape), lmat);
+  lava.rotation.x = -Math.PI / 2;
+  lava.position.y = surfY;
+  lava.receiveShadow = true;
+  scene.add(lava);
+  world.anim.push((dt, t) => {
+    lmat.emissiveIntensity = 0.52 + Math.sin(t * 2.2 + seed) * 0.15;
+    if (lmat.map) { lmat.map.offset.x = t * 0.012; lmat.map.offset.y = t * 0.008; }
+  });
+
+  const zone = { points: outline, maxY: floorY + 1.0 };
+  (world.lavaZones ||= []).push(zone);
+  for (let i = 0; i < 2; i++) {
+    let px = x, pz = z;
+    for (let tries = 0; tries < 12; tries++) {
+      px = x + (rnd() - 0.5) * w * 0.8;
+      pz = z + (rnd() - 0.5) * d * 0.8;
+      if (pointInZoneXZ(zone, px, pz)) break;
+    }
+    const blob = new THREE.Mesh(new THREE.SphereGeometry(0.14 + rnd() * 0.12, 6, 5),
+      new THREE.MeshBasicMaterial({ color: 0xffa030 }));
+    scene.add(blob);
+    const phase = rnd() * 4, period = 1.4 + rnd() * 1.3;
+    world.anim.push((dt, t) => {
+      const k = ((t + phase) % period) / period;
+      blob.visible = k < 0.4;
+      const kk = k / 0.4;
+      blob.position.set(px, surfY + 6 * kk * (1 - kk), pz);
+    });
+  }
+  const glow = new THREE.PointLight(0xff5a20, 24, Math.max(18, Math.min(w, d)));
+  glow.position.set(x, floorY + 2.5, z);
+  scene.add(glow);
+}
+
+// Continuous square-ring moat for Olympus's outer basin. The outside follows
+// the map boundary while the inner shoreline meanders naturally; the central
+// hole remains safe ground both visually and in hazard queries.
+function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -0.72) {
+  const rnd = seededRandom(0x4d4f4154);
+  const outer = [
+    [-outerR, -outerR], [outerR, -outerR],
+    [outerR, outerR], [-outerR, outerR],
+  ];
+  const inner = [];
+  const steps = 9;
+  const wobble = () => (rnd() - 0.5) * 8;
+  for (let i = 0; i < steps; i++) inner.push([-innerR + i * innerR * 2 / steps, -innerR + wobble()]);
+  for (let i = 0; i < steps; i++) inner.push([innerR + wobble(), -innerR + i * innerR * 2 / steps]);
+  for (let i = 0; i < steps; i++) inner.push([innerR - i * innerR * 2 / steps, innerR + wobble()]);
+  for (let i = 0; i < steps; i++) inner.push([-innerR + wobble(), innerR - i * innerR * 2 / steps]);
+
+  const shape = new THREE.Shape();
+  outer.forEach(([px, pz], i) => i === 0 ? shape.moveTo(px, -pz) : shape.lineTo(px, -pz));
+  shape.closePath();
+  const hole = new THREE.Path();
+  [...inner].reverse().forEach(([px, pz], i) => i === 0 ? hole.moveTo(px, -pz) : hole.lineTo(px, -pz));
+  hole.closePath();
+  shape.holes.push(hole);
+
+  const lmat = new THREE.MeshStandardMaterial({
+    color: 0xff8040, roughness: 0.32, emissive: 0xff5410, emissiveIntensity: 0.82,
+    side: THREE.DoubleSide,
+  });
+  const ai = AI_TEX.lava;
+  if (ai) {
+    lmat.map = ai.map.clone();
+    lmat.map.needsUpdate = true;
+    // This is a map-scale surface, so keep the lava cells broad enough to read
+    // as flows instead of a dense, shimmering fabric pattern.
+    lmat.map.repeat.set(10, 10);
+    lmat.emissiveMap = lmat.map;
+    lmat.color = new THREE.Color(0xffffff);
+    lmat.emissive = new THREE.Color(0xc86432);
+  }
+  const surfY = floorY + 0.85;
+  const moat = new THREE.Mesh(new THREE.ShapeGeometry(shape), lmat);
+  moat.rotation.x = -Math.PI / 2;
+  moat.position.y = surfY;
+  moat.receiveShadow = true;
+  scene.add(moat);
+  world.anim.push((dt, t) => {
+    lmat.emissiveIntensity = 0.48 + Math.sin(t * 1.65) * 0.12;
+    if (lmat.map) { lmat.map.offset.x = t * 0.009; lmat.map.offset.y = t * 0.006; }
+  });
+  // The north river is a true water-only outlet. Exclude the whole channel
+  // from lava damage even though its transparent surface crosses the moat.
+  const riverCut = [
+    [-7.5, -outerR - 1], [7.5, -outerR - 1],
+    [7.5, -innerR + 10], [-7.5, -innerR + 10],
+  ];
+  (world.lavaZones ||= []).push({ points: outer, holes: [inner, riverCut], maxY: floorY + 1.0 });
+
+  for (const [x, z] of [[-158, -90], [158, 82], [-86, 158], [94, -158]]) {
+    const glow = new THREE.PointLight(0xff4a18, 18, 34);
+    glow.position.set(x, 2.2, z);
+    scene.add(glow);
+  }
 }
 
 /* ============== SECRET MAP — THE RUNE ENGINE (hidden gate in the lobby) ==============
@@ -4196,6 +4354,7 @@ const HALL_MAP_NAMES = {
   city: 'NEON HEIGHTS',
   sanctum: 'THE LABYRINTH',
   prism: 'PRISM RUN',
+  olympus: 'OLYMPUS MONS',
 };
 
 const HALL_AWARD_LABELS = [
@@ -4320,7 +4479,7 @@ function makeHallLeaderboardBoard(scene, x, y, z, yaw, startRank) {
   return draw;
 }
 
-function makeHallPodiumCard(scene, x, y, z, place) {
+function makeHallPodiumCard(scene, x, y, z, place, width = 8.2, height = 4.6) {
   const canvas = document.createElement('canvas');
   canvas.width = 640;
   canvas.height = 360;
@@ -4364,8 +4523,19 @@ function makeHallPodiumCard(scene, x, y, z, place) {
     tex.needsUpdate = true;
   };
   draw();
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(8.2, 4.6), new THREE.MeshBasicMaterial({ map: tex }));
+  const edge = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(placeColor), metalness: 0.58, roughness: 0.3,
+  });
+  const face = new THREE.MeshBasicMaterial({ map: tex });
+  // A shallow box gives the plaque a real front surface instead of placing a
+  // plane almost coplanar with the podium. The old 2.5cm offset still fought
+  // the podium depth buffer when viewed from the far entrance.
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(width, height, 0.14),
+    [edge, edge, edge, edge, face, edge],
+  );
   mesh.position.set(x, y, z);
+  mesh.castShadow = true;
   scene.add(mesh);
   return draw;
 }
@@ -4389,11 +4559,13 @@ function addHallReflectingPool(scene, world, x, z, w, d) {
   addBox(scene, world, x, 0.06, z, w + 0.8, 0.12, d + 0.8, 0xb88b2c, { collide: false, emissive: 0x543500, emissiveIntensity: 0.12 });
   addBox(scene, world, x, 0.13, z, w, 0.16, d, 0x173e55, { collide: false, emissive: 0x08263a, emissiveIntensity: 0.22 });
   addWater(scene, world, x, 0.24, z, w - 0.65, d - 0.65, 0.38);
+  // Side and end rails butt together instead of crossing at the four corners.
+  // Overlapping boxes shared the same top plane there and visibly z-fought.
   for (const side of [-1, 1]) {
-    addBox(scene, world, x + side * (w / 2 + 0.24), 0.24, z, 0.48, 0.48, d + 0.75, 0xd5a72f, { collide: false });
+    addBox(scene, world, x + side * (w / 2 + 0.24), 0.24, z, 0.48, 0.48, d, 0xd5a72f, { collide: false });
   }
   for (const end of [-1, 1]) {
-    addBox(scene, world, x, 0.24, z + end * (d / 2 + 0.24), w + 0.75, 0.48, 0.48, 0xd5a72f, { collide: false });
+    addBox(scene, world, x, 0.24, z + end * (d / 2 + 0.24), w + 0.96, 0.48, 0.48, 0xd5a72f, { collide: false });
   }
   for (const [offset, height] of [[-50, 3.2], [0, 4.2], [50, 3.2]]) {
     const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.16, height, 10), new THREE.MeshBasicMaterial({
@@ -4558,14 +4730,14 @@ export function buildHallOfFame(scene) {
   addBox(scene, world, 0, 0.4, -95, 34, 0.8, 20, 0xc3962e);
   addBox(scene, world, 0, 0.92, -96, 31, 0.32, 16.5, 0xffedba);
   const podiumSpecs = [
-    { x: 0, h: 5.6, w: 7.4, color: 0xe0b538, cardY: 22 },
-    { x: -10, h: 3.8, w: 7, color: 0xcbd4df, cardY: 16.5 },
-    { x: 10, h: 2.9, w: 7, color: 0xbd7441, cardY: 16.5 },
+    { x: 0, h: 10.2, w: 11.4, d: 9.4, color: 0xe0b538, cardW: 8.2, cardH: 4.6 },
+    { x: -10, h: 5.4, w: 7, d: 6.5, color: 0xcbd4df, cardW: 6.4, cardH: 3.6 },
+    { x: 10, h: 4.4, w: 7, d: 6.5, color: 0xbd7441, cardW: 6, cardH: 3.37 },
   ];
   const podiumDraws = [];
   for (let i = 0; i < podiumSpecs.length; i++) {
     const spec = podiumSpecs[i];
-    addBox(scene, world, spec.x, 1.08 + spec.h / 2, -96, spec.w, spec.h, 6.5, spec.color);
+    addBox(scene, world, spec.x, 1.08 + spec.h / 2, -96, spec.w, spec.h, spec.d, spec.color);
     const orb = new THREE.Mesh(new THREE.SphereGeometry(i === 0 ? 0.82 : 0.68, 20, 14), new THREE.MeshStandardMaterial({
       color: spec.color,
       emissive: spec.color,
@@ -4575,8 +4747,33 @@ export function buildHallOfFame(scene) {
     }));
     orb.position.set(spec.x, 1.8 + spec.h, -96);
     scene.add(orb);
-    podiumDraws.push(makeHallPodiumCard(scene, spec.x, spec.cardY, -110.7, i + 1));
+    const cardY = 1.08 + spec.h * 0.52;
+    const cardZ = -96 + spec.d / 2 + 0.07;
+    podiumDraws.push(makeHallPodiumCard(scene, spec.x, cardY, cardZ, i + 1, spec.cardW, spec.cardH));
   }
+
+  // The Hall's final secret is built into the rear face of first place. The
+  // oversized champion podium blocks every view from the nave; the Martian
+  // gate only appears after a player circles fully behind the gold monolith.
+  const goldPodiumBackZ = -96 - podiumSpecs[0].d / 2;
+  addMagicPortal(scene, world, 0, 5.6, goldPodiumBackZ - 0.06, 8.4, 7.4, 0xff5a24, Math.PI);
+  // Frame pieces meet edge-to-edge. Previously their coplanar front faces
+  // overlapped at all four corners, producing a flickering z-stack.
+  for (const x of [-4.5, 4.5]) {
+    addBox(scene, world, x, 5.6, goldPodiumBackZ - 0.1, 0.6, 8.4, 0.34, 0xb77a32, {
+      collide: false, emissive: 0x7a2b10, emissiveIntensity: 0.34,
+    });
+  }
+  for (const y of [1.6, 9.6]) {
+    addBox(scene, world, 0, y, goldPodiumBackZ - 0.1, 8.4, 0.6, 0.34, 0xb77a32, {
+      collide: false, emissive: 0x7a2b10, emissiveIntensity: 0.34,
+    });
+  }
+  addBox(scene, world, 0, 1.12, goldPodiumBackZ - 1.25, 1.2, 0.1, 1.8, 0xff6a2a, {
+    collide: false, shadow: false, emissive: 0xff3d17, emissiveIntensity: 1.1,
+  });
+  world.secretMapPortal = { x: 0, z: goldPodiumBackZ - 0.55, map: 'olympus' };
+
   const crown = new THREE.PointLight(0xffd75e, 42, 38);
   crown.position.set(0, 25, -94);
   scene.add(crown);
@@ -4593,6 +4790,1362 @@ export function buildHallOfFame(scene) {
   wp(world, 0, 0, 4);
   wp(world, 0, 0, -40);
   wp(world, 0, 0, -82);
+  mergeStatic(scene, world);
+  return world;
+}
+
+function addMarsSkyDome(scene) {
+  const rnd = seededRandom(0x4f4c594d);
+  addCanvasSkyDome(scene, (g, width, height) => {
+    const sky = g.createLinearGradient(0, 0, 0, height);
+    sky.addColorStop(0, '#160f20');
+    sky.addColorStop(0.28, '#472238');
+    sky.addColorStop(0.62, '#a54e35');
+    sky.addColorStop(0.83, '#dc8550');
+    sky.addColorStop(1, '#f2b36a');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, width, height);
+
+    // Thin atmosphere: the zenith still shows stars while iron dust burns
+    // orange at the horizon.
+    g.fillStyle = '#ffe0a0';
+    for (let i = 0; i < 220; i++) {
+      const y = 20 + rnd() * height * 0.5;
+      const a = 0.22 + rnd() * 0.65;
+      const r = rnd() < 0.08 ? 1.7 : 0.65 + rnd() * 0.75;
+      g.globalAlpha = a;
+      g.beginPath();
+      g.arc(rnd() * width, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+
+    const sunX = width * 0.2;
+    const sunY = height * 0.22;
+    const halo = g.createRadialGradient(sunX, sunY, 4, sunX, sunY, 92);
+    halo.addColorStop(0, 'rgba(255,255,238,1)');
+    halo.addColorStop(0.2, 'rgba(255,230,165,.76)');
+    halo.addColorStop(1, 'rgba(255,164,92,0)');
+    g.fillStyle = halo;
+    g.beginPath(); g.arc(sunX, sunY, 94, 0, Math.PI * 2); g.fill();
+
+    // Phobos hangs low and visibly irregular over the volcano.
+    const moonX = width * 0.73;
+    const moonY = height * 0.24;
+    g.save();
+    g.translate(moonX, moonY);
+    g.rotate(-0.18);
+    g.scale(1.45, 0.82);
+    const moon = g.createRadialGradient(-10, -10, 3, 0, 0, 56);
+    moon.addColorStop(0, '#ead2ad');
+    moon.addColorStop(0.55, '#8e715f');
+    moon.addColorStop(1, '#352837');
+    g.fillStyle = moon;
+    g.beginPath(); g.arc(0, 0, 58, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(45,31,36,.42)';
+    for (const [x, y, r] of [[-18, 3, 10], [15, -13, 8], [22, 15, 6], [-3, -21, 7]]) {
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+
+    const dust = g.createLinearGradient(0, height * 0.72, 0, height);
+    dust.addColorStop(0, 'rgba(255,167,91,0)');
+    dust.addColorStop(0.65, 'rgba(255,171,92,.24)');
+    dust.addColorStop(1, 'rgba(86,31,24,.58)');
+    g.fillStyle = dust;
+    g.fillRect(0, height * 0.7, width, height * 0.3);
+  }, 540);
+}
+
+function addOlympusCrag(scene, world, x, y, z, radius, color, seed) {
+  const geo = new THREE.IcosahedronGeometry(radius, 1);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+    const wobble = 0.82 + 0.18 * Math.sin(px * 1.7 + pz * 2.3 + seed);
+    pos.setXYZ(i, px * wobble, py * (0.55 + 0.12 * Math.cos(seed + px)), pz * wobble);
+  }
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat(color, {
+    tex: 'olympus-rock', repeat: [2, 2], roughness: 1, flatShading: true,
+  }));
+  mesh.position.set(x, y, z);
+  mesh.rotation.set(seed * 0.37, seed * 0.71, seed * 0.19);
+  mesh.castShadow = mesh.receiveShadow = true;
+  scene.add(mesh);
+  // The visible crag is irregular, flattened, and partly buried in the slope.
+  // A slightly inset sphere blocks its solid core without creating invisible
+  // collision out around the jagged tips.
+  world.colliders.push({ type: 'sphere', center: V(x, y, z), radius: radius * 0.72 });
+  return mesh;
+}
+
+// Flat-topped volcanic fragments for Olympus Mons sky routes. The tapered,
+// low-poly visual keeps the rocks irregular while the inset box collider gives
+// players a dependable landing surface after a jump-pad launch.
+function addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, seed) {
+  world.colliders.push({
+    type: 'box',
+    min: V(x - w * 0.44, y - depth, z - d * 0.44),
+    max: V(x + w * 0.44, y, z + d * 0.44),
+  });
+  const geo = new THREE.CylinderGeometry(1, 0.42, 1, 7, 2, false);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+    if (py < 0.42) {
+      const taper = 0.88 + 0.12 * Math.sin(seed + px * 2.7 + pz * 3.1);
+      pos.setXYZ(i, px * taper, py - (0.08 + 0.1 * Math.cos(seed + px)), pz * taper);
+    }
+  }
+  geo.computeVertexNormals();
+  const rock = new THREE.Mesh(geo, mat(seed % 2 ? 0x82412f : 0x6f342b, {
+    tex: 'olympus-rock', repeat: [2.4, 2.4], roughness: 1, metalness: 0,
+    emissive: 0x260d09, emissiveIntensity: 0.16,
+  }));
+  rock.scale.set(w / 2, depth, d / 2);
+  rock.position.set(x, y - depth / 2, z);
+  rock.rotation.y = seed * 0.61;
+  rock.castShadow = rock.receiveShadow = true;
+  scene.add(rock);
+}
+
+// Upright, grounded volcanic mound. Unlike a floating island, it is broad at
+// the floor and narrow at the crown; four slope fields make the visible cone
+// genuinely walkable instead of hiding a vertical box inside it.
+function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
+  world.ramps.push(
+    { axis: 'x', minX: x - w * 0.46, maxX: x - w * 0.15, minZ: z - d * 0.15, maxZ: z + d * 0.15,
+      h0: 0.04, h1: height, supportPad1: 0.18 },
+    { axis: 'x', minX: x + w * 0.15, maxX: x + w * 0.46, minZ: z - d * 0.15, maxZ: z + d * 0.15,
+      h0: height, h1: 0.04, supportPad0: 0.18 },
+    { axis: 'z', minX: x - w * 0.125, maxX: x + w * 0.125, minZ: z - d * 0.46, maxZ: z - d * 0.15,
+      h0: 0.04, h1: height, supportPad1: 0.18 },
+    { axis: 'z', minX: x - w * 0.125, maxX: x + w * 0.125, minZ: z + d * 0.15, maxZ: z + d * 0.46,
+      h0: height, h1: 0.04, supportPad0: 0.18 },
+  );
+  // The ramps are height fields, not volumetric solids. This core gives the
+  // volcanic body real collision below its crown, preventing players and darts
+  // from passing through the visible mound between the four climb lanes.
+  world.colliders.push({
+    type: 'box',
+    min: V(x - w * 0.15, 0.02, z - d * 0.15),
+    max: V(x + w * 0.15, height, z + d * 0.15),
+  });
+  const geo = new THREE.CylinderGeometry(0.38, 1, 1, 9, 3, false);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+    const edge = 0.94 + 0.06 * Math.sin(seed + px * 4.1 + pz * 3.7);
+    pos.setXYZ(i, px * edge, py, pz * edge);
+  }
+  geo.computeVertexNormals();
+  const mound = new THREE.Mesh(geo, mat(0x743126, {
+    tex: 'olympus-rock', repeat: [2.4, 1.4], roughness: 1, flatShading: true,
+    emissive: 0x220b08, emissiveIntensity: 0.12,
+  }));
+  mound.scale.set(w / 2, height, d / 2);
+  mound.position.set(x, height / 2, z);
+  mound.rotation.y = seed * 0.19;
+  mound.castShadow = mound.receiveShadow = true;
+  scene.add(mound);
+}
+
+function addOlympusColumn(scene, world, x, z, baseY = 60, height = 17) {
+  const stone = new THREE.MeshStandardMaterial({
+    color: 0xf0d5ac, roughness: 0.53, metalness: 0.02,
+  });
+  const gold = new THREE.MeshStandardMaterial({
+    color: 0xc69132, roughness: 0.3, metalness: 0.56,
+  });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.78, height - 1.6, 14), stone);
+  shaft.position.set(x, baseY + 0.7 + (height - 1.6) / 2, z);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.02, 1.15, 0.7, 14), gold);
+  base.position.set(x, baseY + 0.35, z);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 0.72, 0.9, 14), gold);
+  cap.position.set(x, baseY + height - 0.35, z);
+  shaft.castShadow = shaft.receiveShadow = true;
+  base.castShadow = cap.castShadow = true;
+  scene.add(shaft, base, cap);
+  world.colliders.push({
+    type: 'box',
+    min: V(x - 0.72, baseY, z - 0.72),
+    max: V(x + 0.72, baseY + height, z + 0.72),
+  });
+}
+
+function addOlympusBrazier(scene, world, x, baseY, z, flameColor = 0xff8a32) {
+  const bronze = new THREE.MeshStandardMaterial({
+    color: 0x8f5728, roughness: 0.34, metalness: 0.62,
+  });
+  const fire = new THREE.MeshBasicMaterial({ color: flameColor });
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.52, 1.15, 10), bronze);
+  stem.position.set(x, baseY + 0.58, z);
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.48, 0.42, 12), bronze);
+  bowl.position.set(x, baseY + 1.27, z);
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.48, 1.18, 9), fire);
+  flame.position.set(x, baseY + 2.02, z);
+  stem.castShadow = bowl.castShadow = true;
+  scene.add(stem, bowl, flame);
+  world.colliders.push({
+    type: 'box', min: V(x - 0.82, baseY, z - 0.82), max: V(x + 0.82, baseY + 1.5, z + 0.82),
+  });
+}
+
+// Conservatory foliage is accumulated and emitted as seven instanced meshes.
+// The original version created roughly one hundred independently shaded,
+// shadow-casting meshes here, which made the otherwise small dome GPU-heavy.
+function conservatoryInstance(world, kind, position, quaternion, scale, color) {
+  const batch = (world._conservatoryInstances ||= {});
+  (batch[kind] ||= []).push({ position, quaternion, scale, color });
+}
+
+function addOlympusConservatoryPlant(scene, world, x, baseY, z, scale = 1, seed = 1, hanging = false) {
+  const rnd = seededRandom(0x5a17 + seed * 97);
+  const identity = new THREE.Quaternion();
+  const planterY = hanging ? baseY : baseY + 0.48 * scale;
+  conservatoryInstance(world, 'pot', V(x, planterY, z), identity, V(scale, scale, scale), hanging ? 0xb88748 : 0xe0c08b);
+  if (hanging) {
+    const chainH = 4.2 * scale;
+    conservatoryInstance(world, 'chain', V(x, baseY + chainH / 2, z), identity, V(scale, chainH, scale), 0x8d7138);
+  } else world.colliders.push({
+    type: 'box',
+    min: V(x - 0.58 * scale, baseY, z - 0.58 * scale),
+    max: V(x + 0.58 * scale, baseY + 0.96 * scale, z + 0.58 * scale),
+  });
+
+  const stemH = (hanging ? 1.05 : 2.25) * scale;
+  const stemY = hanging ? baseY - 0.48 * scale - stemH / 2 : baseY + 0.86 * scale + stemH / 2;
+  conservatoryInstance(world, 'stem', V(x, stemY, z), identity, V(scale, stemH, scale), 0x496332);
+  const crownY = hanging ? baseY - 0.48 * scale - stemH : baseY + 0.86 * scale + stemH;
+  const leafColors = [0x315e3a, 0x3f7d46, 0x5a914b, 0x2c6a55];
+  for (let i = 0; i < 8; i++) {
+    const angle = i * Math.PI * 0.25 + rnd() * 0.28;
+    const rise = hanging ? -0.48 - rnd() * 0.55 : 0.05 + rnd() * 0.4;
+    const dir = new THREE.Vector3(Math.cos(angle), rise, Math.sin(angle)).normalize();
+    const len = (1.65 + rnd() * 1.05) * scale;
+    const width = ((0.32 + rnd() * 0.12) / 0.36) * scale;
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    conservatoryInstance(
+      world, 'leaf', V(x, crownY, z).addScaledVector(dir, len * 0.45), q,
+      V(width, len, width), leafColors[(i + seed) % leafColors.length],
+    );
+  }
+}
+
+function addOlympusConservatoryTree(scene, world, x, baseY, z, height = 6, seed = 1) {
+  const rnd = seededRandom(0x71ee + seed * 131);
+  const leanX = (rnd() - 0.5) * 0.65;
+  const leanZ = (rnd() - 0.5) * 0.65;
+  const trunkQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(leanZ / height, 0, -leanX / height));
+  conservatoryInstance(world, 'trunk', V(x + leanX * 0.5, baseY + height / 2, z + leanZ * 0.5), trunkQ,
+    V(1, height, 1), 0x665235);
+
+  const crownY = baseY + height;
+  const colors = [0x285c3b, 0x397a42, 0x4d8b48, 0x2f6f50];
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * Math.PI * 2 + rnd() * 0.35;
+    const radius = 1.1 + rnd() * 0.75;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 0.6, rnd() * Math.PI, rnd() * 0.45));
+    conservatoryInstance(world, 'canopy', V(
+      x + leanX + Math.cos(a) * (0.7 + rnd() * 0.8),
+      crownY - 0.3 + (rnd() - 0.5) * 1.4,
+      z + leanZ + Math.sin(a) * (0.7 + rnd() * 0.8),
+    ), q, V(radius * (1.2 + rnd() * 0.45), radius * (0.72 + rnd() * 0.3), radius * (1.1 + rnd() * 0.5)),
+    colors[(seed + i) % colors.length]);
+  }
+  for (let i = 0; i < 3; i++) {
+    const vineH = 1.7 + rnd() * 2.2;
+    const a = rnd() * Math.PI * 2;
+    conservatoryInstance(world, 'vine', V(x + Math.cos(a) * 1.2, crownY - vineH / 2, z + Math.sin(a) * 1.2),
+      new THREE.Quaternion(), V(1, vineH, 1), 0x487b35);
+  }
+}
+
+function flushOlympusConservatoryFoliage(scene, world) {
+  const batch = world._conservatoryInstances;
+  if (!batch) return;
+  const defs = {
+    pot: [new THREE.CylinderGeometry(0.72, 0.54, 0.96, 8), { roughness: 0.52, metalness: 0.12 }],
+    chain: [new THREE.CylinderGeometry(0.045, 0.045, 1, 5), { roughness: 0.34, metalness: 0.7 }],
+    stem: [new THREE.CylinderGeometry(0.1, 0.16, 1, 6), { roughness: 0.94 }],
+    leaf: [new THREE.ConeGeometry(0.36, 1, 5), { roughness: 0.88, flatShading: true }],
+    trunk: [new THREE.CylinderGeometry(0.2, 0.34, 1, 7), { roughness: 0.98 }],
+    canopy: [new THREE.IcosahedronGeometry(1, 1), { roughness: 0.94, flatShading: true }],
+    vine: [new THREE.CylinderGeometry(0.035, 0.055, 1, 5), { roughness: 0.96 }],
+  };
+  const matrix = new THREE.Matrix4();
+  for (const [kind, instances] of Object.entries(batch)) {
+    const def = defs[kind];
+    if (!def || !instances.length) continue;
+    const mesh = new THREE.InstancedMesh(def[0], new THREE.MeshStandardMaterial({ color: 0xffffff, ...def[1] }), instances.length);
+    instances.forEach((inst, i) => {
+      matrix.compose(inst.position, inst.quaternion, inst.scale);
+      mesh.setMatrixAt(i, matrix);
+      mesh.setColorAt(i, new THREE.Color(inst.color));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.castShadow = mesh.receiveShadow = false;
+    scene.add(mesh);
+  }
+  delete world._conservatoryInstances;
+}
+
+function addOlympusConservatoryDome(scene, world, x, baseY, z) {
+  const rx = 21, ry = 18, rz = 16;
+  const oculusTheta = 0.22;
+  const doorwayTheta = 1.22;
+  const angleDelta = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  const doorwayAngles = [Math.PI, Math.PI * 1.5]; // west terrace + north processional hall
+
+  // One low-poly glass mesh replaces the old closed hemisphere. Cells are
+  // omitted at both palace approaches and around the crown, so the visible
+  // shell now has the same two doors and jetpack oculus as its collision.
+  const glassPositions = [];
+  const glassAzimuths = 24, glassBands = 9;
+  const glassStep = Math.PI * 2 / glassAzimuths;
+  const domePoint = (theta, phi) => V(
+    x + rx * Math.sin(theta) * Math.cos(phi),
+    baseY + ry * Math.cos(theta),
+    z + rz * Math.sin(theta) * Math.sin(phi),
+  );
+  const pushTri = (a, b, c) => glassPositions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  for (let band = 0; band < glassBands; band++) {
+    const theta0 = oculusTheta + (Math.PI / 2 - oculusTheta) * band / glassBands;
+    const theta1 = oculusTheta + (Math.PI / 2 - oculusTheta) * (band + 1) / glassBands;
+    for (let i = 0; i < glassAzimuths; i++) {
+      const phi = i * glassStep;
+      const isDoor = theta1 > doorwayTheta && doorwayAngles.some(a => angleDelta(phi, a) < glassStep * 0.55);
+      if (isDoor) continue;
+      const phi0 = phi - glassStep / 2, phi1 = phi + glassStep / 2;
+      const a = domePoint(theta0, phi0), b = domePoint(theta1, phi0);
+      const c = domePoint(theta1, phi1), d = domePoint(theta0, phi1);
+      pushTri(a, b, c); pushTri(a, c, d);
+    }
+  }
+  const glassGeo = new THREE.BufferGeometry();
+  glassGeo.setAttribute('position', new THREE.Float32BufferAttribute(glassPositions, 3));
+  glassGeo.computeVertexNormals();
+  // Players spend time inside this dome, where its broad transparent surface
+  // covers much of the screen. It is a decorative tint, so an unlit material
+  // avoids running the full PBR + point-light path over every covered pixel.
+  const glass = new THREE.Mesh(glassGeo, new THREE.MeshBasicMaterial({
+    color: 0x9fe7df, transparent: true, opacity: 0.17,
+    side: THREE.DoubleSide, depthWrite: false,
+  }));
+  // Vertices were emitted in world space so the doorway cuts align exactly
+  // with the separately generated shell colliders and frames.
+  glass.position.set(0, 0, 0);
+  // Double-sided transparent materials normally render two passes. A single
+  // pass is enough for this broad tint and avoids doubling the dome cost.
+  glass.material.forceSinglePass = true;
+  glass.renderOrder = 3;
+  scene.add(glass);
+
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: 0xc99c3f, emissive: 0x4e3308, emissiveIntensity: 0.16,
+    roughness: 0.3, metalness: 0.62,
+  });
+  const frameGeometries = [];
+  const tube = (points, radius = 0.13, closed = false) => {
+    const curve = new THREE.CatmullRomCurve3(points, closed, closed ? 'centripetal' : 'catmullrom', 0.4);
+    frameGeometries.push(new THREE.TubeGeometry(curve, 28, radius, 5, closed));
+  };
+
+  // Radial greenhouse ribs stop at the oculus instead of crossing it. Latitude
+  // bands make the shell read as architecture rather than a force field.
+  for (const azimuth of [0, Math.PI / 4, Math.PI / 2, Math.PI * 3 / 4]) {
+    for (const [start, end] of [[0, Math.PI / 2 - oculusTheta], [Math.PI / 2 + oculusTheta, Math.PI]]) {
+      const points = [];
+      for (let i = 0; i <= 8; i++) {
+        const t = start + (end - start) * i / 8;
+        points.push(V(
+          x + rx * Math.cos(t) * Math.cos(azimuth),
+          baseY + ry * Math.sin(t),
+          z + rz * Math.cos(t) * Math.sin(azimuth),
+        ));
+      }
+      tube(points, 0.14);
+    }
+  }
+  for (const elevation of [0.08, 0.34, 0.62, 1 - oculusTheta / (Math.PI / 2)]) {
+    const angle = elevation * Math.PI / 2;
+    const points = [];
+    const ringRx = rx * Math.cos(angle), ringRz = rz * Math.cos(angle);
+    for (let i = 0; i < 28; i++) {
+      const a = i / 28 * Math.PI * 2;
+      points.push(V(x + ringRx * Math.cos(a), baseY + ry * Math.sin(angle), z + ringRz * Math.sin(a)));
+    }
+    tube(points, elevation < 0.1 ? 0.2 : 0.11, true);
+  }
+  const frameGeo = mergeGeometries(frameGeometries, false);
+  if (frameGeo) {
+    const frame = new THREE.Mesh(frameGeo, frameMat);
+    frame.castShadow = frame.receiveShadow = false;
+    scene.add(frame);
+    frameGeometries.forEach(geo => geo.dispose());
+  }
+
+  // Five coarse ellipsoid bands provide a dependable shell collider without
+  // adding render meshes. The lower north/west segments are deliberately
+  // absent for the two doors; the polar cap is absent for the open oculus.
+  const colliderAzimuths = 16;
+  const colliderStep = Math.PI * 2 / colliderAzimuths;
+  const thetaEdges = [oculusTheta, 0.47, 0.72, 0.98, doorwayTheta, Math.PI / 2];
+  for (let band = 0; band < thetaEdges.length - 1; band++) {
+    const theta0 = thetaEdges[band], theta1 = thetaEdges[band + 1];
+    for (let i = 0; i < colliderAzimuths; i++) {
+      const phi = i * colliderStep;
+      const isDoor = band === thetaEdges.length - 2 &&
+        doorwayAngles.some(a => angleDelta(phi, a) < colliderStep * 0.55);
+      if (isDoor) continue;
+      const samples = [];
+      for (const theta of [theta0, (theta0 + theta1) / 2, theta1]) {
+        for (const samplePhi of [phi - colliderStep / 2, phi, phi + colliderStep / 2]) {
+          samples.push(domePoint(theta, samplePhi));
+        }
+      }
+      const min = V(Infinity, Infinity, Infinity), max = V(-Infinity, -Infinity, -Infinity);
+      for (const p of samples) { min.min(p); max.max(p); }
+      min.addScalar(-0.16); max.addScalar(0.16);
+      world.colliders.push({ type: 'box', min, max });
+    }
+  }
+
+  // Gold jambs make both collision openings obvious from either side.
+  for (const side of [-1, 1]) addBox(scene, world, side * 3.15, baseY + 3.1, z - rz, 0.45, 6.2, 0.45, 0xc99c3f, {
+    metalness: 0.62, roughness: 0.3,
+  });
+  addBox(scene, world, 0, baseY + 6.2, z - rz, 6.75, 0.45, 0.45, 0xc99c3f, {
+    metalness: 0.62, roughness: 0.3,
+  });
+  for (const side of [-1, 1]) addBox(scene, world, x - rx, baseY + 3.1, z + side * 2.55, 0.45, 6.2, 0.45, 0xc99c3f, {
+    metalness: 0.62, roughness: 0.3,
+  });
+  addBox(scene, world, x - rx, baseY + 6.2, z, 0.45, 0.45, 5.55, 0xc99c3f, {
+    metalness: 0.62, roughness: 0.3,
+  });
+
+  // The frame's emissive gold supplies the same warm greenhouse read without
+  // adding another per-pixel point-light loop to every material in the scene.
+  frameMat.emissiveIntensity = 0.28;
+}
+
+function addOlympusTower(scene, world, x, z, baseY, height = 22, width = 9) {
+  const lowerHeight = height * 0.84;
+  const lowerTop = baseY + lowerHeight;
+  addBox(scene, world, x, baseY + lowerHeight / 2, z, width, lowerHeight, width, 0xd7b98d, {
+    tex: 'olympus-relief', repeat: [2, 5],
+  });
+  addBox(scene, world, x, lowerTop + 1.3, z, width + 1.8, 2.6, width + 1.8, 0xb88748, {
+    tex: 'olympus-palace', repeat: [3, 1],
+  });
+  const ledgeTop = lowerTop + 2.6;
+  addBox(scene, world, x, ledgeTop + 1.5, z, width * 0.66, 3, width * 0.66, 0xe4c692, {
+    tex: 'olympus-palace', repeat: [2, 1],
+  });
+  const upperTop = ledgeTop + 3;
+  addBox(scene, world, x, upperTop + 1, z, width * 0.8, 2, width * 0.8, 0xc69132, {
+    tex: 'olympus-palace', repeat: [2, 1], metalness: 0.42, roughness: 0.32,
+  });
+  addBox(scene, world, x, upperTop + 2.75, z, width * 0.48, 1.5, width * 0.48, 0xe0b851, {
+    tex: 'olympus-palace', repeat: [1, 1], metalness: 0.48, roughness: 0.3,
+  });
+}
+
+function addOlympusBanner(scene, x, y, z, yaw, color) {
+  const cloth = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 7), new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: 0.1, roughness: 0.82,
+    side: THREE.DoubleSide,
+  }));
+  cloth.position.set(x, y, z);
+  cloth.rotation.y = yaw;
+  cloth.castShadow = true;
+  scene.add(cloth);
+}
+
+const OLYMPUS_BASE_RADIUS = 88;
+const OLYMPUS_SUMMIT_RADIUS = 68;
+const OLYMPUS_SUMMIT_Y = 60;
+
+function olympusSurfaceY(x, z) {
+  const r = Math.max(Math.abs(x), Math.abs(z));
+  if (r <= OLYMPUS_SUMMIT_RADIUS) return OLYMPUS_SUMMIT_Y;
+  if (r <= 72) return THREE.MathUtils.lerp(60, 38, (r - 68) / 4);
+  if (r <= 76) return 38;
+  if (r <= 80) return THREE.MathUtils.lerp(38, 12, (r - 76) / 4);
+  if (r <= 84) return 12;
+  if (r < OLYMPUS_BASE_RADIUS) return THREE.MathUtils.lerp(12, 0.08, (r - 84) / 4);
+  return 0.08;
+}
+
+function addOlympusMountain(scene, world) {
+  // The visible cliff and its collision are now the exact same five boxes.
+  // This removes the several-metre mismatch created by a noisy heightfield
+  // drawn over a simpler invisible collision ring.
+  for (const [x, z, w, d, repeat] of [
+    [-78, 0, 20, 176, [7, 28]], [78, 0, 20, 176, [7, 28]],
+    [0, 78, 136, 20, [22, 7]],
+    [-38, -78, 60, 20, [10, 7]], [38, -78, 60, 20, [10, 7]],
+  ]) addBox(scene, world, x, 30, z, w, 60, d, 0x8d3d2c, {
+    tex: 'olympus-rock', repeat, roughness: 1, metalness: 0,
+  });
+}
+
+// Meteors need the highest walkable surface under a random X/Z position. The
+// Olympus palace has a large collider set, so indexing those static colliders
+// at map build time avoids a full-map scan when a meteor is launched.
+function buildMeteorSurfaceIndex(world, cellSize = 16) {
+  const cells = new Map();
+  const add = (kind, item, minX, maxX, minZ, maxZ) => {
+    const startX = Math.floor(minX / cellSize);
+    const endX = Math.floor(maxX / cellSize);
+    const startZ = Math.floor(minZ / cellSize);
+    const endZ = Math.floor(maxZ / cellSize);
+    for (let ix = startX; ix <= endX; ix++) for (let iz = startZ; iz <= endZ; iz++) {
+      const key = `${ix},${iz}`;
+      let cell = cells.get(key);
+      if (!cell) cells.set(key, cell = { colliders: [], ramps: [] });
+      cell[kind].push(item);
+    }
+  };
+  for (const collider of world.colliders) {
+    if (collider.type === 'box') {
+      add('colliders', collider, collider.min.x, collider.max.x, collider.min.z, collider.max.z);
+    } else if (collider.type === 'sphere') {
+      add('colliders', collider,
+        collider.center.x - collider.radius, collider.center.x + collider.radius,
+        collider.center.z - collider.radius, collider.center.z + collider.radius);
+    }
+  }
+  for (const ramp of world.ramps) {
+    add('ramps', ramp, ramp.minX, ramp.maxX, ramp.minZ, ramp.maxZ);
+  }
+  world.meteorSurfaceIndex = { cellSize, cells };
+}
+
+/* ============== SECRET MAP — OLYMPUS MONS (340×340, 103m tall) =============
+   A Palutena-style cliff temple: recovery basin, floating return routes,
+   waterfall undercroft, indoor armories, open court, and connected roof city. */
+export function buildOlympusMons(scene) {
+  const world = newWorld({
+    killY: -34,
+    matchTime: 10 * 60,
+    playerSpeed: 11.2,
+    playerCount: 16,
+    waypointLinkDist: 38,
+    waypointLinkDy: 24,
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'thunderbolt'],
+    meteorShower: {
+      minInterval: 20, maxInterval: 40,
+      mesaChance: 0.8, mesaHalfExtent: 88, mapHalfExtent: 170,
+      // 30% longer than the original 2.55–3.05s fall, beginning higher in sky.
+      durationMin: 3.32, durationMax: 3.97,
+      startHeightMin: 150, startHeightMax: 174,
+      // A sideward approach lets meteors pass beneath the palace terraces.
+      startElevationMin: 60, startElevationMax: 78,
+      fadeIn: 1,
+    },
+  });
+  scene.background = new THREE.Color(0x7d3b2d);
+  scene.fog = new THREE.Fog(0xa45b3c, 250, 660);
+  baseLighting(scene, 0xffb879, 0x351a24, [-120, 175, 80], 220);
+  addMarsSkyDome(scene);
+
+  // Flat recovery basin. Falling from the temple is survivable, but the sparse
+  // outer loot and obvious return shrines push play immediately back upward.
+  addBox(scene, world, 0, -1, 0, 340, 2, 340, 0x7f3828, {
+    tex: 'dirt', repeat: [48, 48],
+  });
+  for (const [x, z, w, d, c] of [
+    [-137.5, -92, 15, 104, 0x984932], [137.5, 78, 15, 116, 0x6f3027],
+    [-90, 137.5, 112, 15, 0xa75635], [92, -137.5, 118, 15, 0x743126],
+  ]) addBox(scene, world, x, 0.32, z, w, 0.65, d, c, { collide: false, tex: 'dirt' });
+  addOlympusLavaMoat(scene, world);
+
+  addOlympusMountain(scene, world);
+
+  // Crimson Martian creepers mark climbable recovery lines on the exterior
+  // cliffs. They sit on the visible wall faces and spill all the way down to
+  // the basin, creating quieter alternatives to the jump-pad shrines.
+  for (const [x, z, exitX, exitZ] of [
+    [-88.35, -38, 1, 0], [88.35, 34, -1, 0],
+    [-30, 88.35, 0, -1], [34, -88.35, 0, 1],
+  ]) addVine(scene, world, x, z, 0.15, 60.45, 1.18, exitX * 0.16, exitZ * 0.16,
+    exitX, exitZ, 0.22, 1.75, 0xc83a3f);
+
+  // Monumental buttresses break the huge cliff into readable vertical bays.
+  // They use the same visible boxes as their collision, so the added density
+  // does not reintroduce the old cliff/physics mismatch.
+  for (const z of [-56, 0, 56]) {
+    addBox(scene, world, -90, 21, z, 4, 42, 10, 0x6d332b, { tex: 'olympus-rock', repeat: [2, 8] });
+    addBox(scene, world, 90, 21, z, 4, 42, 10, 0x6d332b, { tex: 'olympus-rock', repeat: [2, 8] });
+  }
+  for (const x of [-48, 0, 48]) {
+    addBox(scene, world, x, 18, 90, 10, 36, 4, 0x75402f, { tex: 'olympus-rock', repeat: [3, 7] });
+  }
+  for (const x of [-50, -24, 24, 50]) {
+    addBox(scene, world, x, 22, -90, 9, 44, 4, 0x63302a, { tex: 'olympus-rock', repeat: [3, 8] });
+  }
+  addOlympusBanner(scene, -88.02, 34, -28, Math.PI / 2, 0xb8392f);
+  addOlympusBanner(scene, -88.02, 34, 28, Math.PI / 2, 0xd8912d);
+  addOlympusBanner(scene, 88.02, 34, -28, Math.PI / 2, 0x3a74b8);
+  addOlympusBanner(scene, 88.02, 34, 28, Math.PI / 2, 0x6f4bb8);
+
+  // Broken pilgrimage markers and half-buried ruins give the recovery basin
+  // landmarks without turning its broad movement lanes into another maze.
+  for (const [x, z, h, w] of [
+    [-151, 20, 7, 3.2], [-142, 18, 3.8, 5], [-136, -36, 9, 2.8],
+    [151, 25, 6, 3.2], [142, 48, 4.5, 5], [136, -52, 8, 2.8],
+    [-58, 138, 7.5, 3], [-43, 146, 4, 6], [52, 141, 9, 3],
+    [-48, -145, 6, 3.4], [45, -148, 8, 3.2], [72, -138, 3.5, 6],
+  ]) addBox(scene, world, x, h / 2, z, w, h, w, 0x9a6845, {
+    tex: 'olympus-palace', repeat: [1, Math.max(1, h / 2)],
+  });
+
+  // Basin cover and cliff-edge outcrops. Every visible crag has inset collision.
+  const crags = [
+    [-137, -105, 12], [-126, 118, 10], [148, 132, 11], [132, -124, 11],
+    [-112, -70, 9], [-108, 68, 11], [110, 72, 10], [112, -74, 8],
+    [-84, -48, 8], [-84, 48, 7], [84, 46, 8], [84, -46, 7],
+  ];
+  crags.forEach(([x, z, r], i) => addOlympusCrag(scene, world, x, olympusSurfaceY(x, z) + r * 0.28, z, r, i % 2 ? 0x6e3028 : 0x8b402d, i + 1));
+
+  for (const [x, z] of [[-146, 38], [145, -34], [-116, -14], [116, 14]]) {
+    addBox(scene, world, x, 3, z, 2.1, 6, 2.1, 0x9d7040, { tex: 'panel' });
+    addBox(scene, world, x, 6.4, z, 3.6, 0.8, 3.6, 0xff8a32, {
+      collide: false, shadow: false, emissive: 0xff4a1f, emissiveIntensity: 1.25,
+    });
+  }
+
+  // Three fast return shrines turn the basin into circulation, not a second
+  // arena. Each two-pad route lands at a different palace entrance.
+  for (const [x, z, seed] of [[-100, 28, 81], [100, 28, 82], [0, 100, 83]]) {
+    addOlympusFloatingRock(scene, world, x, 26, z, 18, 18, 6, seed);
+  }
+  addJumpPad(scene, world, -120, 0.02, 20, 39, 9.28, 3.71, 0xff7a32);
+  addJumpPad(scene, world, -96, 26.02, 28, 55, 10, 2.7, 0xffb13a);
+  addJumpPad(scene, world, 120, 0.02, 20, 39, -9.28, 3.71, 0xff7a32);
+  addJumpPad(scene, world, 96, 26.02, 28, 55, -10, 2.7, 0xffb13a);
+  addJumpPad(scene, world, 0, 0.02, 120, 39, 0, -9.28, 0xff7a32);
+  // Offset east of the south-arcade trim and descend onto the broad palace
+  // foundation instead of clipping the centered roof rail on the way down.
+  addJumpPad(scene, world, 0, 26.02, 96, 55, 10, -10, 0xffb13a);
+  for (const [x, z, color] of [
+    [-127, 9, 0xff7a32], [-127, 33, 0xffb13a],
+    [127, 9, 0xff7a32], [127, 33, 0x72d8ff],
+    [-11, 129, 0xffb13a], [11, 129, 0x72d8ff],
+  ]) addOlympusBrazier(scene, world, x, 0, z, color);
+
+  // Southeast skybridge climbs through four differently sized rocks and now
+  // physically meets the palace's upper south arcade instead of ending nearby.
+  const skyRocks = [
+    [113, 18, 94, 18, 14, 5.2],
+    [102, 34, 80, 11, 9, 4.2],
+    [100, 50, 65, 20, 16, 6.4],
+    [96, 72, 54, 14, 12, 4.8],
+  ];
+  skyRocks.forEach(([x, y, z, w, d, depth], i) =>
+    addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, 71 + i));
+  for (const [x, z, y0, y1, exitX, exitZ] of [
+    [104.4, 94, 0.15, 18.1, 1, 0],
+    [90.7, 65, 34, 50.1, 1, 0],
+    [89.5, 54, 50, 72.1, 1, 0],
+  ]) addVine(scene, world, x, z, y0, y1, 1.0, exitX * 0.14, exitZ * 0.14,
+    exitX, exitZ, 0.2, 1.45, 0xc83a3f);
+
+  addJumpPad(scene, world, 134, 0.02, 104, 34, -7.5, -5, 0xff7a32);
+  addJumpPad(scene, world, 109, 18.02, 92, 33, -4.5, -6, 0xffa13a);
+  addJumpPad(scene, world, 104, 34.02, 78, 33, -2, -6.5, 0xffc24a);
+  addJumpPad(scene, world, 102, 50.02, 63, 37, -2.5, -3.75, 0x72d8ff);
+
+  // --- CLIFF PALACE FOUNDATION: four non-overlapping slabs around a real
+  // central lift shaft. Their edges butt exactly; no coplanar floor layers. ---
+  for (const [x, z, w, d] of [
+    [0, -42, 136, 52], [0, 42, 136, 52],
+    [-38, 0, 60, 32], [38, 0, 60, 32],
+  ]) addBox(scene, world, x, 60.25, z, w, 0.5, d, 0xe8cfaa, { tex: 'checker' });
+
+  // Low rails guard the two long sides of the 16x32m undercroft shaft. They
+  // stop an accidental backward step but remain comfortably below the normal
+  // jump apex; both short ends stay open for deliberate drops and lift play.
+  for (const side of [-1, 1]) {
+    const railX = side * 8.35;
+    for (const [y, h] of [[60.96, 0.2], [61.56, 0.24]]) {
+      addBox(scene, world, railX, y, 0, 0.34, h, 29, 0xb88748, {
+        tex: 'olympus-palace', repeat: [1, 7],
+      });
+    }
+    for (const z of [-14.2, -7.1, 0, 7.1, 14.2]) {
+      addBox(scene, world, railX, 61.1, z, 0.64, 1.2, 0.64, 0xc69132, {
+        tex: 'olympus-palace', repeat: [1, 1],
+      });
+    }
+  }
+
+  // Two tall watchtowers make the palace read as a city from the basin and
+  // frame the north temple without occupying its combat roof.
+  addOlympusTower(scene, world, -56, -55, 60.5, 22, 9);
+  addOlympusTower(scene, world, 56, -55, 60.5, 22, 9);
+  addOlympusBanner(scene, -56, 73, -59.52, 0, 0xb8392f);
+  addOlympusBanner(scene, 56, 73, -59.52, 0, 0x3a74b8);
+
+  // Waterfall cave tunnel opens directly into the full under-palace cavern.
+  // The old 56x36 rectangular Hades room made the real 136x136 void feel like
+  // unused backstage space, so only a rough volcanic cave mouth remains.
+  const fallZ = -83;
+  addBox(scene, world, -7.4, 5, -69.5, 1.2, 10, 31, 0x4a292b, { tex: 'olympus-rock' });
+  addBox(scene, world, 7.4, 5, -69.5, 1.2, 10, 31, 0x4a292b, { tex: 'olympus-rock' });
+  // Keep the walkable top at y=10.4, but make the roof deep enough that a
+  // player falling from the summit cannot tunnel through a paper-thin slab.
+  // The forward cap meets it at z=-85 and covers the visible craggy cave lip.
+  addBox(scene, world, 0, 9.4, -69.5, 16, 2, 31, 0x3c2429, { tex: 'olympus-rock' });
+  addBox(scene, world, 0, 9.4, -86.5, 18, 2, 3, 0x3c2429, { tex: 'olympus-rock' });
+  for (const [x, y, z, r, seed] of [
+    [-10, 5, -55, 9, 201], [10, 5, -55, 9, 202], [0, 13, -55, 11, 203],
+    [-7, 4, -63, 5, 204], [7, 4, -62, 5, 205],
+  ]) addOlympusCrag(scene, world, x, y, z, r, seed % 2 ? 0x71362c : 0x8b412f, seed);
+
+  // Large wall-intersecting crags hide the square mountain shell. Corner
+  // masses deliberately disappear into two walls at once, while high clusters
+  // break the ruler-straight ceiling line without adding invisible geometry.
+  for (const [x, y, z, r, seed] of [
+    [-64, 8, -60, 14, 211], [64, 8, -60, 14, 212],
+    [-64, 8, 60, 14, 213], [64, 8, 60, 14, 214],
+    [-67, 14, -18, 12, 215], [67, 12, 18, 12, 216],
+    [-66, 10, 28, 11, 217], [66, 11, -28, 11, 218],
+    [-34, 9, -66, 13, 219], [34, 9, -66, 13, 220],
+    [-32, 8, 66, 12, 221], [32, 8, 66, 12, 222],
+    [-58, 49, -54, 13, 223], [58, 48, 52, 14, 224],
+  ]) addOlympusCrag(scene, world, x, y, z, r, seed % 2 ? 0x6d3029 : 0x87402e, seed);
+
+  // Hades now occupies the whole under-palace cavern. Broad lava lakes leave
+  // readable stone corridors between them instead of concentrating every
+  // hazard inside the former little room.
+  for (const [x, z, w, d, seed] of [
+    // Split the north lake around a broad dry causeway. The waterfall is an
+    // entrance, so players can move straight from its cave mouth into Hades
+    // without being forced to take lava damage or already own a jetpack.
+    [-16.5, -40, 17, 22, 401], [16.5, -40, 17, 22, 402],
+    [-45, -4, 24, 34, 403], [45, -4, 24, 34, 404],
+    [0, 36, 34, 24, 405], [-45, 40, 22, 18, 406], [45, 40, 22, 18, 407],
+  ]) addScragglyLava(scene, world, x, z, w, d, -0.72, seed);
+
+  // Molten seams appear to feed the side lakes from cracks in the actual
+  // cavern walls. They are decorative overlays on existing solid rock.
+  addBox(scene, world, -67.42, 13, -5, 0.16, 25, 5, 0xff6a20, {
+    collide: false, tex: 'lava', repeat: [1, 6], emissive: 0xff3d08, emissiveIntensity: 1.2,
+  });
+  addBox(scene, world, 67.42, 12, 4, 0.16, 23, 5, 0xff6a20, {
+    collide: false, tex: 'lava', repeat: [1, 6], emissive: 0xff3d08, emissiveIntensity: 1.2,
+  });
+
+  // The main cave-to-lift chain now crosses the large north lake; additional
+  // fragments spread over the side and south lakes so the whole cavern has a
+  // vertical combat layer rather than one isolated platform puzzle.
+  for (const [x, y, z, w, d, depth, seed] of [
+    [-18, 6, -44, 14, 10, 4.5, 231],
+    [12, 13, -30, 14, 12, 5.2, 232],
+    [-14, 21, -12, 12, 10, 4.6, 233],
+    [-45, 7, -5, 16, 14, 5.2, 234], [-42, 14, 8, 12, 10, 4.4, 235],
+    [45, 7, -5, 16, 14, 5.2, 236], [42, 14, 8, 12, 10, 4.4, 237],
+    [0, 7, 36, 16, 14, 5.2, 238], [-12, 14, 39, 10, 10, 4.2, 239],
+    [12, 20, 34, 10, 10, 4.2, 240],
+    [-48, 29, 30, 14, 12, 5, 241], [48, 32, 28, 14, 12, 5, 242],
+    [-28, 38, 49, 12, 10, 4.5, 243], [28, 43, 46, 12, 10, 4.5, 244],
+  ]) addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, seed);
+
+  // Hanging crimson vines make several Hades fragments into two-way routes,
+  // while the highest pair remain dramatic dangling escape lines.
+  for (const [x, z, y0, y1, exitX, exitZ, width] of [
+    [-52.2, -5, 0.15, 7.1, 1, 0, 1.45], [52.2, -5, 0.15, 7.1, -1, 0, 1.45],
+    [0, 43.2, 0.15, 7.1, 0, -1, 1.35],
+    [-54.2, 30, 0.15, 29.1, 1, 0, 1.5], [54.2, 28, 0.15, 32.1, -1, 0, 1.5],
+  ]) addVine(scene, world, x, z, y0, y1, 1.02, exitX * 0.14, exitZ * 0.14,
+    exitX, exitZ, 0.2, width, 0xc83a3f);
+
+  // A low, grounded volcanic dais breaks up the cavern's broad central floor
+  // without cutting any of its three jump-pad routes. The upright cone and its
+  // paired slope fields let players run onto the weapon perch from either side.
+  addOlympusVolcanicMound(scene, world, 0, 4, 12, 10, 1.8, 260);
+  // The cave-mouth crown is solid. Launch from its west shoulder rather than
+  // firing straight into the overhead crag.
+  addJumpPad(scene, world, -30, 0.42, -54, 21.5, 8.6, 7.2, 0xff5a24);
+  addJumpPad(scene, world, -18, 6.02, -44, 27, 16.1, 7.5, 0xff7a2e);
+  addJumpPad(scene, world, 12, 13.02, -30, 28, -13.65, 9.45, 0xffa13a);
+  addJumpPad(scene, world, -14, 21.02, -12, 20, 18, 2.2, 0xffc24a);
+  addJumpPad(scene, world, -30, 0.42, -4, 24, -9.6, 0, 0xff7a32);
+  // Offset the east pad from the central-platform vine so entering the climb
+  // zone cannot accidentally trigger a launch. A slight northward push keeps
+  // its landing centered on the same floating rock.
+  addJumpPad(scene, world, 30, 0.42, -10, 24, 9.6, 1.2, 0x72d8ff);
+  addJumpPad(scene, world, 0, 0.42, 20, 24, 0, 10.5, 0xffa13a);
+
+  // Slow embers make the full sixty-metre chamber legible without adding
+  // collision or turning the view into particle noise.
+  const emberMat = new THREE.MeshBasicMaterial({ color: 0xff9a3c });
+  const emberRnd = seededRandom(0x48414445);
+  for (let i = 0; i < 40; i++) {
+    const ember = new THREE.Mesh(new THREE.SphereGeometry(0.07 + emberRnd() * 0.09, 5, 4), emberMat);
+    const ex = -62 + emberRnd() * 124;
+    const ez = -62 + emberRnd() * 124;
+    const startY = 1 + emberRnd() * 54;
+    const speed = 0.6 + emberRnd() * 1.1;
+    const drift = emberRnd() * Math.PI * 2;
+    scene.add(ember);
+    world.anim.push((dt, t) => {
+      const y = 1 + ((startY + t * speed) % 55);
+      ember.position.set(ex + Math.sin(t * 0.7 + drift) * 0.55, y, ez + Math.cos(t * 0.5 + drift) * 0.35);
+    });
+  }
+
+  // Three-stage internal lift links cave/lower hall -> mid deck -> storm
+  // gallery -> palace court. These are playable destinations, not a teleporter.
+  addBox(scene, world, 18, 17.7, -8, 24, 0.6, 18, 0x9a603e, { tex: 'olympus-palace' });
+  addBox(scene, world, -8, 39.7, 0, 28, 0.6, 22, 0x9a603e, { tex: 'olympus-palace' });
+  // Three floor-to-platform vines turn the central lift slabs into climbable
+  // cavern landmarks instead of unreachable ceilings viewed from below.
+  for (const [x, z, topY, exitX, exitZ] of [
+    [5.85, -12, 18.05, 1, 0], [30.15, -4, 18.05, -1, 0],
+    [-22.15, 4, 40.05, 1, 0],
+  ]) addVine(scene, world, x, z, 0.15, topY, 1.05, exitX * 0.14, exitZ * 0.14,
+    exitX, exitZ, 0.2, 1.55, 0xc83a3f);
+  // Centered in the 12m doorway gap: the old x=-12 placement intersected the
+  // west wall segment and left half of the visible pad buried in masonry.
+  // Pull the lower lift pad away from the mid-deck lip so its arc rises above
+  // the slab before entering the destination footprint.
+  addJumpPad(scene, world, 0, 0.42, -26, 32.3, 10, 10, 0xff8a32);
+  addJumpPad(scene, world, 22, 18.02, -8, 37, -14.04, 3.75, 0xffc24a);
+  addJumpPad(scene, world, -4, 40.02, 0, 36, 1.9, 9.53, 0x72d8ff);
+  for (const [x, y, z] of [[-22, 5, -10], [30, 23, -2], [-19, 45, 7]]) {
+    const light = new THREE.PointLight(0xff8b3d, 13, 24);
+    light.position.set(x, y, z);
+    scene.add(light);
+  }
+
+  // West Armory and East Storm Chapel: enclosed ground-floor combat rooms
+  // whose internal ramps emerge onto the connected roof city.
+  const palaceStone = 0xd7b98d;
+  for (const side of [-1, 1]) {
+    const cx = side * 44;
+    const outerX = side * 62, innerX = side * 26;
+    for (const [x, z, w, d] of [
+      [outerX, -14, 3, 17], [outerX, 14, 3, 17],
+      [innerX, -14, 3, 17], [innerX, 14, 3, 17],
+      [cx, -24, 33, 3], [cx, 24, 33, 3],
+    ]) addBox(scene, world, x, 67, z, w, 13, d, palaceStone, { tex: 'olympus-palace' });
+    const laneX0 = side < 0 ? -58 : 50;
+    const laneX1 = side < 0 ? -50 : 58;
+    const outerStripX = side < 0 ? -60.75 : 60.75;
+    const innerRoofX = side < 0 ? -37.25 : 37.25;
+    addBox(scene, world, outerStripX, 74, 0, 5.5, 1, 51, 0xcaa875, { tex: 'olympus-palace' });
+    addBox(scene, world, innerRoofX, 74, 0, 25.5, 1, 51, 0xcaa875, { tex: 'olympus-palace' });
+    addBox(scene, world, side * 54, 74, -21.75, 8, 1, 7.5, 0xcaa875, { tex: 'olympus-palace' });
+    addBox(scene, world, side * 54, 74, 21.75, 8, 1, 7.5, 0xcaa875, { tex: 'olympus-palace' });
+    addRamp(scene, world, {
+      axis: 'z', minX: laneX0, maxX: laneX1, minZ: -18, maxZ: 18,
+      h0: 60.5, h1: 74.5, color: 0xb88748, visualInset: 0.08,
+    });
+  }
+
+  // Green interior ladder-vines add readable alternate circulation between
+  // palace floors without competing visually with the red exterior creepers.
+  for (const [x, z, y0, y1, exitX, exitZ] of [
+    [-27.7, 8, 60.5, 74.45, 1, 0], [27.7, -8, 60.5, 74.45, -1, 0],
+    [-22.35, -46, 60.5, 78.45, -1, 0], [22.35, -46, 60.5, 78.45, 1, 0],
+    [29.8, 20, 74.5, 90.45, 1, 0],
+  ]) addVine(scene, world, x, z, y0, y1, 1.0, exitX * 0.12, exitZ * 0.12,
+    exitX, exitZ, 0.2, 1.4);
+  // Two exterior climbs per wing: one beside the court-facing entrance and
+  // one on the far outside wall. Both crest directly onto solid roof strips.
+  for (const [x, z, exitX, exitZ] of [
+    [-24.35, 12, -1, 0], [-63.65, -12, 1, 0],
+    [24.35, -12, 1, 0], [63.65, 12, -1, 0],
+  ]) addVine(scene, world, x, z, 60.5, 74.45, 1.02, exitX * 0.13, exitZ * 0.13,
+    exitX, exitZ, 0.2, 1.5);
+  makeSign(scene, -26.08, 69.5, 0, 11, '#ffb14a', 'ARMORY', Math.PI / 2);
+  makeSign(scene, 26.08, 69.5, 0, 11, '#72d8ff', 'STORM CHAPEL', -Math.PI / 2);
+  addBox(scene, world, -44, 67, -22.42, 15, 7, 0.16, 0xffffff, {
+    collide: false, tex: 'olympus-relief', repeat: [1, 1],
+  });
+  addBox(scene, world, 44, 67, -22.42, 15, 7, 0.16, 0xbadfff, {
+    collide: false, tex: 'olympus-relief', repeat: [1, 1], emissive: 0x183e58, emissiveIntensity: 0.15,
+  });
+
+  // Room-specific silhouettes make the two interior wings identifiable even
+  // during a fast chase: weapon racks and warm fire in the armory, suspended
+  // storm machinery and cool light in the chapel. The large hanging panels are
+  // real cover, so their visible boxes also own matching collision.
+  for (const z of [-12, 0, 12]) {
+    addBox(scene, world, -60.32, 65.4, z, 0.36, 5.2, 4.8, 0x734529, {
+      tex: 'panel', repeat: [1, 2],
+    });
+    for (const y of [64, 66.2]) addBox(scene, world, -60.05, y, z, 0.22, 0.3, 3.6, 0xe0a43b, {
+      collide: false, emissive: 0x6f2a08, emissiveIntensity: 0.25,
+    });
+    addBox(scene, world, 60.32, 65.4, z, 0.36, 5.2, 4.8, 0x355f78, {
+      tex: 'panel', repeat: [1, 2], emissive: 0x163a55, emissiveIntensity: 0.32,
+    });
+  }
+  for (const side of [-1, 1]) for (const z of [-16, 0, 16]) {
+    addBox(scene, world, side * 44, 73.34, z, 32, 0.32, 0.8, 0xa97a3d, {
+      collide: false, tex: 'olympus-palace', repeat: [8, 1],
+    });
+  }
+  addOlympusBrazier(scene, world, -34, 60.5, 18, 0xff7a32);
+  addOlympusBrazier(scene, world, 34, 60.5, 18, 0x72d8ff);
+  const stormCore = new THREE.Mesh(new THREE.IcosahedronGeometry(1.45, 2), new THREE.MeshStandardMaterial({
+    color: 0xbdeeff, emissive: 0x2f9fe8, emissiveIntensity: 1.4, roughness: 0.2, metalness: 0.15,
+  }));
+  stormCore.position.set(38, 67, -12);
+  const stormRing = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.16, 8, 32), new THREE.MeshStandardMaterial({
+    color: 0xd9b35b, emissive: 0x60420c, emissiveIntensity: 0.4, metalness: 0.7, roughness: 0.25,
+  }));
+  stormRing.position.copy(stormCore.position);
+  stormRing.rotation.x = Math.PI / 2;
+  scene.add(stormCore, stormRing);
+  const stormLight = new THREE.PointLight(0x72d8ff, 10, 22);
+  stormLight.position.copy(stormCore.position);
+  scene.add(stormLight);
+
+  // North temple roof wraps the water channel. Its two halves and the channel
+  // meet at edges instead of stacking on the same plane.
+  for (const [x, z, w, d] of [
+    [-24, -46, 3, 29], [24, -46, 3, 29],
+    [-15, -62, 18, 3], [15, -62, 18, 3],
+    [-15, -30, 18, 3], [15, -30, 18, 3],
+  ]) addBox(scene, world, x, 69, z, w, 17, d, palaceStone, { tex: 'olympus-palace' });
+  addBox(scene, world, -15, 69, -60.42, 15, 9, 0.16, 0xffffff, {
+    collide: false, tex: 'olympus-relief', repeat: [1, 1],
+  });
+  addBox(scene, world, 15, 69, -60.42, 15, 9, 0.16, 0xffffff, {
+    collide: false, tex: 'olympus-relief', repeat: [1, 1],
+  });
+  addBox(scene, world, -15, 78, -46, 18, 1, 35, 0xd8b572, { tex: 'olympus-palace' });
+  addBox(scene, world, 15, 78, -46, 18, 1, 35, 0xd8b572, { tex: 'olympus-palace' });
+  for (const z of [-42, -58]) for (const x of [-9, 9]) {
+    addOlympusColumn(scene, world, x, z, 60.5, 16.8);
+  }
+
+  // Connected roof city: armory <-> central bridge <-> north temple, plus a
+  // broad south arcade that receives the floating skybridge.
+  addBox(scene, world, 0, 74, -20, 49, 1, 8, 0xd8b572, { tex: 'olympus-palace' });
+  addBox(scene, world, 0, 74, 52, 120, 1, 10, 0xd8b572, { tex: 'olympus-palace' });
+  addBox(scene, world, -44, 74, 36.25, 10, 1, 21.5, 0xd8b572, { tex: 'olympus-palace' });
+  addBox(scene, world, 44, 74, 36.25, 10, 1, 21.5, 0xd8b572, { tex: 'olympus-palace' });
+  for (const x of [-15, 15]) addRamp(scene, world, {
+    axis: 'z', minX: x - 6, maxX: x + 6, minZ: -28.5, maxZ: -24,
+    h0: 78.5, h1: 74.5, color: 0xd8b572, visualInset: 0.05,
+  });
+  addRamp(scene, world, {
+    axis: 'x', minX: 60, maxX: 89, minZ: 49, maxZ: 59,
+    h0: 74.5, h1: 72, color: 0x9a603e, visualInset: 0.05,
+  });
+  for (const x of [-56, -40, -24, 24, 40, 56]) addOlympusColumn(scene, world, x, 52, 60.5, 13.5);
+  addOlympusColumn(scene, world, -11, 62, 60.5, 13.5);
+  addOlympusColumn(scene, world, 11, 62, 60.5, 13.5);
+  addBox(scene, world, 0, 74.9, 62, 25, 1.8, 3, 0xc69132, {
+    tex: 'olympus-palace', repeat: [6, 1],
+  });
+  addOlympusBrazier(scene, world, -20, 60.5, 48, 0xff8a32);
+  addOlympusBrazier(scene, world, 20, 60.5, 48, 0x72d8ff);
+  addOlympusBrazier(scene, world, -20, 78.5, -58, 0xff8a32);
+  addOlympusBrazier(scene, world, 20, 78.5, -58, 0x72d8ff);
+  for (const x of [-48, -16, 16, 48]) addBox(scene, world, x, 75.2, 56.5, 20, 1.4, 1, 0xb88748, {
+    tex: 'olympus-palace', repeat: [5, 1],
+  });
+  for (const x of [-23.5, 23.5]) for (const z of [-55, -38]) {
+    addBox(scene, world, x, 79.2, z, 1, 1.4, 13, 0xb88748, {
+      tex: 'olympus-palace', repeat: [1, 3],
+    });
+  }
+
+  // Aether Crown: a true third palace tier above the connected roof city.
+  // Twin walkable ramps rise from the north bridge, while the south arcade's
+  // jump pad provides a faster one-way flank. The open front, side balconies,
+  // and rear doorway all let players drop back into a different palace route.
+  const aetherFloorY = 90;
+  addBox(scene, world, 0, aetherFloorY, 24, 64, 1, 32, 0xffffff, {
+    tex: 'olympus-aether', repeat: [4, 2], roughness: 0.5, metalness: 0.1,
+  });
+  addBox(scene, world, -38, aetherFloorY, 28, 12, 1, 16, 0xf3dfba, {
+    tex: 'olympus-aether', repeat: [1, 2],
+  });
+  addBox(scene, world, 38, aetherFloorY, 28, 12, 1, 16, 0xf3dfba, {
+    tex: 'olympus-aether', repeat: [1, 2],
+  });
+  for (const x of [-17, 17]) addRamp(scene, world, {
+    axis: 'z', minX: x - 5, maxX: x + 5, minZ: -16, maxZ: 8,
+    h0: 74.5, h1: aetherFloorY + 0.5, color: 0xe3c27d, visualInset: 0.06,
+  });
+  // The processional hall now occupies the old pad route. The fast flank moves
+  // to the open east arcade and lands on the Aether side balcony instead.
+  addJumpPad(scene, world, 44, 74.52, 52, 31.5, -3.4, -13.4, 0x72d8ff);
+  for (const x of [-29, 29]) for (const z of [26, 36]) {
+    addOlympusColumn(scene, world, x, z, 60.5, 29);
+  }
+
+  // The upper hall is partially enclosed rather than another bare roof. The
+  // split canopy preserves a bright sky slit, and all wall/column collision is
+  // generated from the visible geometry itself.
+  for (const x of [-21, 21]) addBox(scene, world, x, 96.5, 39, 22, 12, 2, 0xf4e1bd, {
+    tex: 'olympus-aether', repeat: [2, 2],
+  });
+  for (const x of [-29, 29]) for (const z of [14, 26, 36]) {
+    addOlympusColumn(scene, world, x, z, 90.5, 12);
+  }
+  // Solid side panels give ricochet weapons useful bank-shot surfaces without
+  // sealing the Crown into a box. Gaps at every column remain movement lanes.
+  for (const side of [-1, 1]) {
+    for (const [z, d] of [[20, 8], [31, 6]]) addBox(
+      scene, world, side * 31, 94.5, z, 2, 8, d, 0xead4ad,
+      { tex: 'olympus-aether', repeat: [1, 2] },
+    );
+    addBox(scene, world, side * 43, 94, 28, 2, 7, 16, 0xd9bd8f, {
+      tex: 'olympus-aether', repeat: [1, 2],
+    });
+  }
+  for (const x of [-17, 17]) addBox(scene, world, x, 102.9, 24, 28, 0.8, 32, 0xf6e6c6, {
+    tex: 'olympus-aether', repeat: [2, 3],
+  });
+  for (const z of [10, 24, 38]) addBox(scene, world, 0, 103.55, z, 6, 0.5, 2, 0xd4a53d, {
+    tex: 'olympus-aether', repeat: [1, 1], metalness: 0.35, roughness: 0.32,
+  });
+  addBox(scene, world, 0, 91.2, 27, 14, 1.4, 10, 0xe2b956, {
+    tex: 'olympus-aether', repeat: [2, 1], metalness: 0.28, roughness: 0.38,
+  });
+  addBox(scene, world, -37.5, 91.25, 20, 11, 1.5, 1, 0xb88748, {
+    tex: 'olympus-aether', repeat: [2, 1],
+  });
+  addBox(scene, world, 37.5, 91.25, 20, 11, 1.5, 1, 0xb88748, {
+    tex: 'olympus-aether', repeat: [2, 1],
+  });
+  makeSign(scene, 0, 97.5, 37.94, 13, '#8ee8ff', 'AETHER CROWN', 0);
+  addOlympusBrazier(scene, world, -23, 90.5, 34, 0xffd36a);
+  addOlympusBrazier(scene, world, 23, 90.5, 34, 0x72d8ff);
+  const aetherLight = new THREE.PointLight(0xc4edff, 12, 32);
+  aetherLight.position.set(0, 99, 25);
+  scene.add(aetherLight);
+
+  // The rear doorway now continues into a proper enclosed processional hall,
+  // then opens into the spring terrace instead of stopping at the back wall.
+  addBox(scene, world, 0, 90, 50, 20, 1, 20, 0xf8e8ca, {
+    tex: 'olympus-aether', repeat: [2, 3],
+  });
+  for (const side of [-1, 1]) addBox(scene, world, side * 9.25, 96.5, 50, 1.5, 12, 20, 0xe9d2aa, {
+    tex: 'olympus-aether', repeat: [1, 4],
+  });
+  addBox(scene, world, 0, 102.9, 50, 20, 0.8, 20, 0xf3dfba, {
+    tex: 'olympus-aether', repeat: [2, 3],
+  });
+  for (const z of [43, 50, 57]) addBox(scene, world, 0, 102.42, z, 20, 0.36, 0.7, 0xc89a38, {
+    tex: 'olympus-aether', repeat: [4, 1], metalness: 0.4, roughness: 0.3,
+  });
+
+  // Open spring terrace. Its side and rear walls provide more close-quarters
+  // bounce geometry, while the west wall leaves a centered outlet for water.
+  addBox(scene, world, 0, 90, 71, 36, 1, 22, 0xf5e4c2, {
+    tex: 'olympus-aether', repeat: [3, 2],
+  });
+  addBox(scene, world, 17, 95, 70, 2, 9, 20, 0xe3c79a, {
+    tex: 'olympus-aether', repeat: [1, 3],
+  });
+  for (const [z, d] of [[64, 8], [77, 6]]) addBox(
+    scene, world, -17, 95, z, 2, 9, d, 0xe3c79a,
+    { tex: 'olympus-aether', repeat: [1, 2] },
+  );
+  addBox(scene, world, 0, 95, 81, 36, 9, 2, 0xe3c79a, {
+    tex: 'olympus-aether', repeat: [4, 2],
+  });
+  for (const x of [-14, 14]) for (const z of [64, 78]) {
+    const baseY = olympusSurfaceY(x, z);
+    addOlympusColumn(scene, world, x, z, baseY, 89.5 - baseY);
+  }
+
+  // A glass-and-gold conservatory turns the Spring into its own enclosed
+  // biome. The dome rises well above the combat floor; planted beds hug the
+  // perimeter so the pool, aqueduct outlet, and processional doorway remain
+  // clear circulation lanes.
+  addOlympusConservatoryDome(scene, world, 0, 90.55, 70.5);
+  for (const [x, z, w, d] of [
+    [13.5, 70.5, 5, 14], [-13.5, 63.5, 5, 4], [-13.5, 78.5, 5, 4],
+  ]) {
+    addBox(scene, world, x, 90.9, z, w, 0.8, d, 0xd1aa69, {
+      tex: 'olympus-aether', repeat: [Math.max(1, w / 3), Math.max(1, d / 3)],
+    });
+    addBox(scene, world, x, 91.34, z, w - 0.5, 0.06, d - 0.5, 0x4c7d3f, {
+      collide: false, tex: x < 0 ? 'flowers' : 'grass',
+      repeat: [Math.max(1, w / 3), Math.max(1, d / 3)],
+    });
+  }
+  for (const [x, z, scale, seed] of [
+    [12.2, 65.5, 1.05, 301], [12.2, 70.5, 1.25, 302], [12.2, 75.5, 1.1, 303],
+    [-12.2, 63.5, 1.15, 304], [-12.2, 78.5, 1.25, 305],
+  ]) addOlympusConservatoryPlant(scene, world, x, 91.33, z, scale, seed);
+  for (const [x, z, height, seed] of [
+    [14.6, 64.5, 5.8, 321], [14.6, 76.3, 6.8, 322],
+    [-14.7, 63.4, 6.4, 323], [-14.7, 78.6, 7.1, 324],
+  ]) addOlympusConservatoryTree(scene, world, x, 91.36, z, height, seed);
+  for (const [x, y, z, scale, seed] of [
+    [-8.5, 101, 66, 0.82, 311], [8.5, 101, 66, 0.82, 312],
+    [-8.5, 101, 76, 0.82, 313], [8.5, 101, 76, 0.82, 314],
+  ]) addOlympusConservatoryPlant(scene, world, x, y, z, scale, seed, true);
+  flushOlympusConservatoryFoliage(scene, world);
+
+  // The sacred pool is the source of a high, exposed aqueduct. Its water
+  // planes meet only at their edges: pool -> west branch -> two dedicated
+  // corners -> long sky channel -> north spillway.
+  const sourceWaterY = 91.15;
+  const sourceSegments = [
+    [0, 71, 16, 10, true],    // pool: often fills the view inside the dome
+    [-21.5, 71, 27, 6],      // pool to south corner
+    [-38, 71, 6, 6],         // south corner
+    [-38, 22.5, 6, 91],      // exposed north/south aqueduct
+    [-38, -26, 6, 6],        // north corner
+    [-16, -26, 38, 6],       // spillway fully feeds the 6m waterfall lip
+  ];
+  for (const [x, z, w, d, unlit] of sourceSegments) {
+    addBox(scene, world, x, 90.8, z, w, 0.6, d, 0xd5a33e, {
+      tex: 'olympus-aether', repeat: [Math.max(1, w / 7), Math.max(1, d / 7)],
+      metalness: 0.24, roughness: 0.38,
+    });
+    addWater(scene, world, x, sourceWaterY, z, w, d, 0.55,
+      unlit ? { unlit: true, color: 0x287da0, opacity: 0.5 } : undefined);
+  }
+  // Pool coping butts against the water rather than overlapping it.
+  addBox(scene, world, 8.6, 91.35, 71, 1.2, 1.7, 12, 0xe1b94f, { tex: 'olympus-aether' });
+  for (const z of [67, 75]) addBox(scene, world, -8.6, 91.35, z, 1.2, 1.7, 2, 0xe1b94f, {
+    tex: 'olympus-aether',
+  });
+  for (const z of [65.4, 76.6]) addBox(scene, world, 0, 91.35, z, 16, 1.7, 1.2, 0xe1b94f, {
+    tex: 'olympus-aether', repeat: [3, 1],
+  });
+  // Repeated side pylons make the hundred-metre sky channel readable without
+  // creating a continuous waist-high wall that would trap players in water.
+  for (const z of [-18, -4, 10, 24, 38, 52, 66]) for (const x of [-41.2, -34.8]) {
+    addBox(scene, world, x, 91.65, z, 0.8, 2.3, 1.2, 0xc69631, {
+      tex: 'olympus-aether', repeat: [1, 1],
+    });
+  }
+  for (const x of [-30, -18, -6]) addOlympusColumn(scene, world, x, -26, 60.5, 30);
+  addWaterfall(scene, world, 0, -28.8, 6, 13, 78.15, sourceWaterY, -1.5, {
+    lipColor: 0xd5a33e, lipTex: 'olympus-aether',
+  });
+  makeSign(scene, 0, 96.5, 79.94, 12, '#72d8ff', 'SPRING OF AETHER', Math.PI);
+
+  // The receiving aqueduct on the north roof still drops the full cliff face,
+  // then becomes a wadeable river running all the way to the map boundary.
+  addBox(scene, world, 0, 77.2, -57, 12, 1.6, 55, 0xcaa875, { tex: 'olympus-palace' });
+  addBox(scene, world, -6.2, 78.35, -57, 0.7, 1.1, 55, 0xd6a947, { tex: 'panel' });
+  addBox(scene, world, 6.2, 78.35, -57, 0.7, 1.1, 55, 0xd6a947, { tex: 'panel' });
+  addWater(scene, world, 0, 78.15, -57, 10.4, 53.5, 0.3);
+  addWaterfall(scene, world, 0, fallZ, 12, 78, -0.4, 77.8, 0);
+  // An opaque riverbed masks the moat below the transparent water sheet, so
+  // the outlet reads purely as water rather than a water/lava blend.
+  addBox(scene, world, 0, 0.16, -155.5, 12.2, 0.1, 29, 0x123f57, {
+    collide: false, shadow: false, roughness: 0.7,
+  });
+  addWater(scene, world, 0, 0.24, -126, 12, 88, 0.38);
+  addBox(scene, world, -6.7, 0.45, -126, 1.2, 0.9, 88, 0x7b4635, { tex: 'olympus-rock' });
+  addBox(scene, world, 6.7, 0.45, -126, 1.2, 0.9, 88, 0x7b4635, { tex: 'olympus-rock' });
+  const caveShade = new THREE.Mesh(new THREE.PlaneGeometry(11, 8.5), new THREE.MeshBasicMaterial({
+    color: 0x06060a, transparent: true, opacity: 0.54, side: THREE.DoubleSide, depthWrite: false,
+  }));
+  caveShade.position.set(0, 4.25, fallZ + 0.35);
+  scene.add(caveShade);
+  addOlympusCrag(scene, world, -6.2, 3.5, fallZ + 0.6, 5.2, 0x71383b, 91);
+  addOlympusCrag(scene, world, 6.2, 3.5, fallZ + 0.6, 5.2, 0x71383b, 92);
+
+  // Court shrine and throne sit south of the lift opening, making the court a
+  // crossroads between indoor rooms, upper ramps, and the undercroft.
+  addBox(scene, world, 0, 62.5, 30, 16, 4, 14, 0x9d6738, { tex: 'olympus-palace' });
+  addBox(scene, world, 0, 64.65, 30, 16.8, 0.3, 14.8, 0xf0bf55, {
+    emissive: 0x7a3609, emissiveIntensity: 0.22,
+  });
+  const throneBack = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.42, 12, 40, Math.PI), new THREE.MeshStandardMaterial({
+    color: 0xf0b94e, emissive: 0x6d2808, emissiveIntensity: 0.35, metalness: 0.66, roughness: 0.26,
+  }));
+  throneBack.rotation.z = Math.PI;
+  throneBack.position.set(0, 69, 27);
+  scene.add(throneBack);
+  // Every Olympus weapon has a primary placement in or on the palace. The
+  // desert and Hades placements are deliberately duplicates, so players who
+  // fall can re-arm without making the recovery areas the main battlefield.
+  for (const [kind, x, y, z, extra] of [
+    ['weapon', -118, 0.25, 20, { weapon: 'scatter' }],
+    ['weapon', 118, 0.25, -20, { weapon: 'pulsar' }],
+    ['weapon', 0, 2.05, 4, { weapon: 'zooka' }],
+    // Secondary Sidewinder placement on an otherwise empty Hades fragment;
+    // its primary placement remains on the Armory roof.
+    ['weapon', -45, 7.3, -5, { weapon: 'sidewinder' }],
+    ['ammo', 14, 13.3, -30, { weapon: 'zooka' }],
+    ['speed', 0, 0.65, -60, {}],
+    ['health', -17, 21.3, -12, {}],
+    ['jetpack', -11, 21.3, -12, {}],
+    ['weapon', -44, 60.8, 0, { weapon: 'hyper' }],
+    ['weapon', 44, 60.8, 0, { weapon: 'whomper' }],
+    // Opposite ends of the monumental south pavilion now reward crossing the
+    // whole hall, while the center Ballzooka pulls fights through its axis.
+    ['weapon', -48, 60.8, 42, { weapon: 'scatter' }],
+    ['weapon', 48, 60.8, 42, { weapon: 'pulsar' }],
+    ['weapon', 0, 60.8, 52, { weapon: 'zooka' }],
+    ['weapon', -44, 74.8, 52, { weapon: 'sidewinder' }],
+    ['weapon', 0, 74.8, -20, { weapon: 'parasite' }],
+    ['weapon', 14, 78.8, -44, { weapon: 'thunderbolt' }],
+    ['gold', -14, 78.8, -44, {}], ['silver', 18, 18.4, -8, {}],
+    ['health', -30, 0.65, -24, {}], ['health', 0, 0.25, 102, {}],
+    ['shield', -44, 60.8, 15, {}], ['shield', 44, 60.8, 15, {}],
+    ['shield', 0, 91.2, 71, {}],
+    ['jetpack', 100, 50.3, 68, {}],
+    ['jetpack', 0, 92.2, 27, {}],
+    ['ammo', 0, 90.8, 13, { weapon: 'thunderbolt' }],
+    ['ammo', -38, 91.2, 24, { weapon: 'thunderbolt' }],
+    ['ammo', 96, 72.3, 56, { weapon: 'thunderbolt' }],
+    ['ammo', -36, 74.8, -20, { weapon: 'hyper' }],
+    ['ammo', 36, 74.8, -20, { weapon: 'parasite' }],
+    ['star', 0, 40.4, 0, { hidden: true }],
+    ['star', -58, 74.8, 52, { hidden: true }],
+  ]) pk(world, kind, x, y ?? olympusSurfaceY(x, z) + 0.25, z, extra);
+
+  world.spawns.blue.push(
+    V(-52, 60.6, 38), V(-44, 60.6, -14), V(-18, 60.6, 32), V(-15, 60.6, -52),
+    V(-44, 74.6, 20), V(-30, 74.6, 52), V(-15, 78.6, -52), V(-30, 0.1, -22),
+    V(-20, 90.6, 26),
+  );
+  world.spawns.red.push(
+    V(52, 60.6, 38), V(44, 60.6, -14), V(18, 60.6, 32), V(15, 60.6, -52),
+    V(44, 74.6, 20), V(30, 74.6, 52), V(15, 78.6, -52), V(30, 0.1, -22),
+    V(20, 90.6, 26),
+  );
+  world.spawns.ffa.push(
+    V(-18, 60.6, 32), V(18, 60.6, 32), V(-52, 60.6, 38), V(52, 60.6, 38),
+    V(-44, 60.6, -14), V(44, 60.6, -14), V(-15, 60.6, -52), V(15, 60.6, -52),
+    V(-44, 74.6, 20), V(44, 74.6, 20), V(-30, 74.6, 52), V(30, 74.6, 52),
+    V(-15, 78.6, -52), V(15, 78.6, -52), V(-30, 0.1, -22), V(30, 0.1, -22),
+    V(-20, 90.6, 26), V(20, 90.6, 26),
+  );
+
+  // Basin recovery loop, explicit pad links, indoor lift, palace rooms, roof
+  // city, and skybridge all form one navigable graph.
+  const outerR = 108;
+  for (let i = 0; i < 8; i++) {
+    const u = -outerR + (outerR * 2 * i) / 8;
+    wp(world, -outerR, 0, u); wp(world, u, 0, outerR);
+    wp(world, outerR, 0, -u); wp(world, -u, 0, -outerR);
+  }
+  world.manualLinks.push(
+    [-120, 0, 20, -100, 26, 28], [-96, 26, 28, -62, 60.5, 38],
+    [120, 0, 20, 100, 26, 28], [96, 26, 28, 62, 60.5, 38],
+    [0, 0, 120, 0, 26, 100], [0, 26, 96, 36, 60.5, 60],
+    [36, 60.5, 60, 0, 60.5, 60],
+    [134, 0, 104, 113, 18, 94], [109, 18, 92, 102, 34, 80],
+    [104, 34, 78, 100, 50, 65], [102, 50, 63, 96, 72, 54],
+    [113, 18, 94, 109, 18, 92], [102, 34, 80, 104, 34, 78],
+    [100, 50, 65, 102, 50, 63],
+    // Red cliff and floating-rock vines are genuine recovery routes, not just
+    // decoration, so bots can include them in the circulation graph.
+    [-89, 0, -38, -84, 60.5, -38], [89, 0, 34, 84, 60.5, 34],
+    [-30, 0, 89, -30, 60.5, 84], [34, 0, -89, 34, 60.5, -84],
+    [104, 0, 94, 113, 18, 94],
+    [0, 0, -26, 18, 18, -8], [22, 18, -8, -8, 40, 0],
+    [-4, 40, 0, 0, 60.5, 20],
+    [-30, 0, -54, -18, 6, -44], [-18, 6, -44, 12, 13, -30],
+    [12, 13, -30, -14, 21, -12], [-14, 21, -12, 18, 18, -8],
+    [-30, 0, -4, -45, 7, -5], [30, 0, -10, 45, 7, -5],
+    [30, 0, -4, 30, 0, -10],
+    [0, 0, 20, 0, 7, 36],
+    [-52, 0, -5, -50, 7, -5], [52, 0, -5, 50, 7, -5],
+    [0, 0, 43, 0, 7, 41],
+    [-54, 0, 30, -52, 29, 30], [54, 0, 28, 52, 32, 28],
+    [6, 0, -12, 8, 18, -12], [30, 0, -4, 28, 18, -4],
+    [-22, 0, 4, -20, 40, 4],
+    // Explicit circulation links keep walls/floor edges from splitting the
+    // bot graph even though each route is physically walkable for players.
+    [-62, 60.5, 38, -52, 60.5, 0], [-52, 60.5, 0, -44, 60.5, 15],
+    [-44, 60.5, 15, -30, 60.5, 0], [-30, 60.5, 0, 0, 60.5, 20],
+    [62, 60.5, 38, 52, 60.5, 0], [52, 60.5, 0, 44, 60.5, 15],
+    [44, 60.5, 15, 30, 60.5, 0], [30, 60.5, 0, 0, 60.5, 20],
+    [0, 60.5, 20, -18, 60.5, 32], [0, 60.5, 20, 18, 60.5, 32],
+    [-18, 60.5, 32, 0, 60.5, 48], [18, 60.5, 32, 0, 60.5, 48],
+    [0, 60.5, 48, 0, 60.5, 60],
+    [-44, 60.5, 15, -44, 74.5, 20], [44, 60.5, 15, 44, 74.5, 20],
+    [-44, 74.5, 20, -44, 74.5, -20], [44, 74.5, 20, 44, 74.5, -20],
+    [-44, 74.5, -20, 0, 74.5, -20], [44, 74.5, -20, 0, 74.5, -20],
+    [-44, 74.5, 20, -30, 74.5, 52], [44, 74.5, 20, 30, 74.5, 52],
+    // Interior green ladder-vines provide alternate floor changes alongside
+    // the architectural ramps and lifts.
+    [-28, 60.5, 8, -28, 74.5, 8], [28, 60.5, -8, 28, 74.5, -8],
+    [-22, 60.5, -46, -22, 78.5, -46], [22, 60.5, -46, 22, 78.5, -46],
+    [30, 74.5, 20, 30, 90.5, 20],
+    // Court-facing and far-side exterior vines climb the Armory and Storm
+    // Chapel walls onto their roof strips.
+    [-24, 60.5, 12, -26, 74.5, 12], [-64, 60.5, -12, -61, 74.5, -12],
+    [24, 60.5, -12, 26, 74.5, -12], [64, 60.5, 12, 61, 74.5, 12],
+    [-30, 74.5, 52, 0, 74.5, 52], [30, 74.5, 52, 0, 74.5, 52],
+    [0, 74.5, -20, -15, 78.5, -46], [0, 74.5, -20, 15, 78.5, -46],
+    [-15, 78.5, -46, 15, 78.5, -46],
+    [0, 74.5, -20, -17, 74.5, -20], [-17, 74.5, -20, -17, 90.5, 10],
+    [0, 74.5, -20, 17, 74.5, -20], [17, 74.5, -20, 17, 90.5, 10],
+    [-17, 90.5, 10, 0, 90.5, 24], [17, 90.5, 10, 0, 90.5, 24],
+    [0, 90.5, 24, -38, 90.5, 28], [0, 90.5, 24, 38, 90.5, 28],
+    [30, 74.5, 52, 44, 74.5, 52], [44, 74.5, 52, 38, 90.5, 28],
+    [38, 90.5, 28, 0, 90.5, 24], [0, 90.5, 34, 0, 90.5, 24],
+    [0, 90.5, 34, 0, 90.5, 48], [0, 90.5, 48, 0, 90.5, 60],
+    [0, 90.5, 60, 0, 90.5, 71], [0, 90.5, 71, -17, 90.5, 71],
+    [-17, 90.5, 71, -38, 90.5, 71], [-38, 90.5, 71, -38, 90.5, 38],
+    [-38, 90.5, 38, -38, 90.5, 10], [-38, 90.5, 10, -38, 90.5, -20],
+    [-38, 90.5, -20, -17, 90.5, -26], [-17, 90.5, -26, 0, 90.5, -26],
+    [96, 72, 54, 89, 72, 54], [89, 72, 54, 60, 74.5, 54],
+    [60, 74.5, 54, 30, 74.5, 52],
+    [0, 0, -104, 0, 0, -86], [0, 0, -86, 0, 0, -72],
+    [0, 0, -72, 0, 0, -56], [0, 0, -56, 0, 0, -54],
+    [0, 0, -54, -30, 0, -54], [-30, 0, -54, -30, 0, -24],
+    [0, 0, -54, 30, 0, -54], [30, 0, -54, 30, 0, -24],
+    [-30, 0, -24, 0, 0, -26], [30, 0, -24, 0, 0, -26],
+    [0, 0, -26, -30, 0, -4], [0, 0, -26, 30, 0, -4],
+    [0, 0, -26, 0, 0, 20],
+  );
+  for (const [x, y, z] of [
+    [-120, 0, 20], [-100, 26, 28], [-96, 26, 28], [-62, 60.5, 38],
+    [120, 0, 20], [100, 26, 28], [96, 26, 28], [62, 60.5, 38],
+    [0, 0, 120], [0, 26, 100], [0, 26, 96], [36, 60.5, 60], [0, 60.5, 60],
+    [134, 0, 104], [113, 18, 94], [109, 18, 92], [102, 34, 80],
+    [104, 34, 78], [100, 50, 65], [102, 50, 63], [96, 72, 54],
+    [89, 72, 54], [60, 74.5, 54],
+    [-89, 0, -38], [-84, 60.5, -38], [89, 0, 34], [84, 60.5, 34],
+    [-30, 0, 89], [-30, 60.5, 84], [34, 0, -89], [34, 60.5, -84],
+    [104, 0, 94],
+    [0, 0, -104], [0, 0, -86], [0, 0, -72], [0, 0, -56], [0, 0, -54],
+    [-18, 6, -44], [12, 13, -30], [-14, 21, -12],
+    [-30, 0, -54], [30, 0, -54], [-30, 0, -24], [30, 0, -24],
+    [0, 0, -26], [-30, 0, -4], [30, 0, -4], [30, 0, -10], [0, 0, 20],
+    [-45, 7, -5], [45, 7, -5], [0, 7, 36], [18, 18, -8], [22, 18, -8],
+    [-52, 0, -5], [-50, 7, -5], [52, 0, -5], [50, 7, -5], [0, 0, 43], [0, 7, 41],
+    [-54, 0, 30], [-52, 29, 30], [54, 0, 28], [52, 32, 28],
+    [6, 0, -12], [8, 18, -12], [30, 0, -4], [28, 18, -4],
+    [-22, 0, 4], [-20, 40, 4],
+    [-8, 40, 0], [-4, 40, 0], [0, 60.5, 20],
+    [-52, 60.5, 0], [-44, 60.5, 15], [-30, 60.5, 0],
+    [52, 60.5, 0], [44, 60.5, 15], [30, 60.5, 0],
+    [-18, 60.5, 32], [18, 60.5, 32], [0, 60.5, 48],
+    [-44, 74.5, 20], [-44, 74.5, -20], [44, 74.5, 20], [44, 74.5, -20],
+    [-28, 60.5, 8], [-28, 74.5, 8], [28, 60.5, -8], [28, 74.5, -8],
+    [-22, 60.5, -46], [-22, 78.5, -46], [22, 60.5, -46], [22, 78.5, -46],
+    [30, 74.5, 20], [30, 90.5, 20],
+    [-24, 60.5, 12], [-26, 74.5, 12], [-64, 60.5, -12], [-61, 74.5, -12],
+    [24, 60.5, -12], [26, 74.5, -12], [64, 60.5, 12], [61, 74.5, 12],
+    [-30, 74.5, 52], [0, 74.5, 52], [30, 74.5, 52],
+    [-15, 78.5, -46], [15, 78.5, -46], [0, 74.5, -20],
+    [-17, 74.5, -20], [-17, 90.5, 10], [17, 74.5, -20], [17, 90.5, 10],
+    [0, 90.5, 24], [-38, 90.5, 28], [38, 90.5, 28],
+    [0, 74.5, 52], [44, 74.5, 52], [0, 90.5, 34],
+    [0, 90.5, 48], [0, 90.5, 60], [0, 90.5, 71], [-17, 90.5, 71],
+    [-38, 90.5, 71], [-38, 90.5, 38], [-38, 90.5, 10], [-38, 90.5, -20],
+    [-17, 90.5, -26], [0, 90.5, -26],
+  ]) wp(world, x, y, z);
+
+  buildMeteorSurfaceIndex(world);
   mergeStatic(scene, world);
   return world;
 }
@@ -4616,7 +6169,10 @@ export const MAPS = [
   { id: 'sanctum', name: 'THE LABYRINTH', emoji: '🔮',
     desc: 'A suspended Rune Engine shifts four distinct wings around a crypt lift, upper gallery, rooftop routes, and collapsed shortcuts.',
     thumb: 'linear-gradient(135deg,#14101f,#8a5fff)', build: buildSanctum },
-  { id: 'prism', name: 'PRISM RUN', emoji: '🌈',
+  { id: 'prism', name: 'PRISM RUN', emoji: '🌈', secret: true,
     desc: 'Inside a neon tesseract in deep space: walk every wall, floor and ceiling. Gravity always pulls to the nearest surface — you never fall out.',
     thumb: 'linear-gradient(135deg,#0b0518,#ff40e0)', build: buildPrism },
+  { id: 'olympus', name: 'OLYMPUS MONS', emoji: '🔴', secret: true,
+    desc: 'A cliff-temple city on Mars: an ornate Aether Crown, jungle conservatory, connected roof arenas, a mountain-sized Hades cavern, waterfall caves, and a secret storm weapon.',
+    thumb: 'linear-gradient(135deg,#351a24,#c75b36)', build: buildOlympusMons },
 ];

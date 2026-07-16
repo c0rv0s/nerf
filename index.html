@@ -105,6 +105,11 @@
     padding:6px 16px; font-size:15px; display:none; }
   #powerup.gold { color:#ffd23c; border-color:#ffd23c; box-shadow:0 0 14px rgba(255,210,60,.5); }
   #powerup.silver { color:#e8e8f0; border-color:#cfcfdd; box-shadow:0 0 14px rgba(220,220,240,.5); }
+  #jetpackstatus { position:absolute; top:112px; left:50%; transform:translateX(-50%);
+    display:none; padding:6px 16px; font-size:13px; color:#43cfff; border-color:#43cfff;
+    box-shadow:0 0 14px rgba(67,207,255,.28); }
+  #jetpackstatus.active { color:#fff; background:rgba(22,111,155,.72); box-shadow:0 0 22px rgba(67,207,255,.72); }
+  #jetpackstatus.cooling { color:#ff9a4a; border-color:#ff9a4a; box-shadow:0 0 14px rgba(255,110,45,.36); }
 
   #top3 { position:absolute; top:14px; left:16px; padding:8px 14px; font-family:Arial,sans-serif;
     font-weight:bold; font-size:13px; display:none; }
@@ -297,6 +302,9 @@
     letter-spacing:1.4px; text-transform:uppercase; text-shadow:0 3px 18px #000,0 0 22px currentColor; }
   #powerup { top:78px; padding:8px 18px; border-radius:2px; font:800 11px/1 var(--body);
     letter-spacing:1.5px; text-transform:uppercase; }
+  #jetpackstatus { top:116px; padding:8px 18px; border-radius:2px; font:800 10px/1 var(--body);
+    letter-spacing:1.4px; text-transform:uppercase; }
+  #jetpackstatus[style*="display: block"] ~ #awards { top:158px; }
   #awards { top:128px; gap:8px; }
   .awardtoast { min-width:270px; padding:10px 22px; border-width:1px; border-radius:2px;
     background:linear-gradient(120deg,rgba(15,21,36,.92),rgba(38,26,12,.88));
@@ -357,6 +365,7 @@
     <span class="teamscore" id="scoreRed">0</span>
   </div>
   <div id="powerup" class="panel"></div>
+  <div id="jetpackstatus" class="panel"></div>
   <div id="top3" class="panel"></div>
   <div id="killfeed"></div>
   <div id="message"></div>
@@ -417,6 +426,6 @@
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
-<script type="module" src="./src/main.js?v=5"></script>
+<script type="module" src="./src/main.js?v=47"></script>
 </body>
 </html>

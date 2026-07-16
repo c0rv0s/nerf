@@ -6,14 +6,16 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MAPS, buildAtrium, buildHallOfFame, texturesReady } from './maps.js';
-import { buildWaypointGraph, pick, rand, rampSurfaceY } from './engine.js';
+import { buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ, pointHitsWorld } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
 import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, nextLoadedWeaponAfter } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx, setEffectsVolume, setListener, setMasterVolume, setRainAmbience } from './audio.js';
+import { sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume, setRainAmbience } from './audio.js';
 import { multiplayer } from './multiplayer.js';
+import { createJetpack } from './jetpack.js';
+import { unlockSecretMap } from './secret-maps.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -33,10 +35,15 @@ const KILL_AWARD_LABELS = {
   7: 'SEPTUPLE KILL',
 };
 
-const FFA_COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0'];
+const FFA_COLORS = [
+  '#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0',
+  '#ffd166', '#06d6a0', '#ef476f', '#8ecae6', '#f72585', '#90be6d', '#f9844a', '#cdb4db',
+];
 const LAVA = { name: 'Lava', color: '#ff6a30', isPlayer: false, kills: 0, team: 'lava' };
 const WATER = { name: 'Water', color: '#3fcfff', isPlayer: false, kills: 0, team: 'water' };
 const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills: 0, team: 'storm' };
+const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, team: 'meteor' };
+const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
 
 function setText(el, value) {
   if (!el) return;
@@ -198,6 +205,53 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+// Keep the intended 1.35x render target on capable hardware. If the game is
+// below frame budget for a sustained stretch, lower only internal resolution
+// in small steps; recover it gradually once the pressure clears. This leaves
+// shadows, bloom, physics, and input behavior intact, and ignores one-off
+// hitches such as loading a map or opening a menu.
+const adaptiveRender = { scale: 1, slowT: 0, clearT: 0, cooldown: 0 };
+function applyAdaptiveRenderScale() {
+  const ratio = Math.min(devicePixelRatio, performanceProfile.pixelRatioCap * adaptiveRender.scale);
+  if (Math.abs(renderer.getPixelRatio() - ratio) < 0.005) return;
+  renderer.setPixelRatio(ratio);
+  composer.setPixelRatio?.(ratio);
+  resize();
+}
+function resetAdaptiveRenderScale() {
+  adaptiveRender.scale = 1;
+  adaptiveRender.slowT = 0;
+  adaptiveRender.clearT = 0;
+  adaptiveRender.cooldown = 0;
+  applyAdaptiveRenderScale();
+}
+function updateAdaptiveRenderScale(frameMs) {
+  if (lowQuality) return;
+  const dt = Math.min(0.1, Math.max(0, frameMs / 1000));
+  adaptiveRender.cooldown = Math.max(0, adaptiveRender.cooldown - dt);
+  if (frameMs > 25) {
+    adaptiveRender.slowT += dt;
+    adaptiveRender.clearT = 0;
+  } else if (frameMs < 18) {
+    adaptiveRender.clearT += dt;
+    adaptiveRender.slowT = Math.max(0, adaptiveRender.slowT - dt * 0.5);
+  } else {
+    adaptiveRender.slowT = Math.max(0, adaptiveRender.slowT - dt * 0.25);
+    adaptiveRender.clearT = 0;
+  }
+  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= 2 && adaptiveRender.scale > 0.76) {
+    adaptiveRender.scale = Math.max(0.76, adaptiveRender.scale - 0.08);
+    adaptiveRender.slowT = 0;
+    adaptiveRender.cooldown = 1;
+    applyAdaptiveRenderScale();
+  } else if (!adaptiveRender.cooldown && adaptiveRender.clearT >= 6 && adaptiveRender.scale < 1) {
+    adaptiveRender.scale = Math.min(1, adaptiveRender.scale + 0.04);
+    adaptiveRender.clearT = 0;
+    adaptiveRender.cooldown = 1;
+    applyAdaptiveRenderScale();
+  }
+}
+
 function usesLightRenderPath() {
   return lowQuality;
 }
@@ -212,6 +266,7 @@ const underwaterFx = document.getElementById('underwaterFx');
 const foliageFx = document.getElementById('foliageFx');
 let G = null; // current match state (or the lobby)
 let rafId = 0;
+let mapLoadInProgress = false;
 let selectedMode = 'ffa';
 let openingMultiplayer = false;
 let multiplayerVotingTimer = 0;
@@ -228,6 +283,19 @@ function bindWorldPresentation(world, syncToMultiplayer = false) {
 
 function modeLabel(mode = selectedMode) {
   return mode === 'tdm' ? 'MODE: TEAM DEATHMATCH' : 'MODE: FREE FOR ALL';
+}
+
+function queueMapLoad(mapDef, mode = selectedMode) {
+  if (!mapDef || mapLoadInProgress) return;
+  mapLoadInProgress = true;
+  setText(document.getElementById('catchtitle'), `LOADING ${mapDef.name}…`);
+  setStyle(clickcatch, 'display', 'flex');
+  // Yield once so the loading screen paints before map construction and GPU
+  // prewarming run on the main thread.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    mapLoadInProgress = false;
+    startMatch(mapDef, mode);
+  }));
 }
 
 function syncAtriumModeSign(world = G?.world) {
@@ -253,6 +321,7 @@ document.getElementById('againbtn').addEventListener('click', () => {
 /* ---------------- match setup ---------------- */
 function teardown() {
   if (!G) return;
+  setJetpackThrust(false);
   setPauseScoreboardLayer(false);
   updateUnderwaterFx(1, true);
   updateFoliageFx(1, true);
@@ -261,13 +330,11 @@ function teardown() {
   for (const ch of G.characters || []) disposeNameTag(ch);
   G.projectiles.clear();
   G.pickups.clear();
-  G.fxPool.clear();
-  if (G.mpTracers) {
-    for (const tr of G.mpTracers) {
-      tr.geo.dispose();
-      tr.mat.dispose();
-    }
-  }
+  G.fxPool.dispose();
+  clearEventVisualPools();
+  G.meteors = [];
+  G.comets = [];
+  G.mpTracerPool?.dispose();
   camera.remove(G.player.viewmodel);
   hud.els.hud.classList.remove('endboard');
   setStyle(hud.els.board, 'display', 'none');
@@ -302,6 +369,7 @@ function cameraUnderwater() {
   return zones.some(z => (
     p.x >= z.minX && p.x <= z.maxX &&
     p.z >= z.minZ && p.z <= z.maxZ &&
+    p.y >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
     p.y < z.surfaceY - 0.04
   ));
 }
@@ -408,6 +476,7 @@ function updateDeathCamera(dt) {
 // THE LOBBY: a walkable atrium — stroll into a glowing gate to start a match.
 function startAtrium() {
   teardown();
+  resetAdaptiveRenderScale();
   musicStop();
   camera.fov = 75;
   camera.near = 0.1;
@@ -416,6 +485,7 @@ function startAtrium() {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildAtrium(scene);
+  buildCollisionIndex(world);
   syncAtriumModeSign(world);
   world.spawnsAll = [...world.spawns.ffa];
   buildWaypointGraph(world);
@@ -484,6 +554,7 @@ async function refreshHallLeaderboard(world = G?.world) {
 
 function startHallOfFame() {
   teardown();
+  resetAdaptiveRenderScale();
   musicStop();
   camera.fov = 75;
   camera.near = 0.1;
@@ -492,6 +563,7 @@ function startHallOfFame() {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildHallOfFame(scene);
+  buildCollisionIndex(world);
   world.spawnsAll = [...world.spawns.ffa];
   buildWaypointGraph(world);
   scene.add(camera);
@@ -555,6 +627,7 @@ function startHallOfFame() {
 
 function startMatch(mapDef, mode = 'ffa') {
   teardown();
+  resetAdaptiveRenderScale();
   camera.fov = 75;
   camera.near = 0.1;
   camera.far = 900;
@@ -562,6 +635,7 @@ function startMatch(mapDef, mode = 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  buildCollisionIndex(world);
   bindWorldPresentation(world, false);
   world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
   buildWaypointGraph(world);
@@ -573,12 +647,14 @@ function startMatch(mapDef, mode = 'ffa') {
   player.color = '#ffd23c';
 
   const characters = [player];
+  const playerCount = Math.max(2, Math.floor(world.playerCount || 8));
   if (mode === 'tdm') {
-    const teams = { blue: 3, red: 4 }; // player joins blue → 4v4
+    const teamSize = Math.floor(playerCount / 2);
+    const teams = { blue: Math.max(0, teamSize - 1), red: playerCount - teamSize };
     let ni = 0;
     for (const team of ['blue', 'red']) {
       for (let i = 0; i < teams[team]; i++) {
-        const bot = new Bot(scene, world, team, BOT_NAMES[ni++],
+        const bot = new Bot(scene, world, team, BOT_NAMES[ni++ % BOT_NAMES.length],
           team === 'blue' ? 0x2e7fd8 : 0xd83a3a);
         bot.color = team === 'blue' ? '#5cb3ff' : '#ff5c5c';
         if (team === 'blue') { // teammate marker — they won't shoot you, don't shoot them
@@ -593,10 +669,11 @@ function startMatch(mapDef, mode = 'ffa') {
     }
   } else {
     player.team = 'ffa-you';
-    for (let i = 0; i < 7; i++) {
-      const bot = new Bot(scene, world, 'ffa-' + i, BOT_NAMES[i],
-        parseInt(FFA_COLORS[i].slice(1), 16));
-      bot.color = FFA_COLORS[i];
+    for (let i = 0; i < playerCount - 1; i++) {
+      const color = FFA_COLORS[i % FFA_COLORS.length];
+      const bot = new Bot(scene, world, 'ffa-' + i, BOT_NAMES[i % BOT_NAMES.length],
+        parseInt(color.slice(1), 16));
+      bot.color = color;
       characters.push(bot);
     }
   }
@@ -610,6 +687,8 @@ function startMatch(mapDef, mode = 'ffa') {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
     onDamage: (target, dmg, attacker, ctx) => applyDamage(target, dmg, attacker, ctx),
+    targets: () => G?.comets || [],
+    onTargetDamage: (target, dmg, attacker, ctx) => damageComet(target, dmg, attacker, ctx),
   });
 
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
@@ -632,7 +711,7 @@ function startMatch(mapDef, mode = 'ffa') {
   G = {
     atrium: false, mapDef, mode, scene, world, player, characters, projectiles, pickups, fxPool,
     scores: { blue: 0, red: 0 },
-    timeLeft: MATCH_TIME,
+    timeLeft: world.matchTime || MATCH_TIME,
     respawnTimers: new Map(),
     over: false,
     paused: document.pointerLockElement !== canvas, // unpauses when the pointer locks
@@ -661,6 +740,7 @@ function startMatch(mapDef, mode = 'ffa') {
   renderer.compile(scene, camera);
 
   player.update(0, () => {});      // camera on the spawn point before the first tick
+  prewarmEventVisuals();
   hud.show(true);
   hud.clearAwards();
   setStyle(document.getElementById('scores'), 'display', '');
@@ -698,6 +778,7 @@ function addTeamMarker(ch) {
 
 function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   teardown();
+  resetAdaptiveRenderScale();
   camera.fov = 75;
   camera.near = 0.1;
   camera.far = 900;
@@ -705,6 +786,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  buildCollisionIndex(world);
   bindWorldPresentation(world, true);
   world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
   buildWaypointGraph(world);
@@ -728,6 +810,10 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
     onDamage: (target, dmg, attacker, ctx) => applyPredictedMultiplayerDamage(target, dmg, attacker, ctx),
+    targets: () => G?.comets || [],
+    onTargetDamage: (target, dmg, attacker, ctx) => {
+      if (G?.multiplayerHost) damageComet(target, dmg, attacker, ctx);
+    },
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
@@ -738,7 +824,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     projectiles, pickups, fxPool,
     remoteSlots: new Map(),
     mpDropIds: new Set(),
-    mpTracers: [],
+    mpTracerPool: createMultiplayerTracerPool(scene, projectiles.geoBall),
     scores: { blue: 0, red: 0 },
     timeLeft: Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000),
     respawnTimers: new Map(),
@@ -755,6 +841,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   respawnCharacter(player, true);
   renderer.compile(scene, camera);
   player.update(0, () => {});
+  prewarmEventVisuals();
   hud.show(true);
   setStyle(document.getElementById('scores'), 'display', '');
   setStyle(document.getElementById('endscreen'), 'display', 'none');
@@ -1103,6 +1190,7 @@ function applyMultiplayerSnapshot(snap) {
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
         G.player.alive = false;
+        G.player.jetpack = null;
         G.mpSyncedSelf = false;
         hud.showRespawn(true, state.respawn || RESPAWN_TIME);
         sfx('death');
@@ -1143,6 +1231,9 @@ function applyMultiplayerSnapshot(snap) {
   }
   for (const ev of snap.events || []) {
     if (ev.type === 'shot') spawnMultiplayerTracer(ev);
+    if (ev.type === 'meteor') spawnMeteorVisual(ev, false);
+    if (ev.type === 'comet-spawn') spawnCometVisual(ev, false);
+    if (ev.type === 'comet-impact') receiveCometImpact(ev);
     if (ev.type === 'damage' && ev.attackerId === multiplayer.slotId) {
       hud.hitmarker();
       const target = G.characters.find(c => c.id === ev.targetId);
@@ -1150,7 +1241,9 @@ function applyMultiplayerSnapshot(snap) {
     }
     if (ev.type === 'kill') {
       const killer = G.characters.find(c => c.team === ev.killerId || c.id === ev.killerId) ||
-        (ev.killerId === multiplayer.slotId ? G.player : { name: 'The Void', color: '#8899aa' });
+        (ev.killerId === multiplayer.slotId ? G.player :
+          ev.killerId === 'meteor' ? METEOR :
+            ev.killerId === 'comet' ? COMET : { name: 'The Void', color: '#8899aa' });
       const victim = G.characters.find(c => c.id === ev.victimId) ||
         (ev.victimId === multiplayer.slotId ? G.player : { name: 'Player', color: '#ccc' });
       hud.killfeed(killer, victim);
@@ -1233,13 +1326,13 @@ function queueMultiplayerEvent(ev) {
 function recordMultiplayerShot(owner, origin, dir, weaponId) {
   if (!G?.multiplayerHost) return;
   const w = WEAPONS[weaponId] || WEAPONS.blaster;
-  const to = origin.clone().addScaledVector(dir, Math.min(80, Math.max(24, w.speed * 0.45)));
+  const distance = Math.min(80, Math.max(24, w.speed * 0.45));
   queueMultiplayerEvent({
     type: 'shot',
     shooterId: characterNetworkId(owner),
     weapon: weaponId,
     from: { x: origin.x, y: origin.y, z: origin.z },
-    to: { x: to.x, y: to.y, z: to.z },
+    to: { x: origin.x + dir.x * distance, y: origin.y + dir.y * distance, z: origin.z + dir.z * distance },
     color: `#${w.color.toString(16).padStart(6, '0')}`,
   });
 }
@@ -1254,70 +1347,104 @@ function updateRemoteSlots(dt) {
   }
 }
 
+// Remote shots are visual-only, but can arrive in bursts. Keep their meshes,
+// materials, and vector storage allocated for the life of the match rather
+// than creating and disposing them for every network event.
+function createMultiplayerTracerPool(scene, geometry, capacity = 64) {
+  const pool = { scene, active: [], free: [] };
+  for (let i = 0; i < capacity; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.95, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geometry, mat);
+    mesh.visible = false;
+    pool.free.push({ mesh, mat, from: new THREE.Vector3(), to: new THREE.Vector3(), t: 0, life: 0.1, impact: false, color: 0xffffff });
+  }
+  pool.acquire = () => {
+    if (pool.free.length) return pool.free.pop();
+    const oldest = pool.active.shift();
+    pool.scene.remove(oldest.mesh);
+    return oldest;
+  };
+  pool.release = (tracer) => {
+    pool.scene.remove(tracer.mesh);
+    tracer.mesh.visible = false;
+    pool.free.push(tracer);
+  };
+  pool.dispose = () => {
+    while (pool.active.length) pool.release(pool.active.pop());
+    for (const tracer of pool.free) tracer.mat.dispose();
+    pool.free.length = 0;
+  };
+  return pool;
+}
+
+const mpTracerFrom = new THREE.Vector3();
+const mpTracerTo = new THREE.Vector3();
+const mpTracerDir = new THREE.Vector3();
+const mpTracerRight = new THREE.Vector3();
+const mpTracerUp = new THREE.Vector3();
+const mpTracerWorldUp = new THREE.Vector3(0, 1, 0);
+
 function spawnMultiplayerTracer(ev) {
-  if (!G?.multiplayer || !ev.from || !ev.to) return;
-  const from = new THREE.Vector3(ev.from.x, ev.from.y, ev.from.z);
-  const to = new THREE.Vector3(ev.to.x, ev.to.y, ev.to.z);
+  const pool = G?.mpTracerPool;
+  if (!pool || !ev.from || !ev.to) return;
+  const from = mpTracerFrom.set(ev.from.x, ev.from.y, ev.from.z);
+  const to = mpTracerTo.set(ev.to.x, ev.to.y, ev.to.z);
   const distSq = from.distanceToSquared(to);
   if (distSq < 0.01) return;
   const weaponId = WEAPONS[ev.weapon] ? ev.weapon : 'blaster';
   const weapon = WEAPONS[weaponId];
   const color = parseInt(String(ev.color || '#ffd23c').replace('#', ''), 16) || 0xffd23c;
   const pellets = Math.min(weapon.pellets || 1, 6);
-  const dir = new THREE.Vector3().subVectors(to, from).normalize();
+  const dir = mpTracerDir.subVectors(to, from).normalize();
   const right = Math.abs(dir.y) > 0.9
-    ? new THREE.Vector3(1, 0, 0)
-    : new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
-  const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+    ? mpTracerRight.set(1, 0, 0)
+    : mpTracerRight.crossVectors(dir, mpTracerWorldUp).normalize();
+  const up = mpTracerUp.crossVectors(right, dir).normalize();
   const dist = Math.sqrt(distSq);
   const life = Math.min(0.2, Math.max(0.07, dist / Math.max(weapon.speed, 1)));
   for (let i = 0; i < pellets; i++) {
-    const mat = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.95,
-    });
-    const mesh = new THREE.Mesh(G.projectiles.geoBall, mat);
+    const tracer = pool.acquire();
+    const { mesh, mat } = tracer;
     if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
     else mesh.scale.setScalar(Math.max(weapon.size, 0.1));
-    const pelletTo = to.clone();
+    tracer.to.copy(to);
     if (pellets > 1) {
       const spread = dist * 0.03;
-      pelletTo
+      tracer.to
         .addScaledVector(right, rand(-spread, spread))
         .addScaledVector(up, rand(-spread, spread));
     }
+    tracer.from.copy(from);
+    tracer.t = 0;
+    tracer.life = life;
+    tracer.impact = !!ev.hit;
+    tracer.color = color;
+    mat.color.setHex(color);
+    mat.opacity = 0.95;
     mesh.position.copy(from);
+    mesh.visible = true;
     G.scene.add(mesh);
-    G.mpTracers.push({ mesh, mat, from: from.clone(), to: pelletTo, t: 0, life, impact: !!ev.hit, color });
+    pool.active.push(tracer);
   }
   G.fxPool.spawnPuff(from, color, 0.22);
 }
 
 function updateMultiplayerTracers(dt) {
-  if (!G?.mpTracers) return;
-  for (let i = G.mpTracers.length - 1; i >= 0; i--) {
-    const tr = G.mpTracers[i];
+  const pool = G?.mpTracerPool;
+  if (!pool) return;
+  for (let i = pool.active.length - 1; i >= 0; i--) {
+    const tr = pool.active[i];
     tr.t += dt;
     const done = tr.t >= tr.life;
-    if (tr.mesh) {
-      const a = Math.min(1, tr.t / tr.life);
-      tr.mesh.position.lerpVectors(tr.from, tr.to, a);
-      tr.mat.opacity = Math.max(0, 1 - a);
-      if (done) {
-        if (tr.impact) G.fxPool.spawnPuff(tr.to, tr.color, 0.45);
-        G.scene.remove(tr.mesh);
-        tr.mat.dispose();
-        G.mpTracers.splice(i, 1);
-      }
-      continue;
-    }
-    tr.mat.opacity = Math.max(0, 1 - tr.t / tr.life);
+    const a = Math.min(1, tr.t / tr.life);
+    tr.mesh.position.lerpVectors(tr.from, tr.to, a);
+    tr.mat.opacity = Math.max(0, 1 - a);
     if (done) {
-      G.scene.remove(tr.line);
-      tr.geo.dispose();
-      tr.mat.dispose();
-      G.mpTracers.splice(i, 1);
+      if (tr.impact) G.fxPool.spawnPuff(tr.to, tr.color, 0.45);
+      pool.active.splice(i, 1);
+      pool.release(tr);
     }
   }
 }
@@ -2069,6 +2196,7 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
   if (target.isPlayer) { hud.damageFlash(); sfx('hurt'); }
 
   if (target.hp <= 0) {
+    target.jetpack = null;
     target.deaths++;
     attacker.kills++;
     recordKillAwards(attacker, target, ctx);
@@ -2204,6 +2332,14 @@ function onPickup(ch, def) {
       ch.djumpTime = 20;
       sfx('powerup');
       announce('⇈ DOUBLE JUMP — 20s ⇈', '#30e0ff');
+      return true;
+    case 'jetpack':
+      if (ch.jetpack) return false;
+      ch.jetpack = createJetpack();
+      if (ch.isPlayer) {
+        sfx('powerup');
+        announce('JETPACK EQUIPPED — HOLD JUMP TO FLY', '#43cfff');
+      }
       return true;
     case 'points':
       ch.score += def.amount;
@@ -2379,7 +2515,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { G.player.wantJump = true; e.preventDefault(); }
   if (e.code === 'Tab') { G.showBoard = true; e.preventDefault(); }
   const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'].indexOf(e.code);
-  if (slot >= 0) G.player.switchWeapon(WEAPON_ORDER[slot]);
+  const mapWeapons = G.world?.availableWeapons || WEAPON_ORDER;
+  if (slot >= 0 && slot < mapWeapons.length) G.player.switchWeapon(mapWeapons[slot]);
   if (e.code === 'KeyG') { // glow toggle for slower machines
     if (!performanceProfile.postprocessing) {
       hud.message('GLOW OFF FOR SAFARI PERFORMANCE', '#7fd0ff');
@@ -2516,16 +2653,18 @@ multiplayer.addEventListener('disconnect', () => {
 /* ---------------- main loop ---------------- */
 function tick(now) {
   if (!G) return;
-  const dt = Math.min(0.05, (now - G.lastT) / 1000);
+  const frameMs = Math.max(0, now - G.lastT);
+  const dt = Math.min(0.05, frameMs / 1000);
   G.lastT = now;
   if (!G.paused) {
     G.lastStepWall = now;
     step(dt);
-  }
+  } else setJetpackThrust(false);
   updateDeathCamera(dt);
   updateUnderwaterFx(dt);
   updateFoliageFx(dt);
   renderFrame();
+  if (!G.paused && !G.over) updateAdaptiveRenderScale(frameMs);
   if (G.pendingHall) {
     startHallOfFame();
     return;
@@ -2536,7 +2675,8 @@ function tick(now) {
   }
   if (G.pendingMap) { // walked into a lobby gate — swap to that arena
     const map = G.pendingMap;
-    startMatch(map, selectedMode);
+    G.pendingMap = null;
+    queueMapLoad(map, selectedMode);
     return; // startMatch scheduled its own loop
   }
   rafId = requestAnimationFrame(tick);
@@ -2572,6 +2712,7 @@ function stepAtrium(dt) {
   for (const p of G.world.portals) {
     if (Math.hypot(G.player.pos.x - p.x, G.player.pos.z - p.z) < 2.6) {
       G.pendingMap = MAPS.find(m => m.id === p.map);
+      if (G.pendingMap?.secret) unlockSecretMap(G.pendingMap.id);
       sfx('powerup');
       break;
     }
@@ -2593,6 +2734,16 @@ function stepHallOfFame() {
   if (exit && Math.hypot(G.player.pos.x - exit.x, G.player.pos.z - exit.z) < 2.8) {
     G.pendingAtrium = true;
     sfx('powerup');
+    return;
+  }
+  const secret = G.world.secretMapPortal;
+  if (secret && Math.hypot(G.player.pos.x - secret.x, G.player.pos.z - secret.z) < 2.65) {
+    G.pendingMap = MAPS.find(map => map.id === secret.map);
+    if (G.pendingMap) {
+      unlockSecretMap(G.pendingMap.id);
+      hud.message('OLYMPUS MONS AWAKENS', '#ff6a32');
+      sfx('powerup');
+    }
   }
 }
 
@@ -2600,8 +2751,544 @@ function updateStormAudio() {
   setRainAmbience(G?.world?.storm?.mix || 0);
 }
 
+function meteorSurfaceY(world, x, z) {
+  let best = -Infinity;
+  const index = world.meteorSurfaceIndex;
+  const cell = index?.cells.get(`${Math.floor(x / index.cellSize)},${Math.floor(z / index.cellSize)}`);
+  const colliders = index ? (cell?.colliders || []) : (world.colliders || []);
+  const ramps = index ? (cell?.ramps || []) : (world.ramps || []);
+  for (const c of colliders) {
+    if (c.type === 'box') {
+      if (x >= c.min.x && x <= c.max.x && z >= c.min.z && z <= c.max.z) {
+        best = Math.max(best, c.max.y);
+      }
+    } else if (c.type === 'sphere') {
+      const dx = x - c.center.x, dz = z - c.center.z;
+      const radialSq = dx * dx + dz * dz;
+      if (radialSq <= c.radius * c.radius) {
+        best = Math.max(best, c.center.y + Math.sqrt(c.radius * c.radius - radialSq));
+      }
+    }
+  }
+  for (const ramp of ramps) {
+    if (x < ramp.minX || x > ramp.maxX || z < ramp.minZ || z > ramp.maxZ) continue;
+    best = Math.max(best, rampSurfaceY(ramp, x, z));
+  }
+  return best;
+}
+
+function chooseMeteorTarget() {
+  const cfg = G.world.meteorShower;
+  for (let attempt = 0; attempt < 48; attempt++) {
+    // Select an X/Z coordinate directly: 80% from the mesa square and 20%
+    // from the surrounding map. The surface index below only determines its landing Y.
+    const mesa = Math.random() < (cfg.mesaChance ?? 0.8);
+    const mesaHalfExtent = cfg.mesaHalfExtent ?? 88;
+    const halfExtent = mesa ? mesaHalfExtent : (cfg.mapHalfExtent ?? 170);
+    const x = rand(-halfExtent, halfExtent);
+    const z = rand(-halfExtent, halfExtent);
+    if (!mesa && Math.abs(x) <= mesaHalfExtent && Math.abs(z) <= mesaHalfExtent) continue;
+    const y = meteorSurfaceY(G.world, x, z);
+    if (!Number.isFinite(y)) continue;
+    const inGroundHazard = y < 5 && (G.world.lavaZones || []).some(zone => pointInZoneXZ(zone, x, z));
+    if (inGroundHazard) continue;
+    return new THREE.Vector3(x, y + 0.08, z);
+  }
+  const fallbackY = meteorSurfaceY(G.world, 0, 20);
+  return new THREE.Vector3(0, Number.isFinite(fallbackY) ? fallbackY + 0.08 : 60.58, 20);
+}
+
+function createMeteorVisual() {
+  const group = new THREE.Group();
+  const rock = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1.36, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0xc9d1da, emissive: 0x2b2d32, emissiveIntensity: 0.2,
+      metalness: 0.78, roughness: 0.3, flatShading: true, transparent: true, opacity: 0,
+    }),
+  );
+  rock.scale.set(1.14, 1, 0.92);
+  const outerTail = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 1.08, 7.6, 9, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xff5a18, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  outerTail.position.y = 4.25;
+  const innerTail = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.48, 5.2, 8, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffdf57, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  innerTail.position.y = 3.05;
+  group.add(rock, outerTail, innerTail);
+
+  const warning = new THREE.Mesh(
+    new THREE.RingGeometry(3.25, 3.75, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0xff7a2d, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  warning.rotation.x = -Math.PI / 2;
+  group.visible = false;
+  warning.visible = false;
+  G.scene.add(group, warning);
+  return { group, rock, outerTail, innerTail, warning, inUse: false };
+}
+
+function acquireMeteorVisual() {
+  const pool = G.meteorVisualPool ||= [];
+  const meteor = pool.find(visual => !visual.inUse) || createMeteorVisual();
+  if (!pool.includes(meteor)) pool.push(meteor);
+  meteor.inUse = true;
+  meteor.group.visible = true;
+  meteor.warning.visible = true;
+  return meteor;
+}
+
+function releaseMeteorVisual(meteor) {
+  meteor.inUse = false;
+  meteor.group.visible = false;
+  meteor.warning.visible = false;
+}
+
+function spawnMeteorPickup(pos) {
+  const weapons = (G.world.availableWeapons || WEAPON_ORDER)
+    .filter(id => id !== 'blaster' && WEAPONS[id]);
+  const powerups = ['health', 'shield', 'speed', 'jetpack', 'silver', 'gold'];
+  const weapon = Math.random() < 0.56 && weapons.length ? pick(weapons) : null;
+  const def = {
+    id: nextDropId('meteor'),
+    kind: weapon ? 'weapon' : pick(powerups),
+    pos: pos.clone().add(new THREE.Vector3(0, 0.26, 0)),
+    up: new THREE.Vector3(0, 1, 0),
+  };
+  if (weapon) def.weapon = weapon;
+  G.pickups.addDrop(def);
+  const item = G.pickups.items[G.pickups.items.length - 1];
+  item.meteorPop = { t: 0, duration: 0.9, baseY: def.pos.y };
+}
+
+function impactMeteor(meteor) {
+  const pos = meteor.target;
+  // Sky events need an unmistakable arena-wide impact cue; normal weapon
+  // explosions remain positional, but this uses the Whomper boom at full mix.
+  sfx('whomp');
+  G.fxPool.spawnPuff(pos, 0xffa030, Math.max(3.2, WEAPONS.whomper.splash * 0.75));
+  if (!meteor.authoritative) return;
+
+  for (const ch of G.characters) {
+    if (!ch.alive) continue;
+    const center = ch.pos.clone();
+    center.y += ch.height * 0.5;
+    const distance = center.distanceTo(pos);
+    if (distance >= WEAPONS.whomper.splash) continue;
+    const damage = WEAPONS.whomper.splashDmg * (1 - distance / WEAPONS.whomper.splash);
+    applyDamage(ch, damage, METEOR, { environmental: true });
+  }
+  spawnMeteorPickup(pos);
+}
+
+function spawnMeteorVisual(data, authoritative = false) {
+  if (!G?.world?.meteorShower) return;
+  G.meteorIds ||= new Set();
+  if (data.id && G.meteorIds.has(data.id)) return;
+  if (data.id) G.meteorIds.add(data.id);
+
+  const target = data.target?.isVector3
+    ? data.target.clone()
+    : new THREE.Vector3(data.target.x, data.target.y, data.target.z);
+  const start = data.start?.isVector3
+    ? data.start.clone()
+    : new THREE.Vector3(data.start.x, data.start.y, data.start.z);
+  const duration = data.duration || 2.8;
+  const meteor = acquireMeteorVisual();
+  const { group, rock, outerTail, innerTail, warning } = meteor;
+  rock.material.opacity = 0;
+  outerTail.material.opacity = 0;
+  innerTail.material.opacity = 0;
+  warning.material.opacity = 0;
+  const tailDirection = start.clone().sub(target).normalize();
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tailDirection);
+  group.position.copy(start);
+  warning.position.copy(target).add(new THREE.Vector3(0, 0.06, 0));
+
+  Object.assign(meteor, { id: data.id, start, target, duration, age: 0, authoritative });
+  (G.meteors ||= []).push(meteor);
+}
+
+function launchMeteor() {
+  const cfg = G.world.meteorShower;
+  const target = chooseMeteorTarget();
+  const startHeight = rand(cfg.startHeightMin ?? 150, cfg.startHeightMax ?? 174);
+  const elevation = THREE.MathUtils.degToRad(rand(
+    cfg.startElevationMin ?? 60, cfg.startElevationMax ?? 78,
+  ));
+  const bearing = Math.random() * Math.PI * 2;
+  const horizontalDistance = startHeight / Math.tan(elevation);
+  const start = target.clone().add(new THREE.Vector3(
+    Math.cos(bearing) * horizontalDistance,
+    startHeight,
+    Math.sin(bearing) * horizontalDistance,
+  ));
+  const data = {
+    id: nextDropId('meteor-flight'), target, start,
+    duration: rand(cfg.durationMin ?? 3.32, cfg.durationMax ?? 3.97),
+  };
+  spawnMeteorVisual(data, true);
+  if (G.multiplayerHost) queueMultiplayerEvent({
+    type: 'meteor', id: data.id, duration: data.duration,
+    start: { x: start.x, y: start.y, z: start.z },
+    target: { x: target.x, y: target.y, z: target.z },
+  });
+}
+
+function updateMeteorShower(dt) {
+  const cfg = G.world.meteorShower;
+  if (!cfg) return;
+  for (let i = (G.meteors?.length || 0) - 1; i >= 0; i--) {
+    const meteor = G.meteors[i];
+    meteor.age += dt;
+    const u = Math.min(1, meteor.age / meteor.duration);
+    const fade = Math.min(1, meteor.age / (cfg.fadeIn ?? 1));
+    const fall = u * u;
+    meteor.group.position.lerpVectors(meteor.start, meteor.target, fall);
+    meteor.rock.rotation.x += dt * 2.8;
+    meteor.rock.rotation.z += dt * 2.1;
+    meteor.rock.material.opacity = fade;
+    meteor.outerTail.material.opacity = (0.58 + Math.sin(meteor.age * 19) * 0.12) * fade;
+    meteor.innerTail.material.opacity = (0.75 + Math.sin(meteor.age * 25 + 1) * 0.16) * fade;
+    const pulse = 1 + Math.sin(meteor.age * 8) * 0.12;
+    meteor.warning.scale.setScalar(pulse);
+    meteor.warning.material.opacity = (0.32 + u * 0.5) * fade;
+    if (u < 1) continue;
+    impactMeteor(meteor);
+    releaseMeteorVisual(meteor);
+    G.meteors.splice(i, 1);
+  }
+
+  if (G.multiplayer && !G.multiplayerHost) return;
+  if (!Number.isFinite(G.meteorTimer)) G.meteorTimer = rand(cfg.minInterval, cfg.maxInterval);
+  G.meteorTimer -= dt;
+  if (G.meteorTimer > 0) return;
+  launchMeteor();
+  G.meteorTimer = rand(cfg.minInterval, cfg.maxInterval);
+}
+
+function updateImpactPickupPops(dt) {
+  for (const item of G.pickups?.items || []) {
+    const pop = item.meteorPop;
+    if (!pop) continue;
+    pop.t += dt;
+    const u = Math.min(1, pop.t / pop.duration);
+    item.def.pos.y = pop.baseY + Math.sin(u * Math.PI) * 3.1;
+    if (u >= 1) { item.def.pos.y = pop.baseY; delete item.meteorPop; }
+  }
+}
+
+function createCometVisual(cfg) {
+  const group = new THREE.Group();
+  const rock = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(cfg.radius || 1.36, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0xdbe6ef, emissive: 0x2d3b48, emissiveIntensity: 0.28,
+      metalness: 0.86, roughness: 0.25, flatShading: true, transparent: true, opacity: 0,
+    }),
+  );
+  rock.scale.set(1.14, 0.96, 1.02);
+  const outerTail = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 1.08, cfg.outerTailLength || 26, 9, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0x258dff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  outerTail.position.y = (cfg.outerTailLength || 26) * 0.5 + 0.45;
+  const innerTail = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.46, cfg.innerTailLength || 17, 8, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xb8eeff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  innerTail.position.y = (cfg.innerTailLength || 17) * 0.5 + 0.35;
+  group.add(rock, outerTail, innerTail);
+  group.visible = false;
+  G.scene.add(group);
+  return { group, rock, outerTail, innerTail, inUse: false };
+}
+
+function acquireCometVisual(cfg) {
+  const pool = G.cometVisualPool ||= [];
+  const comet = pool.find(visual => !visual.inUse) || createCometVisual(cfg);
+  if (!pool.includes(comet)) pool.push(comet);
+  comet.inUse = true;
+  comet.group.visible = true;
+  return comet;
+}
+
+function releaseCometVisual(comet) {
+  comet.inUse = false;
+  comet.group.visible = false;
+}
+
+function disposeEventGroup(group) {
+  G.scene.remove(group);
+  group.traverse(obj => {
+    obj.geometry?.dispose?.();
+    if (Array.isArray(obj.material)) obj.material.forEach(material => material.dispose?.());
+    else obj.material?.dispose?.();
+  });
+}
+
+function clearEventVisualPools() {
+  for (const meteor of G.meteorVisualPool || []) {
+    disposeEventGroup(meteor.group);
+    G.scene.remove(meteor.warning);
+    meteor.warning.geometry.dispose();
+    meteor.warning.material.dispose();
+  }
+  for (const comet of G.cometVisualPool || []) disposeEventGroup(comet.group);
+  G.meteorVisualPool = [];
+  G.cometVisualPool = [];
+}
+
+function prewarmEventVisuals() {
+  if (!G?.world) return;
+  const direction = camera.getWorldDirection(new THREE.Vector3());
+  const warmPos = camera.position.clone().addScaledVector(direction, 6);
+  const warmMeteors = [];
+  const warmComets = [];
+  if (G.world.meteorShower) {
+    const meteor = acquireMeteorVisual();
+    meteor.group.position.copy(warmPos);
+    meteor.warning.position.copy(warmPos);
+    meteor.rock.material.opacity = 0.01;
+    meteor.outerTail.material.opacity = 0.01;
+    meteor.innerTail.material.opacity = 0.01;
+    meteor.warning.material.opacity = 0.01;
+    warmMeteors.push(meteor);
+  }
+  if (G.world.cometField) {
+    const count = G.world.cometField.maxActive ?? 2;
+    for (let i = 0; i < count; i++) {
+      const comet = acquireCometVisual(G.world.cometField);
+      comet.group.position.copy(warmPos);
+      comet.rock.material.opacity = 0.01;
+      comet.outerTail.material.opacity = 0.01;
+      comet.innerTail.material.opacity = 0.01;
+      warmComets.push(comet);
+    }
+  }
+  if (warmMeteors.length || warmComets.length) renderer.compile(G.scene, camera);
+  for (const meteor of warmMeteors) releaseMeteorVisual(meteor);
+  for (const comet of warmComets) releaseCometVisual(comet);
+}
+
+function retireComet(comet) {
+  if (!comet || comet.destroyed) return;
+  comet.destroyed = true;
+  comet.active = false;
+  releaseCometVisual(comet);
+  const index = G?.comets?.indexOf(comet) ?? -1;
+  if (index >= 0) G.comets.splice(index, 1);
+}
+
+function playCometImpact(pos) {
+  sfx('whomp');
+  G.fxPool.spawnPuff(pos, 0x9fdcff, Math.max(3.2, WEAPONS.whomper.splash * 0.75));
+}
+
+function impactComet(comet) {
+  if (!comet || comet.destroyed) return;
+  const pos = comet.pos.clone();
+  playCometImpact(pos);
+
+  if (comet.authoritative) {
+    for (const ch of G.characters) {
+      if (!ch.alive) continue;
+      const center = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), ch.height * 0.5);
+      const distance = center.distanceTo(pos);
+      if (distance >= WEAPONS.whomper.splash) continue;
+      const damage = WEAPONS.whomper.splashDmg * (1 - distance / WEAPONS.whomper.splash);
+      applyDamage(ch, damage, COMET, { environmental: true });
+    }
+    spawnMeteorPickup(pos);
+    if (G.multiplayerHost) queueMultiplayerEvent({
+      type: 'comet-impact', id: comet.id,
+      pos: { x: pos.x, y: pos.y, z: pos.z },
+    });
+  }
+  retireComet(comet);
+}
+
+function receiveCometImpact(data) {
+  if (!G?.world?.cometField || !data?.pos) return;
+  G.cometImpactIds ||= new Set();
+  if (data.id && G.cometImpactIds.has(data.id)) return;
+  if (data.id) G.cometImpactIds.add(data.id);
+  const pos = new THREE.Vector3(data.pos.x, data.pos.y, data.pos.z);
+  const comet = (G.comets || []).find(item => item.id === data.id);
+  if (comet) {
+    comet.pos.copy(pos);
+    comet.group.position.copy(pos);
+    playCometImpact(pos);
+    retireComet(comet);
+  } else {
+    playCometImpact(pos);
+  }
+}
+
+function spawnCometVisual(data, authoritative = false) {
+  if (!G?.world?.cometField || !data?.start || !data?.velocity) return;
+  G.cometIds ||= new Set();
+  if (data.id && G.cometIds.has(data.id)) return;
+  if (data.id) G.cometIds.add(data.id);
+
+  const cfg = G.world.cometField;
+  const start = data.start?.isVector3
+    ? data.start.clone()
+    : new THREE.Vector3(data.start.x, data.start.y, data.start.z);
+  const velocity = data.velocity?.isVector3
+    ? data.velocity.clone()
+    : new THREE.Vector3(data.velocity.x, data.velocity.y, data.velocity.z);
+  if (velocity.lengthSq() < 1e-6) return;
+
+  const comet = acquireCometVisual(cfg);
+  const { group, rock, outerTail, innerTail } = comet;
+  rock.material.opacity = 0;
+  outerTail.material.opacity = 0;
+  innerTail.material.opacity = 0;
+  group.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0), velocity.clone().normalize().negate());
+  group.position.copy(start);
+
+  Object.assign(comet, {
+    id: data.id, group, rock, outerTail, innerTail,
+    pos: start.clone(), velocity, age: 0,
+    life: data.life || cfg.flightLife || 11,
+    health: data.health || cfg.health || 150,
+    radius: cfg.radius || 1.36,
+    authoritative, active: true, destroyed: false,
+  });
+  (G.comets ||= []).push(comet);
+}
+
+function launchComet() {
+  const cfg = G.world.cometField;
+  const activeCharacters = G.characters.filter(character => character.alive);
+  const anchor = activeCharacters.length ? pick(activeCharacters) : null;
+  const jumpReach = (G.world.jumpVel * G.world.jumpVel) / (2 * G.world.gravity);
+  const laneSpread = cfg.laneSpread ?? 42;
+  const crossing = new THREE.Vector3(
+    (anchor?.pos.x || 0) + rand(-laneSpread, laneSpread),
+    (anchor?.pos.y || 6) + rand(-jumpReach, jumpReach),
+    (anchor?.pos.z || 0) + rand(-laneSpread, laneSpread),
+  );
+  const bearing = Math.random() * Math.PI * 2;
+  const elevation = THREE.MathUtils.degToRad(rand(
+    -(cfg.maxElevation ?? 15), cfg.maxElevation ?? 15,
+  ));
+  // A straight, almost-horizontal path that crosses the current combat area.
+  const direction = new THREE.Vector3(
+    Math.cos(bearing), Math.tan(elevation), Math.sin(bearing),
+  ).normalize();
+  const start = crossing.clone().addScaledVector(direction, -(cfg.spawnRadius || 230));
+  const velocity = direction.multiplyScalar(rand(cfg.minSpeed || 27, cfg.maxSpeed || 36));
+  const data = {
+    id: nextDropId('comet-flight'), start, velocity,
+    life: cfg.flightLife || 11, health: cfg.health || 150,
+  };
+  spawnCometVisual(data, true);
+  if (G.multiplayerHost) queueMultiplayerEvent({
+    type: 'comet-spawn', id: data.id, life: data.life, health: data.health,
+    start: { x: start.x, y: start.y, z: start.z },
+    velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+  });
+}
+
+function distancePointToSegment3(point, a, b) {
+  const ab = b.clone().sub(a);
+  const lengthSq = ab.lengthSq();
+  if (lengthSq < 1e-6) return point.distanceTo(a);
+  const t = Math.max(0, Math.min(1, point.clone().sub(a).dot(ab) / lengthSq));
+  return point.distanceTo(a.clone().addScaledVector(ab, t));
+}
+
+function cometTouchesCharacter(comet, ch) {
+  if (!ch.alive) return false;
+  const up = ch.up || new THREE.Vector3(0, 1, 0);
+  const radius = ch.radius || 0.45;
+  const foot = ch.pos.clone().addScaledVector(up, radius);
+  const head = ch.pos.clone().addScaledVector(up, Math.max(ch.height - radius, ch.height * 0.55));
+  return distancePointToSegment3(comet.pos, foot, head) < comet.radius + radius;
+}
+
+function damageComet(comet, damage, attacker) {
+  if (!comet?.authoritative || comet.destroyed || damage <= 0) return;
+  comet.health -= damage;
+  if (attacker?.isPlayer) {
+    hud.hitmarker();
+    sfx('hit');
+  }
+  if (comet.health <= 0) impactComet(comet);
+}
+
+function updateCometField(dt) {
+  const cfg = G.world.cometField;
+  if (!cfg) return;
+  for (let i = (G.comets?.length || 0) - 1; i >= 0; i--) {
+    const comet = G.comets[i];
+    if (!comet || comet.destroyed) continue;
+    comet.age += dt;
+    const fade = Math.min(1, comet.age / (cfg.fadeIn ?? 1));
+    comet.rock.rotation.x += dt * 2.7;
+    comet.rock.rotation.z += dt * 2.15;
+    comet.rock.material.opacity = fade;
+    comet.outerTail.material.opacity = (0.58 + Math.sin(comet.age * 19) * 0.12) * fade;
+    comet.innerTail.material.opacity = (0.76 + Math.sin(comet.age * 25 + 1) * 0.14) * fade;
+
+    const moveLength = comet.velocity.length() * dt;
+    const steps = Math.max(1, Math.ceil(moveLength / 0.7));
+    let impacted = false;
+    for (let step = 0; step < steps && !impacted; step++) {
+      const previous = comet.pos.clone();
+      comet.pos.addScaledVector(comet.velocity, dt / steps);
+      if (!comet.authoritative) continue;
+      if (pointHitsWorld(comet.pos, comet.radius, G.world)) {
+        comet.pos.copy(previous);
+        impacted = true;
+        break;
+      }
+      if (G.characters.some(ch => cometTouchesCharacter(comet, ch))) impacted = true;
+    }
+    comet.group.position.copy(comet.pos);
+    if (impacted) {
+      impactComet(comet);
+      continue;
+    }
+    if (comet.age >= comet.life) retireComet(comet); // a clean fly-by: no blast, no loot
+  }
+
+  if (G.multiplayer && !G.multiplayerHost) return;
+  if (!Number.isFinite(G.cometTimer)) G.cometTimer = rand(cfg.minInterval, cfg.maxInterval);
+  G.cometTimer -= dt;
+  if (G.cometTimer > 0) return;
+  if ((G.comets?.length || 0) >= (cfg.maxActive ?? 2)) {
+    G.cometTimer = 0.5;
+    return;
+  }
+  launchComet();
+  G.cometTimer = rand(cfg.minInterval, cfg.maxInterval);
+}
+
 function step(dt) {
   if (G.over) {
+    setJetpackThrust(false);
     updateVictoryPodium(dt);
     return;
   }
@@ -2617,6 +3304,9 @@ function step(dt) {
   setListener(G.player.pos); // distance-based sfx volume
 
   G.world.update?.(dt, G.characters);
+  updateMeteorShower(dt);
+  updateCometField(dt);
+  updateImpactPickupPops(dt);
   updateStormAudio();
   if (G.multiplayerHost) {
     syncRemoteHumans();
@@ -2628,6 +3318,7 @@ function step(dt) {
     recordMultiplayerShot(owner, origin, dir, weaponId);
   };
   G.player.update(dt, fire);
+  setJetpackThrust(!!(G.player.alive && G.player.jetpack?.active));
   for (const ch of G.characters) {
     if (!ch.isPlayer) {
       if (ch.remoteHuman) updateRemoteHuman(ch, dt, fire);
@@ -2642,8 +3333,7 @@ function step(dt) {
     for (const ch of G.characters) {
       if (!ch.alive) continue;
       const burning = G.world.lavaZones.some(zn =>
-        ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
-        ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ && ch.pos.y < zn.maxY);
+        pointInZoneXZ(zn, ch.pos.x, ch.pos.z) && ch.pos.y < zn.maxY);
       if (burning) {
         if (ch._lavaT == null) {
           ch._lavaT = 0;
@@ -2691,6 +3381,7 @@ function step(dt) {
     const drifted = kc && ch.pos.distanceToSquared(kc) > kr * kr;
     if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity) || drifted)) {
       ch.hp = 0;
+      ch.jetpack = null;
       ch.deaths++;
       if (ch.isPlayer) {
         ch.alive = false; sfx('death'); hud.damageFlash(); hud.showRespawn(true, RESPAWN_TIME);
@@ -2779,10 +3470,14 @@ function stepMultiplayer(dt) {
   G.timeLeft = Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000);
   setListener(G.player.pos);
   G.world.update?.(dt, G.characters);
+  updateMeteorShower(dt);
+  updateCometField(dt);
+  updateImpactPickupPops(dt);
   G.world.updateDoors?.(G.characters, dt);
   updateStormAudio();
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
   G.player.update(dt, fire);
+  setJetpackThrust(!!(G.player.alive && G.player.jetpack?.active));
   G.projectiles.update(dt, G.characters);
   G.pickups.update(dt, [G.player]);
   G.fxPool.update(dt);
@@ -2802,6 +3497,7 @@ function stepMultiplayer(dt) {
 }
 
 // Debug handles: inspect state / fast-forward the sim headlessly
+if (Object.isExtensible(window)) {
 window.__game = () => G;
 window.__mp = () => ({
   isHost: multiplayer.isHost,
@@ -2827,6 +3523,7 @@ window.__bench = (frames = 60) => {
   return { msPerFrame: +((performance.now() - t0) / frames).toFixed(2),
     drawCalls: calls, triangles: tris, bloom: bloomPass.enabled, safari: performanceProfile.safari,
     shadows: renderer.shadowMap.enabled, pixelRatio: renderer.getPixelRatio(),
+    adaptiveRenderScale: adaptiveRender.scale,
     postprocessing: performanceProfile.postprocessing && !usesLightRenderPath(),
     lightRenderPath: usesLightRenderPath() };
 };
@@ -2836,9 +3533,10 @@ window.__step = (seconds) => {
   for (let i = 0; i < n && G; i++) step(0.016);
   return G ? { time: G.timeLeft.toFixed(0), scores: { ...G.scores } } : 'match ended';
 };
-window.__start = (id, mode) => startMatch(MAPS.find(m => m.id === id), mode || selectedMode);
+window.__start = (id, mode) => queueMapLoad(MAPS.find(m => m.id === id), mode || selectedMode);
 window.__lobby = () => startAtrium();
 window.__hall = () => startHallOfFame();
+}
 
 // Boot straight into the lobby — pick your arena by walking into its gate.
 // (Wait for textures so the first build isn't placeholder canvases; 3s cap.)

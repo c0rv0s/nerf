@@ -52,8 +52,8 @@ const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40'
 const MODES = ['ffa', 'tdm'];
 const DEFAULT_MODE = 'ffa';
 const TEAM_COLORS = { blue: '#5cb3ff', red: '#ff5c5c' };
-const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor']);
-const WORLD_EVENT_IDS = new Set(['lava', 'water', 'storm', 'void']);
+const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor', 'thunderbolt']);
+const WORLD_EVENT_IDS = new Set(['lava', 'water', 'storm', 'void', 'meteor', 'comet']);
 const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(?:er|ing)?|motherfucker|nigg(?:er|a)|piss|shit|slut|wanker|whore)\b/gi;
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
@@ -66,8 +66,10 @@ const MAPS = [
     -40, 20.2, 40], [40, 20.2, -40], [8, 10.2, 45], [-8, 10.2, -45], [-34, 0.1, -30], [34, 0.1, -30], [-34, 0.1, 30], [34, 0.1, 30]] },
   { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },
-  { id: 'prism', name: 'PRISM RUN', bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
+  { id: 'prism', name: 'PRISM RUN', secret: true, bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
+  { id: 'olympus', name: 'OLYMPUS MONS', secret: true, bounds: 170, spawns: [[-18, 60.6, 32], [18, 60.6, 32], [-52, 60.6, 38], [52, 60.6, 38], [-44, 60.6, -14], [44, 60.6, -14], [-15, 60.6, -52], [15, 60.6, -52], [-44, 74.6, 20], [44, 74.6, 20], [-20, 90.6, 26], [20, 90.6, 26]] },
 ];
+const LEADERBOARD_MAP_IDS = new Set([...MAPS.map(map => map.id), 'olympus']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -199,7 +201,6 @@ function cleanLeaderboardName(value) {
 }
 
 function cleanScorePayload(body) {
-  const mapIds = new Set(MAPS.map(map => map.id));
   const name = cleanLeaderboardName(body?.name);
   const score = Number(body?.score);
   const map = String(body?.map || '');
@@ -207,7 +208,7 @@ function cleanScorePayload(body) {
   const playType = String(body?.playType || '');
   const awards = sanitizeAwards(body?.awards);
   if (!name || !Number.isInteger(score) || score < 0 || score > 500000 ||
-      !mapIds.has(map) || !MODES.includes(gameType) || !['single', 'multiplayer'].includes(playType)) return null;
+      !LEADERBOARD_MAP_IDS.has(map) || !MODES.includes(gameType) || !['single', 'multiplayer'].includes(playType)) return null;
   return { name, score, map, gameType, playType, awards };
 }
 
@@ -920,7 +921,8 @@ function publicSlots(lobby) {
 function chooseVotedMap(lobby) {
   const counts = new Map();
   for (const id of lobby.votes.values()) counts.set(id, (counts.get(id) || 0) + 1);
-  if (counts.size === 0) return MAPS[Math.floor(Math.random() * MAPS.length)];
+  const publicMaps = MAPS.filter(map => !map.secret);
+  if (counts.size === 0) return publicMaps[Math.floor(Math.random() * publicMaps.length)] || MAPS[0];
   const max = Math.max(...counts.values());
   const tied = [...counts.entries()].filter(([, c]) => c === max).map(([id]) => id);
   return MAPS.find(m => m.id === tied[Math.floor(Math.random() * tied.length)]) || MAPS[0];
@@ -1242,6 +1244,40 @@ function sanitizeEvent(ev, allowedIds) {
       color: /^#[0-9a-f]{6}$/i.test(String(ev.color || '')) ? ev.color : '#ffd23c',
     };
   }
+  if (type === 'meteor') {
+    const start = sanitizeEventPoint(ev.start);
+    const target = sanitizeEventPoint(ev.target);
+    if (!start || !target) return null;
+    return {
+      type,
+      id: String(ev.id || '').replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 64),
+      start,
+      target,
+      duration: Math.max(0.5, Math.min(10, finite(ev.duration, 2.8))),
+    };
+  }
+  if (type === 'comet-spawn') {
+    const start = sanitizeEventPoint(ev.start);
+    const velocity = sanitizeEventVector(ev.velocity);
+    if (!start || !velocity) return null;
+    return {
+      type,
+      id: String(ev.id || '').replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 64),
+      start,
+      velocity,
+      life: Math.max(1, Math.min(20, finite(ev.life, 11))),
+      health: Math.max(1, Math.min(500, finite(ev.health, 150))),
+    };
+  }
+  if (type === 'comet-impact') {
+    const pos = sanitizeEventPoint(ev.pos);
+    if (!pos) return null;
+    return {
+      type,
+      id: String(ev.id || '').replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 64),
+      pos,
+    };
+  }
   return null;
 }
 
@@ -1253,8 +1289,17 @@ function sanitizeEventPoint(p) {
   if (!p || typeof p !== 'object') return null;
   return {
     x: Math.max(-250, Math.min(250, finite(p.x, 0))),
-    y: Math.max(-50, Math.min(120, finite(p.y, 0))),
+    y: Math.max(-250, Math.min(250, finite(p.y, 0))),
     z: Math.max(-250, Math.min(250, finite(p.z, 0))),
+  };
+}
+
+function sanitizeEventVector(v) {
+  if (!v || typeof v !== 'object') return null;
+  return {
+    x: Math.max(-100, Math.min(100, finite(v.x, 0))),
+    y: Math.max(-100, Math.min(100, finite(v.y, 0))),
+    z: Math.max(-100, Math.min(100, finite(v.z, 0))),
   };
 }
 

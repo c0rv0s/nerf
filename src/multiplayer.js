@@ -1,5 +1,6 @@
 import { MAPS } from './maps.js';
 import * as THREE from 'three';
+import { canVoteForMap } from './secret-maps.js';
 
 const WS_PATH = '/ws';
 
@@ -380,7 +381,7 @@ export class MultiplayerClient extends EventTarget {
       const mapWrap = document.createElement('div');
       mapWrap.className = 'mp-section';
       mapWrap.innerHTML = '<h3>Map</h3>';
-      for (const map of MAPS) {
+      for (const map of MAPS.filter(canVoteForMap)) {
         const btn = document.createElement('button');
         btn.className = 'mp-map';
         btn.innerHTML = `<span>${map.emoji} ${map.name}</span><small>${votes[map.id] || 0} votes</small>`;

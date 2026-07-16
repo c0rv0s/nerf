@@ -1,9 +1,10 @@
 // First-person player: pointer-lock look, WASD movement, firing, weapon switching,
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
-import { moveCharacter, moveCharacterUp, cardinal, clamp } from './engine.js';
+import { moveCharacter, moveCharacterUp, cardinal, clamp, pointInZoneXZ } from './engine.js';
 import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx } from './audio.js';
+import { stepJetpack } from './jetpack.js';
 
 export class Player {
   constructor(camera, world) {
@@ -42,6 +43,7 @@ export class Player {
     this._camSnap = true;
     this._nrm = new THREE.Vector3();
     this.djumpTime = 0;        // double-jump powerup timer
+    this.jetpack = null;       // {fuel, cooldown, active}; cleared on death
     this._airJumped = false;
     this.keys = {};
     this.firing = false;
@@ -124,6 +126,7 @@ export class Player {
     this.up.set(0, 1, 0);
     this._camSnap = true;   // snap the roll on spawn, don't ease from stale
     this.djumpTime = 0;
+    this.jetpack = null;
     this._airJumped = false;
     this.recoil = 0;
     this.cameraKick = 0;
@@ -335,6 +338,14 @@ export class Player {
       this._airJumped = true; this.jumpBuffer = 0; sfx('boing');
     }
 
+    // Death-bound jetpack equipment. Space supplies capped upward thrust for
+    // eight total seconds of fuel; an empty pack locks for four seconds, then
+    // refills. Releasing Space preserves the remaining fuel for later bursts.
+    if (this.jetpack) {
+      const canThrust = this.keys['Space'] && !paralyzed && !vine && !waterfall && !water && !env.lava;
+      stepJetpack(this.jetpack, this.vel, dt, canThrust);
+    }
+
     this.grounded = moveCharacter(this, this.world, dt);
     if (this.grounded) this._airJumped = false;
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
@@ -430,8 +441,7 @@ export class Player {
     let lava = false;
     for (const z of this.world.lavaZones || []) {
       if (
-        px >= z.minX && px <= z.maxX &&
-        pz >= z.minZ && pz <= z.maxZ &&
+        pointInZoneXZ(z, px, pz) &&
         py < z.maxY
       ) { lava = true; break; }
     }

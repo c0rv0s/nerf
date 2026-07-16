@@ -1,11 +1,20 @@
-// Spinning/bobbing pickup items: weapons, ammo, health, hidden stars,
-// and the gold/silver Nerf medal powerups.
+// Spinning/bobbing pickup items: weapons, ammo, health, traversal gear,
+// hidden stars, and the gold/silver Nerf medal powerups.
 import * as THREE from 'three';
 import { WEAPONS, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
-const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45 };
+const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45, jetpack: 60 };
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const weaponPickupModels = {};
+
+function weaponPickupModel(id) {
+  // Geometry construction and merging is expensive enough to show up as an
+  // impact hitch when a meteor creates a weapon drop. Clones share the static
+  // geometry/materials while retaining independent transforms.
+  weaponPickupModels[id] ||= buildBlaster(id);
+  return weaponPickupModels[id].clone();
+}
 
 function pickupUp(def) {
   return def.up || WORLD_UP;
@@ -51,7 +60,7 @@ function makeMesh(def) {
   const glowMat = (color, glow = 0.45) => new THREE.MeshStandardMaterial({
     color, roughness: 0.5, emissive: color, emissiveIntensity: glow });
   if (def.kind === 'weapon' || def.kind === 'drop') {
-    const gun = buildBlaster(def.weapon);
+    const gun = weaponPickupModel(def.weapon);
     gun.rotation.y = Math.PI / 2;
     gun.rotation.z = -0.15;
     g.add(gun);
@@ -103,6 +112,28 @@ function makeMesh(def) {
       c.position.x = dx;
       g.add(c);
     }
+  } else if (def.kind === 'jetpack') {
+    const shell = new THREE.MeshStandardMaterial({
+      color: 0x26354b, roughness: 0.34, metalness: 0.58,
+      emissive: 0x10263d, emissiveIntensity: 0.42,
+    });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.72, 0.34), shell);
+    g.add(body);
+    for (const x of [-0.29, 0.29]) {
+      const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 0.72, 12),
+        glowMat(0x43cfff, 0.62));
+      tank.position.x = x;
+      const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 10), glowMat(0xff8a32, 1.4));
+      nozzle.position.set(x, -0.52, 0);
+      nozzle.rotation.z = Math.PI;
+      g.add(tank, nozzle);
+    }
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.13, 0.28), glowMat(0x43cfff, 0.9));
+    wing.position.y = 0.16;
+    g.add(wing);
+    const light = new THREE.PointLight(0x43cfff, 16, 9);
+    light.position.y = -0.25;
+    g.add(light);
   } else if (def.kind === 'star') {
     const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), glowMat(0xffe040, 1.4));
     g.add(star);
@@ -239,11 +270,19 @@ export class PickupManager {
       for (const L of it.lights) L.position.copy(it.mesh.position);
       if (it.hostMirror) continue;
 
+      const itemUp = pickupUp(it.def);
+      const itemHeight = pickupFloatHeight(it.def);
+      const pickupX = it.def.pos.x + itemUp.x * itemHeight;
+      const pickupY = it.def.pos.y + itemUp.y * itemHeight;
+      const pickupZ = it.def.pos.z + itemUp.z * itemHeight;
       for (const ch of characters) {
         if (!ch.alive) continue;
-        const pickupCenter = it.def.pos.clone().addScaledVector(pickupUp(it.def), pickupFloatHeight(it.def));
-        const charCenter = ch.pos.clone().addScaledVector(ch.up || WORLD_UP, ch.height * 0.5);
-        if (charCenter.distanceToSquared(pickupCenter) < 5.2) {
+        const up = ch.up || WORLD_UP;
+        const centerHeight = ch.height * 0.5;
+        const dx = ch.pos.x + up.x * centerHeight - pickupX;
+        const dy = ch.pos.y + up.y * centerHeight - pickupY;
+        const dz = ch.pos.z + up.z * centerHeight - pickupZ;
+        if (dx * dx + dy * dy + dz * dz < 5.2) {
           if (this.hooks.onPickup(ch, it.def)) {
             it.active = false;
             it.mesh.visible = false;

@@ -7,7 +7,7 @@ import { sfx } from './audio.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
-export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor'];
+export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor', 'thunderbolt'];
 
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
@@ -41,6 +41,10 @@ export const WEAPONS = {
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,
                 beam: true, beamBounces: 5, beamRange: 130, beamLife: 2.8, beamRetract: 0.9,
                 beamDamageInterval: 0.4, secretMapOnly: true, texture: 'refractor', sound: 'hyper' },
+  thunderbolt:{ name: 'THUNDERBOLT',    slot: 9, dmg: 46, rof: 0.62, speed: 165, spread: 0.002,
+                pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xffd43b, size: 0.18,
+                lightning: true, chainRange: 17, chainCount: 3, chainDmg: 27,
+                trail: true, secretMapOnly: true, texture: 'power-gold', sound: 'thunder' },
 };
 
 // Presentation-only weapon character. These values never change damage, spread,
@@ -55,6 +59,7 @@ export const WEAPON_FEEL = {
   hyper:      { recoil: 1.15, camera: 0.011, return: 9,  flash: 1.1 },
   parasite:   { recoil: 0.92, camera: 0.008, return: 10, flash: 1.05 },
   refractor:  { recoil: 0.7,  camera: 0.006, return: 8,  flash: 1.35 },
+  thunderbolt:{ recoil: 1.45, camera: 0.016, return: 7,  flash: 1.65 },
 };
 
 export function nextLoadedWeaponAfter(currentId, owned = {}, ammo = {}) {
@@ -221,6 +226,24 @@ export function buildBlaster(id) {
     add(glow, C(0.115, 0.115, 0.035), 0, -0.13, 0.02, -0.16, HPI);
     add(glow, C(0.115, 0.115, 0.035), 0, 0.13, 0.02, -0.16, HPI);
     add(glow, B(0.14, 0.035, 0.35), 0, 0, 0.08, 0.18);
+  } else if (id === 'thunderbolt') {
+    // A compact ceremonial rail-launcher: twin golden prongs cradle an
+    // energized zig-zag core, giving Olympus its own unmistakable silhouette.
+    add(geos, B(0.24, 0.28, 0.86), SHELL, 0, 0, 0.05);
+    add(geos, B(0.1, 0.08, 0.72), WHITE, 0, 0.18, -0.04);
+    add(geos, C(0.045, 0.045, 0.92), DARK, -0.13, 0.03, -0.58, HPI);
+    add(geos, C(0.045, 0.045, 0.92), DARK, 0.13, 0.03, -0.58, HPI);
+    add(geos, B(0.1, 0.18, 0.34), WHITE, -0.17, 0.02, -0.7);
+    add(geos, B(0.1, 0.18, 0.34), WHITE, 0.17, 0.02, -0.7);
+    add(geos, C(0.16, 0.16, 0.1), DARK, 0, 0.02, 0.38, 0, HPI);
+    add(geos, B(0.14, 0.3, 0.17), DARK, 0, -0.24, 0.25, 0.28);
+    add(geos, B(0.38, 0.06, 0.25), WHITE, 0, -0.02, 0.46);
+    add(glow, new THREE.TorusGeometry(0.14, 0.025, 7, 20), 0, 0, 0.03, -0.38);
+    for (const [x, z, a] of [[-0.055, -0.05, -0.48], [0.055, -0.27, 0.48], [-0.055, -0.49, -0.48], [0.055, -0.71, 0.48]]) {
+      const bolt = B(0.045, 0.055, 0.28);
+      bolt.rotateY(a);
+      add(glow, bolt, 0, x, 0.03, z);
+    }
   } else { // refractor
     add(geos, B(0.13, 0.2, 0.72), SHELL, 0, 0, 0.08);
     add(geos, B(0.22, 0.08, 0.4), WHITE, 0, 0.08, -0.3);
@@ -251,6 +274,7 @@ export class ProjectileSystem {
     this.fx = fx;           // {spawnPuff(pos,color,scale), onDamage(target, dmg, attacker)}
     this.projectiles = [];
     this.beams = [];
+    this.lightningArcs = [];
     this.nextShotId = 1;
     this.nextBeamId = 1;
     this.geoBall = new THREE.SphereGeometry(1, 8, 6);
@@ -350,6 +374,51 @@ export class ProjectileSystem {
     return seg;
   }
 
+  spawnLightningArc(start, end, color) {
+    const points = [];
+    const count = 9;
+    const jitter = Math.min(0.9, start.distanceTo(end) * 0.055);
+    for (let i = 0; i < count; i++) {
+      const t = i / (count - 1);
+      const point = start.clone().lerp(end, t);
+      if (i > 0 && i < count - 1) {
+        point.x += rand(-jitter, jitter);
+        point.y += rand(-jitter * 0.65, jitter * 0.65);
+        point.z += rand(-jitter, jitter);
+      }
+      points.push(point);
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const glowMat = new THREE.LineBasicMaterial({
+      color, transparent: true, opacity: 0.62, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const coreMat = new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.96, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const group = new THREE.Group();
+    group.add(new THREE.Line(geometry, glowMat), new THREE.Line(geometry, coreMat));
+    this.scene.add(group);
+    this.lightningArcs.push({ group, geometry, mats: [glowMat, coreMat], age: 0, life: 0.22 });
+  }
+
+  updateLightningArcs(dt) {
+    for (let i = this.lightningArcs.length - 1; i >= 0; i--) {
+      const arc = this.lightningArcs[i];
+      arc.age += dt;
+      const fade = Math.max(0, 1 - arc.age / arc.life);
+      arc.mats[0].opacity = 0.62 * fade;
+      arc.mats[1].opacity = 0.96 * fade;
+      if (arc.age >= arc.life) {
+        this.scene.remove(arc.group);
+        arc.geometry.dispose();
+        for (const material of arc.mats) material.dispose();
+        this.lightningArcs.splice(i, 1);
+      }
+    }
+  }
+
   placeBeamSegment(seg, start, end) {
     const len = start.distanceTo(end);
     seg.activeStart.copy(start);
@@ -398,6 +467,10 @@ export class ProjectileSystem {
   spawnProjectile(owner, origin, dir, weapon, opts = {}) {
     const mesh = new THREE.Mesh(this.geoBall, this.matFor(weapon.color));
     if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
+    else if (weapon.lightning) {
+      mesh.scale.set(weapon.size * 0.72, weapon.size * 0.72, weapon.size * 4.2);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.clone().normalize());
+    }
     else mesh.scale.setScalar(opts.size ?? weapon.size);
     mesh.position.copy(origin);
     this.scene.add(mesh);
@@ -476,6 +549,40 @@ export class ProjectileSystem {
     }
   }
 
+  dischargeThunderbolt(p, primary, characters) {
+    if (p.discharged) return;
+    p.discharged = true;
+    sfx('thunder', p.pos);
+    this.fx.spawnPuff(p.pos, p.weapon.color, 2.5);
+    let origin = p.pos.clone();
+    const struck = new Set(primary ? [primary] : []);
+    for (let hop = 0; hop < (p.weapon.chainCount || 0); hop++) {
+      let target = null;
+      let targetCenter = null;
+      let best = (p.weapon.chainRange || 0) ** 2;
+      for (const ch of characters) {
+        if (!ch.alive || ch === p.owner || ch.team === p.owner.team || struck.has(ch)) continue;
+        const center = ch.pos.clone().addScaledVector(ch.up || WORLD_UP, ch.height * 0.55);
+        const distSq = center.distanceToSquared(origin);
+        if (distSq >= best) continue;
+        const dist = Math.sqrt(distSq);
+        const dir = center.clone().sub(origin).normalize();
+        const wall = this.rayWorld(origin, dir, dist);
+        if (wall && wall.t < dist - 0.3) continue;
+        target = ch;
+        targetCenter = center;
+        best = distSq;
+      }
+      if (!target) break;
+      this.spawnLightningArc(origin, targetCenter, p.weapon.color);
+      const damage = (p.weapon.chainDmg || p.weapon.dmg) * Math.pow(0.78, hop);
+      this.fx.onDamage(target, damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+      this.fx.spawnPuff(targetCenter, p.weapon.color, 0.85);
+      struck.add(target);
+      origin = targetCenter;
+    }
+  }
+
   distancePointToSegment(point, a, b) {
     const ab = b.clone().sub(a);
     const d2 = ab.lengthSq();
@@ -497,6 +604,16 @@ export class ProjectileSystem {
     const foot = ch.pos.clone().addScaledVector(up, ch.radius || 0.45);
     const head = ch.pos.clone().addScaledVector(up, Math.max(ch.height - (ch.radius || 0.45), ch.height * 0.55));
     return this.distancePointToSegment(p.pos, foot, head) < radius;
+  }
+
+  shootableTargets() {
+    return (this.fx.targets?.() || []).filter(target =>
+      target && target.active !== false && target.destroyed !== true && target.pos);
+  }
+
+  projectileTouchesTarget(target, p) {
+    const radius = (target.radius || 1) + (p.weapon.size || 0.12) * 0.6;
+    return p.pos.distanceToSquared(target.pos) < radius * radius;
   }
 
   hitLimitReached(p, ch) {
@@ -565,6 +682,17 @@ export class ProjectileSystem {
           b.hitCooldowns.set(ch, b.weapon.beamDamageInterval || 0.4);
         }
       }
+      for (const target of this.shootableTargets()) {
+        if ((b.hitCooldowns.get(target) || 0) > 0) continue;
+        const radius = (target.radius || 1) + 0.18;
+        if (b.segments.some(seg => seg.group.visible &&
+            this.distancePointToSegment(target.pos, seg.activeStart, seg.activeEnd) < radius)) {
+          this.fx.onTargetDamage?.(
+            target, b.weapon.dmg * b.owner.damageMult, b.owner, { shotGroup: b.shotGroup });
+          this.fx.spawnPuff(target.pos, b.weapon.color, 0.72);
+          b.hitCooldowns.set(target, b.weapon.beamDamageInterval || 0.4);
+        }
+      }
       if (b.age >= b.life) {
         for (const seg of b.segments) this.scene.remove(seg.group);
         this.beams.splice(bi, 1);
@@ -574,6 +702,7 @@ export class ProjectileSystem {
 
   // Characters: array of {pos, height, radius, alive, team, ...}
   update(dt, characters) {
+    this.updateLightningArcs(dt);
     this.updateBeams(dt, characters);
     const step = new THREE.Vector3();
     const prev = new THREE.Vector3();
@@ -603,6 +732,7 @@ export class ProjectileSystem {
           if (this.projectileTouchesCharacter(ch, p)) {
             if (p.limitedTarget === ch) p.limitedTargetHits.count++;
             this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+            if (p.weapon.lightning) p.chainPrimary = ch;
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
             if (p.weapon.split && !p.noSplit) {
               this.splitParasite(p, ch);
@@ -612,6 +742,21 @@ export class ProjectileSystem {
             } else {
               dead = true;
             }
+            break;
+          }
+        }
+        // Map-specific shootable hazards (currently Asteroid Belt comets) use
+        // the same sub-stepped collision path as characters, so Hyperstrike
+        // and other fast rounds cannot tunnel through them between frames.
+        if (!dead) {
+          for (const target of this.shootableTargets()) {
+            if (p.pierced?.has(target) || p.ignore?.has(target)) continue;
+            if (!this.projectileTouchesTarget(target, p)) continue;
+            this.fx.onTargetDamage?.(
+              target, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+            this.fx.spawnPuff(p.pos, p.weapon.color, 0.72);
+            if (p.weapon.pierce && p.pierced.size < p.weapon.pierce) p.pierced.add(target);
+            else dead = true;
             break;
           }
         }
@@ -638,6 +783,7 @@ export class ProjectileSystem {
       }
 
       if (dead) {
+        if (p.weapon.lightning && p.life > 0) this.dischargeThunderbolt(p, p.chainPrimary, characters);
         if (p.weapon.splash && p.life > 0) this.explode(p);
         else if (p.life > 0) this.fx.spawnPuff(p.pos, p.weapon.color, 0.5);
         this.scene.remove(p.mesh);
@@ -661,6 +807,13 @@ export class ProjectileSystem {
         this.fx.onDamage(ch, dmg * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
       }
     }
+    for (const target of this.shootableTargets()) {
+      const d = target.pos.distanceTo(p.pos);
+      if (d >= p.weapon.splash + (target.radius || 1)) continue;
+      const dmg = p.weapon.splashDmg * (1 - Math.min(1, d / p.weapon.splash));
+      if (dmg > 0) this.fx.onTargetDamage?.(
+        target, dmg * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+    }
   }
 
   clear() {
@@ -668,35 +821,70 @@ export class ProjectileSystem {
     this.projectiles.length = 0;
     for (const b of this.beams) for (const seg of b.segments) this.scene.remove(seg.group);
     this.beams.length = 0;
+    for (const arc of this.lightningArcs) {
+      this.scene.remove(arc.group);
+      arc.geometry.dispose();
+      for (const material of arc.mats) material.dispose();
+    }
+    this.lightningArcs.length = 0;
   }
 }
 
-// Simple expanding-fading puff effects.
+// Simple expanding-fading puff effects. These happen on almost every shot,
+// impact, trail tick, and damage event, so keep a bounded set of meshes and
+// materials alive instead of allocating and collecting them during a fight.
 export class FXPool {
-  constructor(scene) {
+  constructor(scene, capacity = 72) {
     this.scene = scene;
     this.puffs = [];
+    this.free = [];
     this.geo = new THREE.SphereGeometry(1, 8, 6);
     this.ringGeo = new THREE.TorusGeometry(1, 0.09, 5, 18);
+    for (let i = 0; i < capacity; i++) this.free.push(this.createPuff());
   }
-  spawnPuff(pos, color, scale = 1) {
+  createPuff() {
     const coreMat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.72, depthWrite: false,
+      color: 0xffffff, transparent: true, opacity: 0.72, depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const ringMat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.9, depthWrite: false,
+      color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const group = new THREE.Group();
+    group.visible = false;
     const core = new THREE.Mesh(this.geo, coreMat);
     const ring = new THREE.Mesh(this.ringGeo, ringMat);
-    ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
     group.add(core, ring);
-    group.position.copy(pos);
-    group.scale.setScalar(scale * 0.22);
-    this.scene.add(group);
-    this.puffs.push({ m: group, core, ring, mats: [coreMat, ringMat], t: 0, scale });
+    return { m: group, core, ring, coreMat, ringMat, t: 0, scale: 1 };
+  }
+  acquirePuff() {
+    if (this.free.length) return this.free.pop();
+    // Preserve a stable ceiling even when several rapid-fire effects overlap.
+    // Recycling the oldest puff is visually preferable to a GC spike.
+    const oldest = this.puffs.shift();
+    this.scene.remove(oldest.m);
+    return oldest;
+  }
+  releasePuff(p) {
+    this.scene.remove(p.m);
+    p.m.visible = false;
+    this.free.push(p);
+  }
+  spawnPuff(pos, color, scale = 1) {
+    const p = this.acquirePuff();
+    p.t = 0;
+    p.scale = scale;
+    p.coreMat.color.setHex(color);
+    p.ringMat.color.setHex(color);
+    p.coreMat.opacity = 0.72;
+    p.ringMat.opacity = 0.9;
+    p.ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    p.m.position.copy(pos);
+    p.m.scale.setScalar(scale * 0.22);
+    p.m.visible = true;
+    this.scene.add(p.m);
+    this.puffs.push(p);
   }
   update(dt) {
     for (let i = this.puffs.length - 1; i >= 0; i--) {
@@ -706,20 +894,26 @@ export class FXPool {
       p.m.scale.setScalar(p.scale * (0.22 + ease * 0.9));
       p.core.scale.setScalar(1 + ease * 0.35);
       p.ring.scale.setScalar(0.7 + ease * 1.7);
-      p.mats[0].opacity = Math.max(0, 0.72 * (1 - p.t));
-      p.mats[1].opacity = Math.max(0, 0.9 * (1 - p.t) ** 1.5);
+      p.coreMat.opacity = Math.max(0, 0.72 * (1 - p.t));
+      p.ringMat.opacity = Math.max(0, 0.9 * (1 - p.t) ** 1.5);
       if (p.t >= 1) {
-        this.scene.remove(p.m);
-        for (const mat of p.mats) mat.dispose();
         this.puffs.splice(i, 1);
+        this.releasePuff(p);
       }
     }
   }
   clear() {
-    for (const p of this.puffs) {
+    while (this.puffs.length) this.releasePuff(this.puffs.pop());
+  }
+  dispose() {
+    this.clear();
+    for (const p of this.free) {
       this.scene.remove(p.m);
-      for (const mat of p.mats) mat.dispose();
+      p.coreMat.dispose();
+      p.ringMat.dispose();
     }
-    this.puffs.length = 0;
+    this.free.length = 0;
+    this.geo.dispose();
+    this.ringGeo.dispose();
   }
 }

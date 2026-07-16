@@ -1,9 +1,10 @@
 // NPC bots: waypoint patrol + combat (strafe, aim with error, fire).
 // On low-gravity maps they make ballistic jumps between waypoints.
 import * as THREE from 'three';
-import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWaypoint, rand, pick, clamp } from './engine.js';
+import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
+import { stepJetpack } from './jetpack.js';
 
 export function buildBotMesh(color) {
   const g = new THREE.Group();
@@ -40,6 +41,7 @@ export class Bot {
     this.damageMult = 1;
     this.powerup = null;
     this.paralyzeT = 0;
+    this.jetpack = null;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -72,6 +74,8 @@ export class Bot {
     this._vineStallZone = null;
     this._waterRecoveryT = 0;
     this._waterRecoveryPath = false;
+    this._jetpackThinkT = 0;
+    this._jetpackWants = false;
 
     const { group } = buildBotMesh(color);
     this.mesh = group;
@@ -103,6 +107,7 @@ export class Bot {
     this.speedTime = 0;
     this.powerup = null;
     this.paralyzeT = 0;
+    this.jetpack = null;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -121,6 +126,8 @@ export class Bot {
     this._vineStallZone = null;
     this._waterRecoveryT = 0;
     this._waterRecoveryPath = false;
+    this._jetpackThinkT = 0;
+    this._jetpackWants = false;
     this._drownT = 0;
     this._drownDamageT = 0;
     // PRISM RUN: orient to whatever surface we spawned on
@@ -160,6 +167,8 @@ export class Bot {
   }
 
   die() {
+    this.jetpack = null;
+    this._jetpackWants = false;
     this.alive = false;
     this.mesh.visible = false;
   }
@@ -235,7 +244,8 @@ export class Bot {
         (k === 'weapon' && !(this.weapons[it.def.weapon] && this.ammo[it.def.weapon] > 0)) ||
         (k === 'health' && this.hp < 60) ||
         (k === 'shield' && !(this.shield > 0)) ||
-        (k === 'speed' && !(this.speedMult > 1));
+        (k === 'speed' && !(this.speedMult > 1)) ||
+        (k === 'jetpack' && !this.jetpack);
       if (!want) continue;
       const d = it.def.pos.distanceTo(this.pos);
       if (d > 80) continue;
@@ -474,6 +484,7 @@ export class Bot {
 
     if (this.paralyzeT > 0) {
       this.paralyzeT = Math.max(0, this.paralyzeT - dt);
+      stepJetpack(this.jetpack, this.vel, dt, false);
       this.vel.x *= Math.exp(-12 * dt);
       this.vel.z *= Math.exp(-12 * dt);
       this.grounded = moveCharacter(this, this.world, dt);
@@ -666,6 +677,7 @@ export class Bot {
     }
     if (vine) this._applyVineMotion(vine, dt, moveX, moveZ, wpTarget);
     else if (water) this._applyWaterMotion(water, dt);
+    this._updateJetpack(dt, wpTarget, vine, water);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
     if (vine) this._trackVineStall(vine, dt, moveX, moveZ, wpTarget);
@@ -708,6 +720,53 @@ export class Bot {
       this.powerup.timeLeft -= dt;
       if (this.powerup.timeLeft <= 0) { this.powerup = null; this.damageMult = 1; }
     }
+  }
+
+  // Jetpacks supplement the waypoint graph rather than replacing it. Bots use
+  // them for visible higher route nodes, elevated opponents, and recoverable
+  // falls, but never blindly thrust into a floor or ceiling between levels.
+  _updateJetpack(dt, wpTarget, vine, water) {
+    const pack = this.jetpack;
+    if (!pack) return;
+
+    this._jetpackThinkT -= dt;
+    if (this._jetpackThinkT <= 0) {
+      this._jetpackThinkT = rand(0.16, 0.26);
+      this._jetpackWants = this._shouldUseJetpack(wpTarget);
+    }
+
+    const blocked = !!vine || !!water || this.paralyzeT > 0 ||
+      this._inLava(this.pos.x, this.pos.y, this.pos.z);
+    stepJetpack(pack, this.vel, dt, this._jetpackWants && !blocked);
+  }
+
+  _shouldUseJetpack(wpTarget) {
+    if (!this.jetpack || this.jetpack.cooldown > 0 || this.jetpack.fuel <= 0) return false;
+
+    let goal = wpTarget;
+    const enemy = this.target?.alive ? this.target : null;
+    if (enemy) {
+      const enemyDy = enemy.pos.y - this.pos.y;
+      const enemyFlatD = Math.hypot(enemy.pos.x - this.pos.x, enemy.pos.z - this.pos.z);
+      // Break from the route briefly when an opponent is clearly reachable on
+      // a ledge above us. The normal path remains intact for landing/recovery.
+      if (enemyDy > 3.5 && enemyFlatD < 28 &&
+          hasLOS(this.eye(), new THREE.Vector3(enemy.pos.x, enemy.pos.y + 1.2, enemy.pos.z), this.world)) {
+        goal = enemy.pos;
+      }
+    }
+    if (!goal) return false;
+
+    const dy = goal.y - this.pos.y;
+    const flatD = Math.hypot(goal.x - this.pos.x, goal.z - this.pos.z);
+    const climbing = dy > 2.1 && flatD < 32 && (flatD < 18 || dy > flatD * 0.18);
+    const recovering = !this.grounded && this.vel.y < -3 && dy > -0.5 && flatD < 18;
+    const belowKillFloor = Number.isFinite(this.world.killY) &&
+      this.pos.y < this.world.killY + 14 && dy > 0;
+    if (!climbing && !recovering && !belowKillFloor) return false;
+
+    const flightGoal = new THREE.Vector3(goal.x, Math.max(goal.y + 1.1, this.pos.y + 1.5), goal.z);
+    return hasLOS(this.eye(), flightGoal, this.world);
   }
 
   _waterZone() {
@@ -859,7 +918,7 @@ export class Bot {
 
   _inLava(x, y, z) {
     for (const l of this.world.lavaZones || []) {
-      if (x >= l.minX && x <= l.maxX && z >= l.minZ && z <= l.maxZ && y < l.maxY + 0.4) return true;
+      if (pointInZoneXZ(l, x, z) && y < l.maxY + 0.4) return true;
     }
     return false;
   }
@@ -867,7 +926,29 @@ export class Bot {
   _lavaAvoidVector(x, z) {
     let ax = 0, az = 0;
     for (const l of this.world.lavaZones || []) {
-      if (x < l.minX || x > l.maxX || z < l.minZ || z > l.maxZ) continue;
+      if (!pointInZoneXZ(l, x, z)) continue;
+      if (l.points?.length) {
+        // Head toward the closest polygon edge—the shortest reliable escape
+        // from an irregular pool—rather than away from its bounding box. Ring
+        // hazards use their inner shoreline so bots retreat toward the arena,
+        // never outward over the map edge.
+        let bestX = x, bestZ = z, bestD = Infinity;
+        const boundaries = l.holes?.length ? l.holes : [l.points];
+        for (const boundary of boundaries) {
+          for (let i = 0, j = boundary.length - 1; i < boundary.length; j = i++) {
+            const [x1, z1] = boundary[j], [x2, z2] = boundary[i];
+            const dx = x2 - x1, dz = z2 - z1;
+            const len2 = dx * dx + dz * dz || 1;
+            const t = clamp(((x - x1) * dx + (z - z1) * dz) / len2, 0, 1);
+            const qx = x1 + dx * t, qz = z1 + dz * t;
+            const d2 = (qx - x) ** 2 + (qz - z) ** 2;
+            if (d2 < bestD) { bestD = d2; bestX = qx; bestZ = qz; }
+          }
+        }
+        ax += bestX - x;
+        az += bestZ - z;
+        continue;
+      }
       const dl = Math.abs(x - l.minX), dr = Math.abs(l.maxX - x);
       const db = Math.abs(z - l.minZ), dt = Math.abs(l.maxZ - z);
       const m = Math.min(dl, dr, db, dt);
@@ -1007,7 +1088,10 @@ export class Bot {
   }
 }
 
-export const BOT_NAMES = ['Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper'];
+export const BOT_NAMES = [
+  'Whiplash', 'Tornado', 'Cyclone', 'Vortex', 'Blitz', 'Comet', 'Turbo', 'Zapper',
+  'Meteor', 'Riptide', 'Nova', 'Quake', 'Phantom', 'Rocket', 'Tempest', 'Ember',
+];
 
 function angDiff(a, b) {
   let d = a - b;

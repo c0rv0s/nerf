@@ -21,6 +21,7 @@ export class HUD {
       ammo: $('ammonum'), wname: $('weaponname'), slots: $('wslots'),
       left: $('scoreBlue'), right: $('scoreRed'), timer: $('timer'), top3: $('top3'),
       feed: $('killfeed'), msg: $('message'), power: $('powerup'),
+      jetpack: $('jetpackstatus'),
       awards: $('awards'),
       vignette: $('vignette'), hit: $('hitmarker'),
       respawn: $('respawn'), respawnCount: $('respawncount'),
@@ -103,6 +104,20 @@ export class HUD {
       setText(e.power, `${label} · ${Math.ceil(player.powerup.timeLeft)}s`);
     } else {
       setStyle(e.power, 'display', 'none');
+    }
+
+    if (player.jetpack) {
+      const pack = player.jetpack;
+      setStyle(e.jetpack, 'display', 'block');
+      if (pack.cooldown > 0) {
+        setClass(e.jetpack, 'panel cooling');
+        setText(e.jetpack, `JETPACK COOLING · ${pack.cooldown.toFixed(1)}s`);
+      } else {
+        setClass(e.jetpack, 'panel' + (pack.active ? ' active' : ''));
+        setText(e.jetpack, `JETPACK FUEL · ${pack.fuel.toFixed(1)}s`);
+      }
+    } else {
+      setStyle(e.jetpack, 'display', 'none');
     }
 
     // fading elements

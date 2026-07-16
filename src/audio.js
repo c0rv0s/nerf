@@ -4,6 +4,7 @@ let masterBus = null;
 let masterVolume = 1;
 let effectsVolume = 1;
 let rainAmbience = null;
+let jetpackAmbience = null;
 let _sourceAt = null;
 const noiseBuffers = new Map();
 const sampleBuffers = new Map();
@@ -263,6 +264,58 @@ export function setRainAmbience(level = 0) {
     const now = a.currentTime;
     rainAmbience.gain.gain.cancelScheduledValues(now);
     rainAmbience.gain.gain.setTargetAtTime(0.06 * target, now, 0.25);
+  } catch { /* audio blocked — fine */ }
+}
+
+// Continuous local jetpack thrust. A filtered noise wash supplies the exhaust
+// while a low oscillator gives it turbine weight; both share a quick attack
+// and a softer release so short Space taps do not click or sound like gunfire.
+export function setJetpackThrust(active = false) {
+  const next = !!active;
+  if (!jetpackAmbience && !next) return;
+  if (jetpackAmbience?.active === next) return;
+  try {
+    const a = ac();
+    if (!jetpackAmbience) {
+      const exhaust = a.createBufferSource();
+      exhaust.buffer = noiseBuffer(a, 2.4);
+      exhaust.loop = true;
+      const hp = a.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 75;
+      const lp = a.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 1250; lp.Q.value = 0.65;
+      const exhaustGain = a.createGain();
+      exhaustGain.gain.value = 0.82;
+
+      const turbine = a.createOscillator();
+      turbine.type = 'sawtooth';
+      turbine.frequency.value = 58;
+      const turbineGain = a.createGain();
+      turbineGain.gain.value = 0.18;
+
+      const flutter = a.createOscillator();
+      flutter.type = 'sine'; flutter.frequency.value = 16.5;
+      const flutterDepth = a.createGain();
+      flutterDepth.gain.value = 105;
+      flutter.connect(flutterDepth).connect(lp.frequency);
+
+      const gain = a.createGain();
+      gain.gain.value = 0.001;
+      exhaust.connect(hp).connect(lp).connect(exhaustGain).connect(gain);
+      turbine.connect(turbineGain).connect(gain);
+      gain.connect(bus(a));
+      exhaust.start(); turbine.start(); flutter.start();
+      jetpackAmbience = { gain, active: false };
+    }
+    const now = a.currentTime;
+    const gain = jetpackAmbience.gain.gain;
+    if (gain.cancelAndHoldAtTime) gain.cancelAndHoldAtTime(now);
+    else {
+      gain.cancelScheduledValues(now);
+      gain.setValueAtTime(Math.max(0.001, gain.value), now);
+    }
+    gain.setTargetAtTime(next ? 0.105 : 0.001, now, next ? 0.035 : 0.11);
+    jetpackAmbience.active = next;
   } catch { /* audio blocked — fine */ }
 }
 

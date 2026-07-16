@@ -6,9 +6,86 @@ export const rand = (a, b) => a + Math.random() * (b - a);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// Most gameplay collision queries only need the handful of solids around a
+// character or projectile.  Maps can contain hundreds of colliders, though,
+// and both projectiles and bot line-of-sight ask this question many times per
+// frame.  Index static colliders by X/Z cell once at map load; moving solids
+// (doors and trains) stay in a tiny always-checked list so they cannot go stale
+// as they move between cells.
+export function buildCollisionIndex(world, cellSize = 16) {
+  const columns = new Map();
+  const dynamic = [];
+  const add = (collider, minX, maxX, minZ, maxZ) => {
+    const fromX = Math.floor(minX / cellSize), toX = Math.floor(maxX / cellSize);
+    const fromZ = Math.floor(minZ / cellSize), toZ = Math.floor(maxZ / cellSize);
+    for (let x = fromX; x <= toX; x++) {
+      let column = columns.get(x);
+      if (!column) columns.set(x, column = new Map());
+      for (let z = fromZ; z <= toZ; z++) {
+        let cell = column.get(z);
+        if (!cell) column.set(z, cell = []);
+        cell.push(collider);
+      }
+    }
+  };
+
+  for (const collider of world.colliders || []) {
+    if (collider.dynamic) {
+      dynamic.push(collider);
+    } else if (collider.type === 'box') {
+      add(collider, collider.min.x, collider.max.x, collider.min.z, collider.max.z);
+    } else if (collider.type === 'sphere') {
+      const r = collider.radius;
+      add(collider, collider.center.x - r, collider.center.x + r,
+        collider.center.z - r, collider.center.z + r);
+    }
+  }
+  world.collisionIndex = {
+    cellSize,
+    columns,
+    dynamic,
+    colliderCount: world.colliders?.length || 0,
+    query: [],
+  };
+}
+
+function nearbyColliders(world, p, radius = 0) {
+  let index = world.collisionIndex;
+  // Doors arm after the waypoint graph is built. Rebuild once when a map adds
+  // a collider outside the usual construction phase.
+  if (!index || index.colliderCount !== (world.colliders?.length || 0)) {
+    buildCollisionIndex(world);
+    index = world.collisionIndex;
+  }
+  const out = index.query;
+  out.length = 0;
+  const stamp = ++collisionQueryStamp;
+  const cellSize = index.cellSize;
+  const fromX = Math.floor((p.x - radius) / cellSize);
+  const toX = Math.floor((p.x + radius) / cellSize);
+  const fromZ = Math.floor((p.z - radius) / cellSize);
+  const toZ = Math.floor((p.z + radius) / cellSize);
+  const addOnce = (collider) => {
+    if (collider._collisionQueryStamp === stamp) return;
+    collider._collisionQueryStamp = stamp;
+    out.push(collider);
+  };
+  for (let x = fromX; x <= toX; x++) {
+    const column = index.columns.get(x);
+    if (!column) continue;
+    for (let z = fromZ; z <= toZ; z++) {
+      const cell = column.get(z);
+      if (cell) for (const collider of cell) addOnce(collider);
+    }
+  }
+  for (const collider of index.dynamic) addOnce(collider);
+  return out;
+}
+
 const _v = new THREE.Vector3();
 const _l = new THREE.Vector3();
 const _cl = new THREE.Vector3();
+let collisionQueryStamp = 0;
 
 // Lazily build a ramp's oriented-box collider matching its visual slab.
 function rampOBB(r) {
@@ -63,6 +140,29 @@ export function rampSurfaceY(r, x, z) {
     ? (x - r.minX) / (r.maxX - r.minX)
     : (z - r.minZ) / (r.maxZ - r.minZ);
   return r.h0 + (r.h1 - r.h0) * clamp(t, 0, 1);
+}
+
+// Shared 2D hazard containment. Most zones are inexpensive rectangles; maps
+// that need a natural silhouette can provide an ordered `points: [[x,z], ...]`
+// polygon and gameplay will follow the visible outline exactly.
+export function pointInZoneXZ(zone, x, z) {
+  if (!zone.points?.length) {
+    return x >= zone.minX && x <= zone.maxX && z >= zone.minZ && z <= zone.maxZ;
+  }
+  const inPolygon = (points) => {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const [xi, zi] = points[i];
+      const [xj, zj] = points[j];
+      const crosses = (zi > z) !== (zj > z) &&
+        x < ((xj - xi) * (z - zi)) / (zj - zi) + xi;
+      if (crosses) inside = !inside;
+    }
+    return inside;
+  };
+  if (!inPolygon(zone.points)) return false;
+  for (const hole of zone.holes || []) if (inPolygon(hole)) return false;
+  return true;
 }
 
 function inRampFootprint(r, x, z, pad = 0) {
@@ -158,7 +258,7 @@ export function moveCharacter(char, world, dt) {
     for (const sy of sphereYs) {
       sp.set(char.pos.x, char.pos.y + sy, char.pos.z);
       const before = sp.clone();
-      resolveSphere(sp, r, world.colliders, out);
+      resolveSphere(sp, r, nearbyColliders(world, sp, r), out);
       char.pos.add(sp.sub(before));
     }
   }
@@ -272,7 +372,7 @@ export function moveCharacterUp(char, world, dt, nOut) {
     for (const o of offs) {
       sp.copy(char.pos).addScaledVector(up, o);
       before.copy(sp);
-      resolveSphereVec(sp, r, world.colliders, nOut);
+      resolveSphereVec(sp, r, nearbyColliders(world, sp, r), nOut);
       char.pos.add(sp.sub(before));
     }
   }
@@ -354,7 +454,7 @@ function pointHitsBox(p, radius, box, world) {
 // skipRamps: LOS checks ignore ramp slabs (they're thin; treating them as
 // 2.5m-thick blockers falsely severs waypoint links along slopes).
 export function pointHitsWorld(p, radius, world, skipRamps = false) {
-  for (const c of world.colliders) {
+  for (const c of nearbyColliders(world, p, radius)) {
     if (c.type === 'box') {
       if (pointHitsBox(p, radius, c, world)) return true;
     } else if (c.type === 'sphere') {
