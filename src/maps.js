@@ -5571,16 +5571,16 @@ export function buildOlympusMons(scene) {
   addOlympusVolcanicMound(scene, world, 0, 4, 12, 10, 1.8, 260);
   // The cave-mouth crown is solid. Launch from its west shoulder rather than
   // firing straight into the overhead crag.
-  addJumpPad(scene, world, -30, 0.42, -54, 21.5, 8.6, 7.2, 0xff5a24);
+  addJumpPad(scene, world, -30, 0.02, -54, 21.5, 8.6, 7.2, 0xff5a24);
   addJumpPad(scene, world, -18, 6.02, -44, 27, 16.1, 7.5, 0xff7a2e);
   addJumpPad(scene, world, 12, 13.02, -30, 28, -13.65, 9.45, 0xffa13a);
   addJumpPad(scene, world, -14, 21.02, -12, 20, 18, 2.2, 0xffc24a);
-  addJumpPad(scene, world, -30, 0.42, -4, 24, -9.6, 0, 0xff7a32);
+  addJumpPad(scene, world, -30, 0.02, -4, 24, -9.6, 0, 0xff7a32);
   // Offset the east pad from the central-platform vine so entering the climb
   // zone cannot accidentally trigger a launch. A slight northward push keeps
   // its landing centered on the same floating rock.
-  addJumpPad(scene, world, 30, 0.42, -10, 24, 9.6, 1.2, 0x72d8ff);
-  addJumpPad(scene, world, 0, 0.42, 20, 24, 0, 10.5, 0xffa13a);
+  addJumpPad(scene, world, 30, 0.02, -10, 24, 9.6, 1.2, 0x72d8ff);
+  addJumpPad(scene, world, 0, 0.02, 20, 24, 0, 10.5, 0xffa13a);
 
   // Slow embers make the full sixty-metre chamber legible without adding
   // collision or turning the view into particle noise.
@@ -5615,7 +5615,7 @@ export function buildOlympusMons(scene) {
   // west wall segment and left half of the visible pad buried in masonry.
   // Pull the lower lift pad away from the mid-deck lip so its arc rises above
   // the slab before entering the destination footprint.
-  addJumpPad(scene, world, 0, 0.42, -26, 32.3, 10, 10, 0xff8a32);
+  addJumpPad(scene, world, 0, 0.02, -26, 32.3, 10, 10, 0xff8a32);
   addJumpPad(scene, world, 22, 18.02, -8, 37, -14.04, 3.75, 0xffc24a);
   addJumpPad(scene, world, -4, 40.02, 0, 36, 1.9, 9.53, 0x72d8ff);
   for (const [x, y, z] of [[-22, 5, -10], [30, 23, -2], [-19, 45, 7]]) {
