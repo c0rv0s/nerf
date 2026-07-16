@@ -718,7 +718,10 @@ export class ProjectileSystem {
       }
 
       const moveLen = p.vel.length() * dt;
-      const nSteps = Math.max(1, Math.ceil(moveLen / 0.8));
+      // The spatial broad phase keeps these checks cheap enough to sample at
+      // half-metre intervals, preventing small rounds from skipping most thin
+      // railings and deck lips without turning every shot into a heavy sweep.
+      const nSteps = Math.max(1, Math.ceil(moveLen / 0.5));
       let dead = p.life <= 0;
       for (let s = 0; s < nSteps && !dead; s++) {
         step.copy(p.vel).multiplyScalar(dt / nSteps);

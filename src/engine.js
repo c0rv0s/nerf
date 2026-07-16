@@ -227,9 +227,25 @@ function resolveSphere(pos, radius, colliders, out) {
   }
 }
 
-// Move a character (feet-position capsule) with gravity + collision.
+const _moveSp = new THREE.Vector3();
+const _moveBefore = new THREE.Vector3();
+const _moveWallNormal = new THREE.Vector3();
+const _moveHit = { hit: false, ny: 0, nx: 0, nz: 0 };
+
+// Move a character (feet-position capsule) with gravity + collision. Normal
+// walking remains one pass; fast falls or long frames are split just enough
+// that a capsule cannot jump completely through a thin floor between checks.
 // char: {pos, vel, radius, height}; world: {colliders, ramps, gravity}
 export function moveCharacter(char, world, dt) {
+  const estimatedTravel = char.vel.length() * dt + world.gravity * dt * dt * 0.5;
+  const steps = Math.min(4, Math.max(1, Math.ceil(estimatedTravel / 0.5)));
+  const stepDt = dt / steps;
+  let grounded = false;
+  for (let i = 0; i < steps; i++) grounded = moveCharacterStep(char, world, stepDt);
+  return grounded;
+}
+
+function moveCharacterStep(char, world, dt) {
   char.vel.y -= world.gravity * dt;
   char.pos.addScaledVector(char.vel, dt);
 
@@ -251,13 +267,15 @@ export function moveCharacter(char, world, dt) {
       }
     }
   }
-  const out = { hit: false, ny: 0, nx: 0, nz: 0 };
-  const sphereYs = [r, char.height * 0.5, char.height - r];
-  const sp = new THREE.Vector3();
+  const out = _moveHit;
+  out.hit = false; out.ny = 0; out.nx = 0; out.nz = 0;
+  const sp = _moveSp;
+  const before = _moveBefore;
   for (let iter = 0; iter < 2; iter++) {
-    for (const sy of sphereYs) {
+    for (let sphere = 0; sphere < 3; sphere++) {
+      const sy = sphere === 0 ? r : sphere === 1 ? char.height * 0.5 : char.height - r;
       sp.set(char.pos.x, char.pos.y + sy, char.pos.z);
-      const before = sp.clone();
+      before.copy(sp);
       resolveSphere(sp, r, nearbyColliders(world, sp, r), out);
       char.pos.add(sp.sub(before));
     }
@@ -269,7 +287,7 @@ export function moveCharacter(char, world, dt) {
     else if (out.ny < -0.55 && char.vel.y > 0) char.vel.y = 0; // bonked head
     else {
       // wall — damp velocity into the wall a bit
-      const n = new THREE.Vector3(out.nx, 0, out.nz);
+      const n = _moveWallNormal.set(out.nx, 0, out.nz);
       if (n.lengthSq() > 0.01) {
         n.normalize();
         const into = char.vel.dot(n);
@@ -292,9 +310,10 @@ export function moveCharacter(char, world, dt) {
       grounded = true;
     } else if (inRampFootprint(ramp, char.pos.x, char.pos.z, char.radius + 0.2)) {
       const obb = rampOBB(ramp);
-      for (const sy of sphereYs) {
+      for (let sphere = 0; sphere < 3; sphere++) {
+        const sy = sphere === 0 ? r : sphere === 1 ? char.height * 0.5 : char.height - r;
         sp.set(char.pos.x, char.pos.y + sy, char.pos.z);
-        const before = sp.clone();
+        before.copy(sp);
         const ny = resolveSphereOBB(sp, char.radius, obb);
         if (ny === null) continue;
         const delta = sp.sub(before);
