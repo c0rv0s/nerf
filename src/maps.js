@@ -1818,8 +1818,15 @@ function buildCanopy(scene) {
   // Secret flooded branch: north from the connector, then a ramp up through
   // the lawn beneath the south bridge for a third entrance into the system.
   addBox(scene, world, 0, -5.3, 55, 6, 1, 10, 0x3f6e5e, { tex: 'rock', repeat: [1, 2] });
-  addBox(scene, world, -3.35, -2.45, 50, 0.7, 4.8, 20, 0x4a7a52, { tex: 'rock', repeat: [1, 3] });
-  addBox(scene, world, 3.35, -2.45, 50, 0.7, 4.8, 20, 0x4a7a52, { tex: 'rock', repeat: [1, 3] });
+  // Above z=50 the lawn slab supplies the upper part of each tunnel wall.
+  // Split these side walls at its underside so their inner faces do not sit
+  // directly on top of the lawn's faces and z-fight at the entrance.
+  const addBranchSide = x => {
+    addBox(scene, world, x, -2.925, 50, 0.7, 3.85, 20, 0x4a7a52, { tex: 'rock', repeat: [1, 3] });
+    addBox(scene, world, x, -0.525, 45, 0.7, 0.95, 10, 0x4a7a52, { tex: 'rock', repeat: [1, 2] });
+  };
+  addBranchSide(-3.35);
+  addBranchSide(3.35);
   addRamp(scene, world, { axis: 'z', minX: -3, maxX: 3, minZ: 40, maxZ: 50,
     h0: 0, h1: -4.8, color: 0x4a7a52, visualInset: 0.16 });
   addWater(scene, world, 0, -0.55, 50, 6.4, 20, 5.4);
@@ -3347,15 +3354,23 @@ function buildPrism(scene) {
      walk into any beam and you run up it; gravity pulls you to the nearest
      surface so you can hop between beams and never fall out. ---- */
   const IC = 0x2a2352, iw = { tex: 'neonwall' };
+  const BEAM_WIDTH = 3.75;  // 25% wider than the original 3-unit lattice
+  const beamDims = (w, h, d) => {
+    if (w >= h && w >= d) return [w, BEAM_WIDTH, BEAM_WIDTH];
+    if (h >= d) return [BEAM_WIDTH, h, BEAM_WIDTH];
+    return [BEAM_WIDTH, BEAM_WIDTH, d];
+  };
   const beamVisualDims = (w, h, d) => {
     const shrink = 0.08;
-    if (w >= h && w >= d) return [Math.max(0.1, w - shrink), 2.86, 2.74];
-    if (h >= d) return [3.08, Math.max(0.1, h - shrink), 2.92];
-    return [2.96, 3.14, Math.max(0.1, d - shrink)];
+    if (w >= h && w >= d) return [Math.max(0.1, w - shrink), 3.575, 3.425];
+    if (h >= d) return [3.85, Math.max(0.1, h - shrink), 3.65];
+    return [3.7, 3.925, Math.max(0.1, d - shrink)];
   };
   const beam = (x, y, z, w, h, d) => {
+    [w, h, d] = beamDims(w, h, d);
     world.colliders.push({
       type: 'box',
+      wrapEdges: true,
       min: V(x - w / 2, y - h / 2, z - d / 2),
       max: V(x + w / 2, y + h / 2, z + d / 2),
     });
@@ -3404,25 +3419,25 @@ function buildPrism(scene) {
 
   // Pickups over every surface + the lattice — reward exploring all of it
   pk(world, 'gold', 6, 46.6, 6);                          // ceiling
-  pk(world, 'silver', 0, 25.5, 0);                        // centre of the lattice
+  pk(world, 'silver', 0, CY + BEAM_WIDTH / 2, 0);         // centre of the lattice
   pk(world, 'shield', 23.4, CY, 5);                       // +X wall
   pk(world, 'speed', 5, CY, -23.4);                       // -Z wall
   pk(world, 'djump', -23.4, CY, -5);                      // -X wall
   pk(world, 'star', -6, 46.6, -6, { hidden: true });      // ceiling
   pk(world, 'star', -23.4, 35, 5, { hidden: true });      // high on the -X wall
   pk(world, 'star', 17, 40, 17, { hidden: true });        // high on a corner pillar
-  pk(world, 'star', 0, 13.5, 9, { hidden: true });        // lower inner ring
+  pk(world, 'star', 0, 12 + BEAM_WIDTH / 2, 9, { hidden: true }); // lower inner ring
   pk(world, 'weapon', 0, 0.2, 20, { weapon: 'zooka' });   // floor
   pk(world, 'weapon', 23.4, 12, 0, { weapon: 'scatter' }); // low on +X wall
-  pk(world, 'weapon', 0, 25.5, 12, { weapon: 'pulsar' });  // main ring
+  pk(world, 'weapon', 0, CY + BEAM_WIDTH / 2, 12, { weapon: 'pulsar' }); // main ring
   pk(world, 'weapon', -6, 46.6, 12, { weapon: 'hyper' });  // ceiling
   pk(world, 'weapon', 23.4, 32, -5, { weapon: 'sidewinder' });
-  pk(world, 'weapon', -9, 37.5, 0, { weapon: 'whomper' }); // upper inner ring
+  pk(world, 'weapon', -9, 36 + BEAM_WIDTH / 2, 0, { weapon: 'whomper' }); // upper inner ring
   pk(world, 'weapon', -23.4, 20, 0, { weapon: 'parasite' });   // mid on -X wall
   pk(world, 'weapon', 0, 37.5, -23.4, { weapon: 'refractor' }); // secret-map beam gun
   pk(world, 'ammo', 0, 0.2, -20, { weapon: 'zooka' });
-  pk(world, 'ammo', 17, 25.5, 0, { weapon: 'scatter' });
-  pk(world, 'ammo', 0, 25.5, -12, { weapon: 'pulsar' });
+  pk(world, 'ammo', 17, CY + BEAM_WIDTH / 2, 0, { weapon: 'scatter' });
+  pk(world, 'ammo', 0, CY + BEAM_WIDTH / 2, -12, { weapon: 'pulsar' });
   pk(world, 'ammo', 6, 46.6, 12, { weapon: 'hyper' });
   pk(world, 'ammo', 23.4, 27, -5, { weapon: 'sidewinder' });
   pk(world, 'ammo', -23.4, 26, 0, { weapon: 'parasite' });

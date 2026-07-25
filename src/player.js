@@ -406,6 +406,8 @@ export class Player {
      normal FPS camera, so aiming feels identical everywhere. ---- */
   _moveEscher(dt) {
     const up = this.up;
+    const wasGrounded = this.grounded;
+    const beforeMove = this.pos.clone();
     // walk toward your heading, flattened onto the surface you're on
     let fwd = this.frameFwd.clone().addScaledVector(up, -this.frameFwd.dot(up));
     if (fwd.lengthSq() < 0.04 && this._moveFwd) fwd.copy(this._moveFwd);
@@ -434,12 +436,13 @@ export class Player {
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (this.wantJump) { this.jumpBuffer = 0.15; this.wantJump = false; }
     if (this.djumpTime > 0) this.djumpTime -= dt;
+    let jumped = false;
     if (this.jumpBuffer > 0 && this.coyote > 0) {
       this.vel.addScaledVector(up, this.world.jumpVel - this.vel.dot(up));
-      this.jumpBuffer = 0; this.coyote = 0; sfx('jump');
+      this.jumpBuffer = 0; this.coyote = 0; jumped = true; sfx('jump');
     } else if (this.jumpBuffer > 0 && !this.grounded && this.djumpTime > 0 && !this._airJumped) {
       this.vel.addScaledVector(up, this.world.jumpVel * 1.5 - this.vel.dot(up));
-      this._airJumped = true; this.jumpBuffer = 0; sfx('boing');
+      this._airJumped = true; this.jumpBuffer = 0; jumped = true; sfx('boing');
     }
 
     // Airborne: gravity pulls toward the NEAREST surface (shell face OR any
@@ -451,7 +454,9 @@ export class Player {
     }
 
     this.grounded = moveCharacterUp(this, this.world, dt, this._nrm);
-    if (this.grounded) { this._airJumped = false; this._climb(); }
+    const climbed = this.grounded && this._climb();
+    if (!climbed && wasGrounded && !jumped && this._wrapBeamEdge(beforeMove)) this.grounded = true;
+    if (this.grounded) this._airJumped = false;
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
     // Camera: the frame's up eases toward the physics up (smooth roll — a wall
@@ -631,6 +636,88 @@ export class Player {
     return false;
   }
 
+  // Prism's lattice is meant to be traversable around its entire outside.
+  // When grounded movement crosses a convex beam edge, rotate the player's
+  // support normal and tangent velocity onto the next face instead of letting
+  // momentum launch the player into the low-gravity interior. Jumping skips
+  // this path, so leaving a beam still requires an intentional jump.
+  _wrapBeamEdge(beforeMove) {
+    const oldUp = this.up.clone();
+    const oldAxis = Math.abs(oldUp.x) > 0.5 ? 'x' : Math.abs(oldUp.y) > 0.5 ? 'y' : 'z';
+    const oldSign = Math.sign(oldUp[oldAxis]);
+    const tangentAxes = ['x', 'y', 'z'].filter(axis => axis !== oldAxis);
+    const faceTolerance = this.radius + 0.18;
+    let support = null;
+    let supportScore = Infinity;
+
+    for (const c of this.world.colliders) {
+      if (c.type !== 'box' || !c.wrapEdges) continue;
+      const face = oldSign > 0 ? c.max[oldAxis] : c.min[oldAxis];
+      const faceGap = Math.abs(beforeMove[oldAxis] - face);
+      if (faceGap > faceTolerance) continue;
+      let outside = 0;
+      let nearFace = true;
+      for (const axis of tangentAxes) {
+        if (beforeMove[axis] < c.min[axis] - faceTolerance ||
+            beforeMove[axis] > c.max[axis] + faceTolerance) {
+          nearFace = false;
+          break;
+        }
+        outside += Math.max(c.min[axis] - beforeMove[axis], 0,
+          beforeMove[axis] - c.max[axis]);
+      }
+      if (!nearFace) continue;
+      const score = faceGap + outside;
+      if (score < supportScore) { support = c; supportScore = score; }
+    }
+    if (!support) return false;
+
+    // At a cross intersection, another beam may continue supporting the old
+    // plane. In that case keep walking straight instead of wrapping early.
+    const stillSupported = this.world.colliders.some(c => {
+      if (c.type !== 'box' || !c.wrapEdges) return false;
+      const face = oldSign > 0 ? c.max[oldAxis] : c.min[oldAxis];
+      if (Math.abs(this.pos[oldAxis] - face) > faceTolerance) return false;
+      return tangentAxes.every(axis =>
+        this.pos[axis] >= c.min[axis] - 0.02 && this.pos[axis] <= c.max[axis] + 0.02);
+    });
+    if (stillSupported) return false;
+
+    const planarVel = this.vel.clone().addScaledVector(oldUp, -this.vel.dot(oldUp));
+    let edgeAxis = null;
+    let edgeSign = 0;
+    let bestCrossing = 0;
+    for (const axis of tangentAxes) {
+      const vel = planarVel[axis];
+      const beyondMax = this.pos[axis] - support.max[axis];
+      const beyondMin = support.min[axis] - this.pos[axis];
+      if (vel > 0.5 && beyondMax > -0.02 && beyondMax + Math.abs(vel) * 0.01 > bestCrossing) {
+        edgeAxis = axis; edgeSign = 1; bestCrossing = beyondMax + Math.abs(vel) * 0.01;
+      }
+      if (vel < -0.5 && beyondMin > -0.02 && beyondMin + Math.abs(vel) * 0.01 > bestCrossing) {
+        edgeAxis = axis; edgeSign = -1; bestCrossing = beyondMin + Math.abs(vel) * 0.01;
+      }
+    }
+    if (!edgeAxis) return false;
+
+    const newUp = new THREE.Vector3();
+    newUp[edgeAxis] = edgeSign;
+    const aroundSpeed = planarVel[edgeAxis] * edgeSign;
+    if (aroundSpeed <= 0.5) return false;
+
+    // Preserve motion along the edge and rotate only the component carrying
+    // the player over it. The inset starts them down the new face with their
+    // feet already touching its collision plane.
+    const edgeTangent = planarVel.clone().addScaledVector(newUp, -aroundSpeed);
+    this.vel.copy(edgeTangent).addScaledVector(oldUp, -aroundSpeed);
+    this.pos[edgeAxis] = edgeSign > 0 ? support.max[edgeAxis] : support.min[edgeAxis];
+    const oldFace = oldSign > 0 ? support.max[oldAxis] : support.min[oldAxis];
+    this.pos[oldAxis] = oldFace - oldSign * 0.06;
+    this.up.copy(newUp);
+    this._climbLock = 0.14;
+    return true;
+  }
+
   // Walk into a wall/column while grounded → climb it. The wall ahead becomes
   // your floor and your momentum carries you UP it (so you climb even looking
   // straight at it); a brief lock keeps the nearest-surface gravity from
@@ -638,16 +725,17 @@ export class Player {
   _climb() {
     const dir = this.vel.clone().addScaledVector(this.up, -this.vel.dot(this.up));
     const sp = dir.length();
-    if (sp < 1) return;                            // only when actually moving
+    if (sp < 1) return false;                      // only when actually moving
     dir.multiplyScalar(1 / sp);
     const probe = this.pos.clone()
       .addScaledVector(dir, this.radius + 0.4)
       .addScaledVector(this.up, 0.6);
-    if (!this._solidAt(probe)) return;
+    if (!this._solidAt(probe)) return false;
     const oldUp = this.up.clone();
     this.up.copy(cardinal(dir.clone().negate()));  // the wall ahead becomes the floor
     this.pos.addScaledVector(this.up, 0.06);
     this.vel.copy(oldUp).multiplyScalar(Math.max(sp, 6));   // shoot up the new surface
     this._climbLock = 0.35;
+    return true;
   }
 }
