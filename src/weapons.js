@@ -698,7 +698,7 @@ export class ProjectileSystem {
     const desired = target.pos.clone();
     desired.addScaledVector(target.up || WORLD_UP, target.height * 0.55);
     desired.sub(p.pos).normalize();
-    const current = p.vel.multiplyScalar(1 / speed);
+    const current = p.vel.clone().multiplyScalar(1 / speed);
     const angle = current.angleTo(desired);
     if (angle < 1e-4) return;
 
