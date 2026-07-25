@@ -9,10 +9,10 @@ import { MAPS, buildAtrium, buildHallOfFame, texturesReady } from './maps.js';
 import { buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ, pointHitsWorld } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
-import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, nextLoadedWeaponAfter } from './weapons.js';
+import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual, nextLoadedWeaponAfter } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume, setRainAmbience } from './audio.js';
+import { sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume, setRainAmbience, startWhomperWarmup } from './audio.js';
 import { multiplayer } from './multiplayer.js';
 import { createJetpack } from './jetpack.js';
 import { unlockSecretMap } from './secret-maps.js';
@@ -45,6 +45,8 @@ const WATER = { name: 'Water', color: '#3fcfff', isPlayer: false, kills: 0, team
 const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills: 0, team: 'storm' };
 const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, team: 'meteor' };
 const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
+const EVENT_BLAST_RADIUS = 10;
+const EVENT_BLAST_DAMAGE = 50;
 
 // Soundtrack — matches only, never the lobby.
 const MUSIC = [
@@ -316,7 +318,11 @@ function teardown() {
   updateFoliageFx(1, true);
   setRainAmbience(0);
   G.over = true;
-  for (const ch of G.characters || []) disposeNameTag(ch);
+  for (const ch of G.characters || []) {
+    ch.cancelWeaponWarmup?.();
+    ch.warmupAudioStop?.();
+    disposeNameTag(ch);
+  }
   G.projectiles.clear();
   G.pickups.clear();
   G.fxPool.dispose();
@@ -913,6 +919,8 @@ function ensureHostRemoteHuman(slot) {
 }
 
 function removeCharacter(ch) {
+  ch.cancelWeaponWarmup?.();
+  ch.warmupAudioStop?.();
   const idx = G.characters.indexOf(ch);
   if (idx >= 0) G.characters.splice(idx, 1);
   disposeNameTag(ch);
@@ -1007,11 +1015,12 @@ function updateRemoteHuman(ch, dt, fire) {
   ch.pitch += ((input.pitch || 0) - (ch.pitch || 0)) * turnA;
   if (input.up) ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
   if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
+    if (input.weapon !== ch.weapon) ch.cancelWeaponWarmup();
     ch.weapon = input.weapon;
   }
   ch.cooldown = Math.max(0, ch.cooldown - dt);
-  if (input.firing && ch.cooldown <= 0) {
-    const w = WEAPONS[ch.weapon] || WEAPONS.blaster;
+  const w = WEAPONS[ch.weapon] || WEAPONS.blaster;
+  if (ch.weaponTriggerReady(dt, input.firing)) {
     const cp = Math.cos(ch.pitch || 0);
     const dir = input.aim
       ? new THREE.Vector3(input.aim.x || 0, input.aim.y || 0, input.aim.z || -1).normalize()
@@ -1023,14 +1032,15 @@ function updateRemoteHuman(ch, dt, fire) {
     const up = ch.up || new THREE.Vector3(0, 1, 0);
     const origin = ch.pos.clone().addScaledVector(up, 1.55).addScaledVector(dir, 0.8);
     fire(ch, origin, dir, ch.weapon || 'blaster');
-    if (ch.weapon !== 'blaster') ch.ammo[ch.weapon]--;
-    ch.cooldown = 1 / w.rof;
+    ch.finishWeaponShot(w, 0);
     if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) {
       ch.weapon = nextLoadedWeaponAfter(ch.weapon, ch.weapons, ch.ammo);
+      ch.cancelWeaponWarmup();
     }
   }
   if (ch.mesh) {
     ch.syncGunModel?.();
+    ch.syncWeaponWarmupVisual?.();
     ch.mesh.position.copy(ch.pos);
     ch.mesh.rotation.y = ch.yaw || 0;
   }
@@ -1107,6 +1117,17 @@ function syncMultiplayerNameTags() {
   }
 }
 
+function syncRemoteSlotGun(remote) {
+  if (!remote?.mesh || remote._gunId === remote.weapon) return;
+  remote._gunId = remote.weapon;
+  if (remote._gun) remote.mesh.remove(remote._gun);
+  remote._gun = buildBlaster(remote.weapon || 'blaster');
+  remote._gun.scale.setScalar(0.55);
+  remote._gun.position.set(0.32, 1.05, 0.25);
+  remote._gun.rotation.y = Math.PI;
+  remote.mesh.add(remote._gun);
+}
+
 function ensureRemoteSlot(state) {
   let remote = G.remoteSlots.get(state.id);
   if (remote) return remote;
@@ -1139,8 +1160,13 @@ function ensureRemoteSlot(state) {
     weapons: { blaster: true },
     ammo: { blaster: Infinity },
     weapon: 'blaster',
+    warmupProgress: -1,
+    warmupAudioStop: null,
+    _gun: null,
+    _gunId: null,
     yaw: 0,
   };
+  syncRemoteSlotGun(remote);
   setNameTag(remote, remote.name, remote.color);
   G.remoteSlots.set(state.id, remote);
   G.characters.push(remote);
@@ -1202,16 +1228,37 @@ function applyMultiplayerSnapshot(snap) {
     remote.kills = state.kills || 0;
     remote.deaths = state.deaths || 0;
     remote.awards = state.awards || remote.awards || {};
-    remote.weapon = state.weapon || 'blaster';
+    const nextWeapon = state.weapon || 'blaster';
+    if (nextWeapon !== remote.weapon) {
+      remote.warmupAudioStop?.();
+      remote.warmupAudioStop = null;
+    }
+    remote.weapon = nextWeapon;
+    syncRemoteSlotGun(remote);
     remote.yaw = state.yaw || 0;
     if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
     setNameTag(remote, remote.name, remote.color);
     remote.targetPos.set(state.pos.x, state.pos.y, state.pos.z);
     if (remote.pos.lengthSq() === 0) remote.pos.copy(remote.targetPos);
+    remote.warmupProgress = Number.isFinite(state.warmup) ? state.warmup : -1;
+    if (remote.alive && remote.warmupProgress >= 0) {
+      if (!remote.warmupAudioStop) {
+        const remaining = WEAPONS.whomper.warmup * (1 - remote.warmupProgress);
+        remote.warmupAudioStop = startWhomperWarmup(
+          remote.pos,
+          Math.max(0.1, remaining),
+          remote.warmupProgress,
+        );
+      }
+    } else {
+      remote.warmupAudioStop?.();
+      remote.warmupAudioStop = null;
+    }
     remote.mesh.visible = state.alive;
   }
   for (const [id, remote] of G.remoteSlots) {
     if (seen.has(id)) continue;
+    remote.warmupAudioStop?.();
     disposeNameTag(remote);
     G.scene.remove(remote.mesh);
     G.remoteSlots.delete(id);
@@ -1333,6 +1380,11 @@ function updateRemoteSlots(dt) {
     remote.pos.lerp(remote.targetPos, a);
     remote.mesh.position.copy(remote.pos);
     remote.mesh.rotation.y = remote.yaw || 0;
+    updateWeaponWarmupVisual(
+      remote._gun,
+      remote.warmupProgress,
+      performance.now() * 0.001,
+    );
   }
 }
 
@@ -2395,6 +2447,10 @@ const quitBtn = document.getElementById('quitbtn');
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   if (G && !G.over) {
+    if (!locked) {
+      G.player.firing = false;
+      G.player.cancelWeaponWarmup?.();
+    }
     const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
     const multiplayerPanelOpen = multiplayer.overlay && !multiplayer.overlay.hidden;
     const multiplayerChatOpen = multiplayer.isChatOpen();
@@ -2867,7 +2923,7 @@ function impactMeteor(meteor) {
   // Sky events need an unmistakable arena-wide impact cue; normal weapon
   // explosions remain positional, but this uses the Whomper boom at full mix.
   sfx('whomp');
-  G.fxPool.spawnPuff(pos, 0xffa030, Math.max(3.2, WEAPONS.whomper.splash * 0.75));
+  G.fxPool.spawnPuff(pos, 0xffa030, Math.max(3.2, EVENT_BLAST_RADIUS * 0.75));
   if (!meteor.authoritative) return;
 
   for (const ch of G.characters) {
@@ -2875,8 +2931,8 @@ function impactMeteor(meteor) {
     const center = ch.pos.clone();
     center.y += ch.height * 0.5;
     const distance = center.distanceTo(pos);
-    if (distance >= WEAPONS.whomper.splash) continue;
-    const damage = WEAPONS.whomper.splashDmg * (1 - distance / WEAPONS.whomper.splash);
+    if (distance >= EVENT_BLAST_RADIUS) continue;
+    const damage = EVENT_BLAST_DAMAGE * (1 - distance / EVENT_BLAST_RADIUS);
     applyDamage(ch, damage, METEOR, { environmental: true });
   }
   spawnMeteorPickup(pos);
@@ -3089,7 +3145,7 @@ function retireComet(comet) {
 
 function playCometImpact(pos) {
   sfx('whomp');
-  G.fxPool.spawnPuff(pos, 0x9fdcff, Math.max(3.2, WEAPONS.whomper.splash * 0.75));
+  G.fxPool.spawnPuff(pos, 0x9fdcff, Math.max(3.2, EVENT_BLAST_RADIUS * 0.75));
 }
 
 function impactComet(comet) {
@@ -3102,8 +3158,8 @@ function impactComet(comet) {
       if (!ch.alive) continue;
       const center = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), ch.height * 0.5);
       const distance = center.distanceTo(pos);
-      if (distance >= WEAPONS.whomper.splash) continue;
-      const damage = WEAPONS.whomper.splashDmg * (1 - distance / WEAPONS.whomper.splash);
+      if (distance >= EVENT_BLAST_RADIUS) continue;
+      const damage = EVENT_BLAST_DAMAGE * (1 - distance / EVENT_BLAST_RADIUS);
       applyDamage(ch, damage, COMET, { environmental: true });
     }
     spawnMeteorPickup(pos);
@@ -3405,6 +3461,8 @@ function step(dt) {
 }
 
 function serializeCharacter(ch, i) {
+  const weapon = WEAPONS[ch.weapon] || WEAPONS.blaster;
+  const warming = ch.warmupWeapon === ch.weapon && !!weapon.warmup;
   return {
     id: ch.id || (ch.isPlayer ? multiplayer.slotId : `bot-${i}`),
     name: ch.isPlayer ? (multiplayer.name || ch.name || 'YOU') : ch.name,
@@ -3423,6 +3481,7 @@ function serializeCharacter(ch, i) {
     awards: { ...(ch.awards || {}) },
     respawn: G.respawnTimers.get(ch) || 0,
     weapon: ch.weapon || 'blaster',
+    warmup: warming ? Math.max(0, Math.min(1, 1 - ch.warmupT / weapon.warmup)) : -1,
   };
 }
 

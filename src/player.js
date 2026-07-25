@@ -2,8 +2,8 @@
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
 import { moveCharacter, moveCharacterUp, cardinal, clamp, pointInZoneXZ } from './engine.js';
-import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, nextLoadedWeaponAfter } from './weapons.js';
-import { sfx } from './audio.js';
+import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, updateWeaponWarmupVisual, nextLoadedWeaponAfter } from './weapons.js';
+import { sfx, startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 
 export class Player {
@@ -31,6 +31,9 @@ export class Player {
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
     this.cooldown = 0;
+    this.warmupT = 0;
+    this.warmupWeapon = null;
+    this.warmupAudioStop = null;
     this.coyote = 0;           // grace after leaving ground (curved asteroids!)
     this.jumpBuffer = 0;       // grace after pressing jump
 
@@ -108,6 +111,7 @@ export class Player {
   }
 
   spawn(pos) {
+    this.cancelWeaponWarmup();
     this.pos.copy(pos);
     this.vel.set(0, 0, 0);
     this.hp = 100;
@@ -165,6 +169,7 @@ export class Player {
   switchWeapon(id) {
     if (id !== 'blaster' && !(this.weapons[id] && this.ammo[id] > 0)) return;
     if (WEAPONS[id] && id !== this.weapon) {
+      this.cancelWeaponWarmup();
       this.weapon = id;
       this.cooldown = Math.max(this.cooldown, 0.25);
       this.showWeaponModel(id);
@@ -179,8 +184,43 @@ export class Player {
     this.switchWeapon(owned[(i + dir + owned.length) % owned.length]);
   }
 
+  cancelWeaponWarmup() {
+    this.warmupAudioStop?.();
+    this.warmupAudioStop = null;
+    this.warmupT = 0;
+    this.warmupWeapon = null;
+    updateWeaponWarmupVisual(this.vmWeapons?.whomper, -1);
+  }
+
+  fireCurrentWeapon(fire, w) {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    // launch from the gun muzzle (right and below the eye), not the face
+    const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize();
+    const origin = this.camera.position.clone()
+      .addScaledVector(dir, 1.1)
+      .addScaledVector(right, 0.18)
+      .addScaledVector(this.camera.up, -0.22);
+    fire(this, origin, dir, this.weapon);
+    if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
+    // Warmup weapons pay their entire firing delay before the shot releases.
+    this.cooldown = w.warmup ? 0 : 1 / w.rof;
+    const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
+    this.recoil = Math.min(2.2, this.recoil + feel.recoil);
+    this.cameraKick = Math.min(0.035, this.cameraKick + feel.camera);
+    this.muzzleT = 0.065;
+    this.muzzleStrength = feel.flash;
+    if (this.weapon !== 'blaster' && this.ammo[this.weapon] <= 0) {
+      this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
+    }
+  }
+
   update(dt, fire) {
-    if (!this.alive) return;
+    if (!this.alive) {
+      this.cancelWeaponWarmup();
+      updateWeaponWarmupVisual(this.vmWeapons.whomper, -1);
+      return;
+    }
 
     const wasGrounded = this.grounded;
     const fallSpeed = this.vel.y;
@@ -194,32 +234,29 @@ export class Player {
 
     // Firing
     this.cooldown -= dt;
-    if (this.firing && this.cooldown <= 0) {
-      const w = WEAPONS[this.weapon];
-      if (this.weapon === 'blaster' || this.ammo[this.weapon] > 0) {
-        const dir = new THREE.Vector3();
-        this.camera.getWorldDirection(dir);
-        // launch from the gun muzzle (right and below the eye), not the face
-        const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize();
-        const origin = this.camera.position.clone()
-          .addScaledVector(dir, 1.1)
-          .addScaledVector(right, 0.18)
-          .addScaledVector(this.camera.up, -0.22);
-        fire(this, origin, dir, this.weapon);
-        if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
-        this.cooldown = 1 / w.rof;
-        const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
-        this.recoil = Math.min(2.2, this.recoil + feel.recoil);
-        this.cameraKick = Math.min(0.035, this.cameraKick + feel.camera);
-        this.muzzleT = 0.065;
-        this.muzzleStrength = feel.flash;
-        if (this.weapon !== 'blaster' && this.ammo[this.weapon] <= 0) {
-          this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
-        }
+    const w = WEAPONS[this.weapon];
+    const hasAmmo = this.weapon === 'blaster' || this.ammo[this.weapon] > 0;
+    if (w.warmup) {
+      if (!this.firing || !hasAmmo || this.cooldown > 0) {
+        this.cancelWeaponWarmup();
+      } else if (this.warmupWeapon !== this.weapon) {
+        this.warmupWeapon = this.weapon;
+        this.warmupT = w.warmup;
+        this.warmupAudioStop = startWhomperWarmup(null, w.warmup);
       } else {
-        sfx('dry');
-        this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
+        this.warmupT -= dt;
+        if (this.warmupT <= 0) {
+          this.cancelWeaponWarmup();
+          this.fireCurrentWeapon(fire, w);
+        }
       }
+    } else {
+      this.cancelWeaponWarmup();
+      if (this.firing && this.cooldown <= 0 && hasAmmo) this.fireCurrentWeapon(fire, w);
+    }
+    if (this.firing && !hasAmmo) {
+      sfx('dry');
+      this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
     }
 
     // Layered viewmodel response: locomotion, look inertia, equip dip, weapon kick.
@@ -230,6 +267,12 @@ export class Player {
     this.lookSwayX *= Math.exp(-10 * dt);
     this.lookSwayY *= Math.exp(-10 * dt);
     const now = performance.now();
+    const warming = this.warmupWeapon === this.weapon && !!w.warmup;
+    updateWeaponWarmupVisual(
+      this.vmWeapons.whomper,
+      warming ? 1 - this.warmupT / w.warmup : -1,
+      now * 0.001,
+    );
     const moving = this.grounded ? (this._speedRatio || 0) : 0;
     const bobY = Math.sin(now * 0.012) * moving * 0.012;
     const bobX = Math.cos(now * 0.006) * moving * 0.008;

@@ -7,7 +7,7 @@ import { sfx } from './audio.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
-export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor', 'thunderbolt'];
+export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'refractor', 'thunderbolt'];
 
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
@@ -26,24 +26,26 @@ export const WEAPONS = {
   zooka:      { name: 'BALLZOOKA',    slot: 5, dmg: 42, rof: 0.8, speed: 38,  spread: 0.005,
                 pellets: 1, ammo: 0, pickupAmmo: 6, color: 0xffe040, size: 0.35,
                 splash: 5.5, splashDmg: 32, gravity: true, trail: true, texture: 'zooka', sound: 'zooka' },
-  whomper:    { name: 'WHOMPER',      slot: 6, dmg: 85, rof: 0.5, speed: 42,  spread: 0.004,
-                pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.42,
-                splash: 10, splashDmg: 50, texture: 'whomper', sound: 'whomp' },
-  hyper:      { name: 'HYPERSTRIKE',  slot: 7, dmg: 68, rof: 0.7, speed: 420, spread: 0.001,
+  whomper:    { name: 'WHOMPER',      slot: 8, dmg: 135, rof: 0.33, speed: 42, spread: 0.004,
+                pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.84,
+                warmup: 3, splash: 10, splashDmg: 85, flatSplash: true, splashExcludesDirect: true,
+                glowingProjectile: true, texture: 'whomper', sound: 'whomp' },
+  hyper:      { name: 'HYPERSTRIKE',  slot: 6, dmg: 68, rof: 0.7, speed: 420, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
                 pierce: 2, trail: true, texture: 'hyper', sound: 'hyper' },
-  parasite:   { name: 'PARASITE',      slot: 8, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
+  parasite:   { name: 'PARASITE',      slot: 7, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
                 pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
                 bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
                 homingRange: 38, homingTurn: 0.58, childHomingRange: 34, childHomingTurn: 0.72,
                 trail: true, sound: 'hyper' },
   refractor:  { name: 'REFRACTOR',     slot: 9, dmg: 22, rof: 0.5, speed: 0,   spread: 0,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,
-                beam: true, beamBounces: 5, beamRange: 130, beamLife: 2.8, beamRetract: 0.9,
+                beam: true, beamBounces: 8, beamRange: 130, beamLife: 2.8, beamRetract: 0.9,
                 beamDamageInterval: 0.4, secretMapOnly: true, texture: 'refractor', sound: 'hyper' },
   thunderbolt:{ name: 'THUNDERBOLT',    slot: 9, dmg: 46, rof: 0.62, speed: 165, spread: 0.002,
                 pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xffd43b, size: 0.18,
                 lightning: true, chainRange: 17, chainCount: 3, chainDmg: 27,
+                homingRange: 38, homingTurn: 0.58,
                 trail: true, secretMapOnly: true, texture: 'power-gold', sound: 'thunder' },
 };
 
@@ -264,7 +266,43 @@ export function buildBlaster(id) {
   shellMesh.castShadow = true;
   g.add(shellMesh);
   if (glow.length) g.add(new THREE.Mesh(mergeGeometries(glow.map(x => x.toNonIndexed()), false), energy));
+  if (id === 'whomper') {
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 14, 10),
+      new THREE.MeshBasicMaterial({ color: w.color, toneMapped: false }),
+    );
+    const aura = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: w.color, transparent: true, opacity: 0.28, depthWrite: false,
+        blending: THREE.AdditiveBlending, toneMapped: false,
+      }),
+    );
+    aura.scale.setScalar(1.58);
+    const chargeOrb = new THREE.Group();
+    chargeOrb.position.set(0, 0.02, -0.62);
+    chargeOrb.scale.setScalar(0.01);
+    chargeOrb.visible = false;
+    chargeOrb.add(core, aura);
+    g.add(chargeOrb);
+    g.userData.chargeOrb = chargeOrb;
+  }
   return g;
+}
+
+export function updateWeaponWarmupVisual(model, progress = -1, time = 0) {
+  const orb = model?.userData?.chargeOrb;
+  if (!orb) return;
+  if (progress < 0) {
+    orb.visible = false;
+    return;
+  }
+  const p = Math.max(0, Math.min(1, progress));
+  const pulse = 1 + Math.sin(time * (8 + p * 14)) * (0.025 + p * 0.035);
+  orb.scale.setScalar((0.055 + p * 0.36) * pulse);
+  orb.rotation.y = time * 2.4;
+  orb.rotation.z = time * 1.7;
+  orb.visible = true;
 }
 
 export class ProjectileSystem {
@@ -286,11 +324,23 @@ export class ProjectileSystem {
     return { id: this.nextShotId++, owner, weaponId: Object.keys(WEAPONS).find(id => WEAPONS[id] === weapon), kills: 0 };
   }
 
-  matFor(color) {
-    if (!this.mats[color]) {
-      this.mats[color] = new THREE.MeshBasicMaterial({ color });
+  matFor(color, glowing = false) {
+    const key = `${color}:${glowing ? 'glow' : 'plain'}`;
+    if (!this.mats[key]) {
+      this.mats[key] = new THREE.MeshBasicMaterial({ color, toneMapped: !glowing });
     }
-    return this.mats[color];
+    return this.mats[key];
+  }
+
+  projectileAuraMatFor(color) {
+    const key = `${color}:aura`;
+    if (!this.mats[key]) {
+      this.mats[key] = new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: 0.24, depthWrite: false,
+        blending: THREE.AdditiveBlending, toneMapped: false,
+      });
+    }
+    return this.mats[key];
   }
 
   beamMatFor(color, alpha = 0.68) {
@@ -465,7 +515,12 @@ export class ProjectileSystem {
   }
 
   spawnProjectile(owner, origin, dir, weapon, opts = {}) {
-    const mesh = new THREE.Mesh(this.geoBall, this.matFor(weapon.color));
+    const mesh = new THREE.Mesh(this.geoBall, this.matFor(weapon.color, weapon.glowingProjectile));
+    if (weapon.glowingProjectile) {
+      const aura = new THREE.Mesh(this.geoBall, this.projectileAuraMatFor(weapon.color));
+      aura.scale.setScalar(1.5);
+      mesh.add(aura);
+    }
     if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
     else if (weapon.lightning) {
       mesh.scale.set(weapon.size * 0.72, weapon.size * 0.72, weapon.size * 4.2);
@@ -647,8 +702,8 @@ export class ProjectileSystem {
     const angle = current.angleTo(desired);
     if (angle < 1e-4) return;
 
-    // Turn at a capped rate so Parasite nudges toward its nearest enemy instead
-    // of snapping onto targets, even when a split ball starts far off-course.
+    // Turn at a capped rate so homing rounds nudge toward their nearest enemy
+    // instead of snapping onto targets, even when they start far off-course.
     current.lerp(desired, Math.min(1, (p.homingTurn * dt) / angle)).normalize();
     p.vel.copy(current).multiplyScalar(speed);
   }
@@ -734,6 +789,7 @@ export class ProjectileSystem {
               p.pierced?.has(ch) || p.ignore?.has(ch) || this.hitLimitReached(p, ch)) continue;
           if (this.projectileTouchesCharacter(ch, p)) {
             if (p.limitedTarget === ch) p.limitedTargetHits.count++;
+            p.directTarget = ch;
             this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
             if (p.weapon.lightning) p.chainPrimary = ch;
             this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
@@ -803,17 +859,22 @@ export class ProjectileSystem {
     for (const ch of this.fx.characters()) {
       if (!ch.alive || ch.team === p.owner.team && ch !== p.owner) continue;
       if (ch === p.owner) continue; // no self-splash damage (keeps zooka fun)
+      if (p.weapon.splashExcludesDirect && ch === p.directTarget) continue;
       const center = ch.pos.clone(); center.y += ch.height * 0.5;
       const d = center.distanceTo(p.pos);
       if (d < p.weapon.splash) {
-        const dmg = p.weapon.splashDmg * (1 - d / p.weapon.splash);
+        const dmg = p.weapon.flatSplash
+          ? p.weapon.splashDmg
+          : p.weapon.splashDmg * (1 - d / p.weapon.splash);
         this.fx.onDamage(ch, dmg * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
       }
     }
     for (const target of this.shootableTargets()) {
       const d = target.pos.distanceTo(p.pos);
       if (d >= p.weapon.splash + (target.radius || 1)) continue;
-      const dmg = p.weapon.splashDmg * (1 - Math.min(1, d / p.weapon.splash));
+      const dmg = p.weapon.flatSplash
+        ? p.weapon.splashDmg
+        : p.weapon.splashDmg * (1 - Math.min(1, d / p.weapon.splash));
       if (dmg > 0) this.fx.onTargetDamage?.(
         target, dmg * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
     }

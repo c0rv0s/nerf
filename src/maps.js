@@ -1543,7 +1543,7 @@ function buildAsteroids(scene) {
   const world = newWorld({
     gravity: 5, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
     waypointLinkDist: 45, waypointLinkDy: 16,
-    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite'],
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper'],
     cometField: {
       minInterval: 13.34, maxInterval: 26.67,
       spawnRadius: 230, flightLife: 16,
@@ -3266,7 +3266,7 @@ function buildPrism(scene) {
     gravity: 8, jumpVel: 7, playerSpeed: 11,        // very floaty — deep-space feel
     killY: -160, killYTop: 240, killCenter: V(0, CY, 0), killRadius: 240,
     waypointLinkDist: 16, waypointLinkDy: 3,
-    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor'],
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'refractor'],
   });
   scene.background = new THREE.Color(0x05030f);
   baseLighting(scene, 0xc8a8ff, 0x1a0f2e, [40, 90, -30], 110);
@@ -5336,7 +5336,7 @@ function buildOlympusMons(scene) {
     playerCount: 16,
     waypointLinkDist: 38,
     waypointLinkDy: 24,
-    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'thunderbolt'],
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'thunderbolt'],
     meteorShower: {
       minInterval: 20, maxInterval: 40,
       mesaChance: 0.8, mesaHalfExtent: 88, mapHalfExtent: 170,

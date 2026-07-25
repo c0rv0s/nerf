@@ -1089,6 +1089,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       awards: sanitizeAwards(p.awards),
       respawn: Math.max(0, Math.min(RESPAWN_TIME + 1, finite(p.respawn, 0))),
       weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
+      warmup: weapon === 'whomper' ? Math.max(-1, Math.min(1, finite(p.warmup, -1))) : -1,
     };
   }).filter(Boolean);
   for (const [id, slot] of humanSlots) {
@@ -1099,6 +1100,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       up: slot.up || { x: 0, y: 1, z: 0 }, hp: slot.hp ?? 100, alive: slot.alive !== false,
       score: slot.score || 0, kills: slot.kills || 0, deaths: slot.deaths || 0,
       awards: {}, respawn: slot.respawn || 0, weapon: 'blaster',
+      warmup: -1,
     });
   }
   const ranked = [...sanitizedPlayers].sort((a, b) =>

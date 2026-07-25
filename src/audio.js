@@ -315,6 +315,76 @@ export function setJetpackThrust(active = false) {
   } catch { /* audio blocked — fine */ }
 }
 
+// Three-second Whomper charge: a rising oscillator stack plus filtered noise.
+// The returned stop function lets trigger release, weapon swaps, and deaths
+// cut the riser immediately instead of leaving an orphaned sound behind.
+export function startWhomperWarmup(at = null, duration = 3, startProgress = 0) {
+  try {
+    const a = ac();
+    const t = a.currentTime;
+    const riseTime = Math.max(0.2, duration);
+    const progress = Math.max(0, Math.min(0.98, startProgress));
+    const ramped = (from, to) => from * Math.pow(to / from, progress);
+    const output = a.createGain();
+    output.gain.setValueAtTime(0.001, t);
+    output.gain.exponentialRampToValueAtTime(0.035 + progress * 0.07, t + 0.08);
+    output.gain.exponentialRampToValueAtTime(0.115, t + riseTime * 0.94);
+    output.gain.exponentialRampToValueAtTime(0.001, t + riseTime + 0.08);
+
+    const previousAt = _sourceAt;
+    _sourceAt = at;
+    connectOutput(a, output);
+    _sourceAt = previousAt;
+
+    const low = a.createOscillator();
+    low.type = 'sawtooth';
+    low.frequency.setValueAtTime(ramped(82, 720), t);
+    low.frequency.exponentialRampToValueAtTime(720, t + riseTime);
+    const lowGain = a.createGain();
+    lowGain.gain.value = 0.42;
+    low.connect(lowGain).connect(output);
+
+    const high = a.createOscillator();
+    high.type = 'sine';
+    high.frequency.setValueAtTime(ramped(210, 1680), t);
+    high.frequency.exponentialRampToValueAtTime(1680, t + riseTime);
+    const highGain = a.createGain();
+    highGain.gain.value = 0.24;
+    high.connect(highGain).connect(output);
+
+    const noise = a.createBufferSource();
+    noise.buffer = noiseBuffer(a, riseTime + 0.2);
+    const filter = a.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 1.4;
+    filter.frequency.setValueAtTime(ramped(240, 3100), t);
+    filter.frequency.exponentialRampToValueAtTime(3100, t + riseTime);
+    const noiseGain = a.createGain();
+    noiseGain.gain.value = 0.28;
+    noise.connect(filter).connect(noiseGain).connect(output);
+
+    low.start(t); high.start(t); noise.start(t);
+    const naturalStop = t + riseTime + 0.12;
+    low.stop(naturalStop); high.stop(naturalStop); noise.stop(naturalStop);
+
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        const now = a.currentTime;
+        output.gain.cancelScheduledValues(now);
+        output.gain.setTargetAtTime(0.001, now, 0.025);
+        low.stop(now + 0.09);
+        high.stop(now + 0.09);
+        noise.stop(now + 0.09);
+      } catch { /* source already ended */ }
+    };
+  } catch {
+    return () => {};
+  }
+}
+
 export function sfx(name, at = null) {
   if (at) {
     const dx = at.x - _listener.x, dy = at.y - _listener.y, dz = at.z - _listener.z;

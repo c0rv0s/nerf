@@ -2,8 +2,9 @@
 // On low-gravity maps they make ballistic jumps between waypoints.
 import * as THREE from 'three';
 import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ } from './engine.js';
-import { WEAPONS, WEAPON_ORDER, buildBlaster } from './weapons.js';
+import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from './weapons.js';
 import { aiTex } from './maps.js';
+import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 
 export function buildBotMesh(color) {
@@ -46,6 +47,9 @@ export class Bot {
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
     this.cooldown = 0;
+    this.warmupT = 0;
+    this.warmupWeapon = null;
+    this.warmupAudioStop = null;
 
     this.grounded = false;
     this.path = null;
@@ -96,7 +100,54 @@ export class Bot {
     this.mesh.add(this._gun);
   }
 
+  cancelWeaponWarmup() {
+    this.warmupAudioStop?.();
+    this.warmupAudioStop = null;
+    this.warmupT = 0;
+    this.warmupWeapon = null;
+    updateWeaponWarmupVisual(this._gun, -1);
+  }
+
+  syncWeaponWarmupVisual() {
+    const w = WEAPONS[this.weapon];
+    const warming = this.warmupWeapon === this.weapon && !!w?.warmup;
+    updateWeaponWarmupVisual(
+      this._gun,
+      warming ? 1 - this.warmupT / w.warmup : -1,
+      performance.now() * 0.001,
+    );
+  }
+
+  weaponTriggerReady(dt, wantsFire) {
+    const w = WEAPONS[this.weapon];
+    const hasAmmo = this.weapon === 'blaster' || this.ammo[this.weapon] > 0;
+    if (!w?.warmup) {
+      this.cancelWeaponWarmup();
+      return wantsFire && hasAmmo && this.cooldown <= 0;
+    }
+    if (!wantsFire || !hasAmmo || this.cooldown > 0) {
+      this.cancelWeaponWarmup();
+      return false;
+    }
+    if (this.warmupWeapon !== this.weapon) {
+      this.warmupWeapon = this.weapon;
+      this.warmupT = w.warmup;
+      this.warmupAudioStop = startWhomperWarmup(this.pos, w.warmup);
+      return false;
+    }
+    this.warmupT -= dt;
+    if (this.warmupT > 0) return false;
+    this.cancelWeaponWarmup();
+    return true;
+  }
+
+  finishWeaponShot(w, extraCooldown) {
+    if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
+    this.cooldown = w.warmup ? 0 : 1 / w.rof + extraCooldown;
+  }
+
   spawn(pos) {
+    this.cancelWeaponWarmup();
     this.pos.copy(pos);
     this.vel.set(0, 0, 0);
     this.hp = 100;
@@ -167,6 +218,7 @@ export class Bot {
   }
 
   die() {
+    this.cancelWeaponWarmup();
     this.jetpack = null;
     this._jetpackWants = false;
     this.alive = false;
@@ -437,7 +489,8 @@ export class Bot {
 
     // aim + fire at the target from any orientation
     this.cooldown -= dt;
-    if (this.target && this.target.alive && this.cooldown <= 0 && this.reactionTimer <= 0) {
+    const wantsFire = this.target && this.target.alive && this.reactionTimer <= 0;
+    if (this.weaponTriggerReady(dt, wantsFire)) {
       const w = WEAPONS[this.weapon];
       const origin = this.pos.clone().addScaledVector(up, 1.4);
       const aim = this.target.pos.clone().addScaledVector(this.target.up || UPY, 0.9);
@@ -446,8 +499,7 @@ export class Bot {
       const dir = aim.sub(origin).normalize();
       this._face = dir.clone();
       fire(this, origin.addScaledVector(dir, 0.9), dir, this.weapon);
-      if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
-      this.cooldown = 1 / w.rof + rand(0.3, 0.7);
+      this.finishWeaponShot(w, rand(0.3, 0.7));
     }
 
     // orient the mesh upright on its surface, facing its heading/target
@@ -459,6 +511,7 @@ export class Bot {
     this.mesh.quaternion.setFromRotationMatrix(
       new THREE.Matrix4().lookAt(new THREE.Vector3(), face.clone().negate(), up));
     this.syncGunModel();
+    this.syncWeaponWarmupVisual();
     if (this.powerup) { this.powerup.timeLeft -= dt; if (this.powerup.timeLeft <= 0) { this.powerup = null; this.damageMult = 1; } }
   }
 
@@ -489,7 +542,9 @@ export class Bot {
       this.vel.z *= Math.exp(-12 * dt);
       this.grounded = moveCharacter(this, this.world, dt);
       this.cooldown = Math.max(0, this.cooldown - dt);
+      this.cancelWeaponWarmup();
       this.syncGunModel();
+      this.syncWeaponWarmupVisual();
       this.mesh.position.copy(this.pos);
       this.mesh.rotation.y = this.aimYaw;
       return;
@@ -696,7 +751,8 @@ export class Bot {
     const aligned = this.target && Math.abs(angDiff(
       Math.atan2(this.target.pos.x - this.pos.x, this.target.pos.z - this.pos.z),
       this.aimYaw)) < 0.3;
-    if (this.target && aligned && this.cooldown <= 0 && this.reactionTimer <= 0) {
+    const wantsFire = this.target && aligned && this.reactionTimer <= 0;
+    if (this.weaponTriggerReady(dt, wantsFire)) {
       const w = WEAPONS[this.weapon];
       const origin = this.eye();
       const aimAt = new THREE.Vector3(
@@ -707,12 +763,12 @@ export class Bot {
       if (this.target.vel) aimAt.addScaledVector(this.target.vel, origin.distanceTo(aimAt) / w.speed * 0.35);
       const dir = aimAt.sub(origin).normalize();
       fire(this, origin.addScaledVector(dir, 0.8), dir, this.weapon);
-      if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
-      this.cooldown = 1 / w.rof + rand(0.25, 0.6);
+      this.finishWeaponShot(w, rand(0.25, 0.6));
     }
 
     // --- visuals ---
     this.syncGunModel();
+    this.syncWeaponWarmupVisual();
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = this.aimYaw;
 
