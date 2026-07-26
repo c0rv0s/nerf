@@ -1,6 +1,7 @@
 import { MAPS } from './maps.js';
 import * as THREE from 'three';
 import { canVoteForMap } from './secret-maps.js';
+import { DEFAULT_MAP_PLAYER_LIMIT, mapPlayerLimit } from './map-rules.js';
 
 const WS_PATH = '/ws';
 
@@ -360,7 +361,7 @@ class MultiplayerClient extends EventTarget {
       const humans = (this.slots || []).filter(s => s.human).length;
       const summary = document.createElement('div');
       summary.className = 'mp-lobby-summary';
-      summary.textContent = `${humans}/${this.slots.length || 8} human players in lobby`;
+      summary.textContent = `${humans}/${this.slots.length || DEFAULT_MAP_PLAYER_LIMIT} human players in lobby`;
       this.body.append(summary);
       const modes = [
         ['ffa', 'FREE FOR ALL'],
@@ -382,9 +383,12 @@ class MultiplayerClient extends EventTarget {
       mapWrap.className = 'mp-section';
       mapWrap.innerHTML = '<h3>Map</h3>';
       for (const map of MAPS.filter(canVoteForMap)) {
+        const playerLimit = mapPlayerLimit(map);
+        const overLimit = humans > playerLimit;
         const btn = document.createElement('button');
         btn.className = 'mp-map';
-        btn.innerHTML = `<span>${map.emoji} ${map.name}</span><small>${votes[map.id] || 0} votes</small>`;
+        btn.innerHTML = `<span>${map.emoji} ${map.name}</span><small>${overLimit ? `MAX ${playerLimit} PLAYERS` : `${votes[map.id] || 0} votes`}</small>`;
+        btn.disabled = overLimit;
         btn.addEventListener('click', () => this.vote(map.id));
         mapWrap.append(btn);
       }

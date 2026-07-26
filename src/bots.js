@@ -20,7 +20,7 @@ export function buildBotMesh(color) {
   visor.position.set(0, 1.66, 0.22);
   for (const m of [body, head, visor]) m.castShadow = true;
   g.add(body, head, visor);
-  return { group: g };
+  return { group: g, body, head, visor };
 }
 
 export class Bot {
@@ -232,7 +232,10 @@ export class Bot {
     return 'blaster';
   }
 
-  eye() { return new THREE.Vector3(this.pos.x, this.pos.y + 1.55, this.pos.z); }
+  eye() {
+    const visualScale = this.world.characterVisualScale?.(this) || 1;
+    return new THREE.Vector3(this.pos.x, this.pos.y + 1.55 * visualScale, this.pos.z);
+  }
 
   // Target acquisition with human-ish senses:
   //  - vision limited to a ~140° cone around current facing
@@ -242,7 +245,11 @@ export class Bot {
   think(characters) {
     this.shopping = this.bestLoot();
     const myEye = this.eye();
-    const eyeOf = (ch) => ch.eye ? ch.eye() : new THREE.Vector3(ch.pos.x, ch.pos.y + 1.5, ch.pos.z);
+    const eyeOf = (ch) => ch.eye ? ch.eye() : new THREE.Vector3(
+      ch.pos.x,
+      ch.pos.y + 1.5 * (this.world.characterVisualScale?.(ch) || 1),
+      ch.pos.z,
+    );
 
     // Just got shot by someone new? Turn on the attacker — even mid-fight.
     const atk = this.lastAttacker;
@@ -461,7 +468,8 @@ export class Bot {
       : (this.target && this.target.alive) ? this.target.pos : (this._roam || this.pos);
 
     // move toward the goal, flattened onto the surface we're standing on
-    const speed = this.world.playerSpeed * 0.8 * (this.speedMult || 1);
+    const moveScale = this.world.characterMoveScale?.(this) || 1;
+    const speed = this.world.playerSpeed * moveScale * 0.8 * (this.speedMult || 1);
     const toGoal = new THREE.Vector3().subVectors(goal, this.pos);
     const goalUp = toGoal.dot(up);                         // how far the goal is "above" us
     const mv = toGoal.clone().addScaledVector(up, -goalUp);
@@ -592,7 +600,8 @@ export class Bot {
     const vine = this._vineZone();
     const water = vine ? null : this._waterZone();
     if (!water && !vine) this._waterRecoveryPath = false;
-    const speed = this.world.playerSpeed * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
+    const moveScale = this.world.characterMoveScale?.(this) || 1;
+    const speed = this.world.playerSpeed * moveScale * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
     const lowGrav = this.world.gravity < 12;
     let moveX = 0, moveZ = 0;
 
@@ -755,14 +764,16 @@ export class Bot {
     if (this.weaponTriggerReady(dt, wantsFire)) {
       const w = WEAPONS[this.weapon];
       const origin = this.eye();
+      const ownerScale = this.world.characterVisualScale?.(this) || 1;
+      const targetScale = this.world.characterVisualScale?.(this.target) || 1;
       const aimAt = new THREE.Vector3(
-        this.target.pos.x + rand(-1, 1) * this.aimError * 10,
-        this.target.pos.y + 1.2 + rand(-1, 1) * this.aimError * 8,
-        this.target.pos.z + rand(-1, 1) * this.aimError * 10);
+        this.target.pos.x + rand(-1, 1) * this.aimError * 10 * targetScale,
+        this.target.pos.y + 1.2 * targetScale + rand(-1, 1) * this.aimError * 8 * targetScale,
+        this.target.pos.z + rand(-1, 1) * this.aimError * 10 * targetScale);
       // lead the target a little (sloppily — beatable on the move)
       if (this.target.vel) aimAt.addScaledVector(this.target.vel, origin.distanceTo(aimAt) / w.speed * 0.35);
       const dir = aimAt.sub(origin).normalize();
-      fire(this, origin.addScaledVector(dir, 0.8), dir, this.weapon);
+      fire(this, origin.addScaledVector(dir, 0.8 * ownerScale), dir, this.weapon);
       this.finishWeaponShot(w, rand(0.25, 0.6));
     }
 

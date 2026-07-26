@@ -9,7 +9,10 @@ import { MAPS, buildAtrium, buildHallOfFame, texturesReady } from './maps.js';
 import { buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ, pointHitsWorld } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
-import { ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual, nextLoadedWeaponAfter } from './weapons.js';
+import {
+  ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster,
+  updateWeaponWarmupVisual, nextLoadedWeaponAfter,
+} from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
 import { sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume, setRainAmbience, startWhomperWarmup } from './audio.js';
@@ -17,14 +20,17 @@ import { multiplayer } from './multiplayer.js';
 import { createJetpack } from './jetpack.js';
 import { unlockSecretMap } from './secret-maps.js';
 import { byId, setStyle, setText } from './dom.js';
+import { mapPlayerLimit } from './map-rules.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
 const MULTIPLAYER_PODIUM_HOLD_MS = 15000;
 const REMOTE_HUMAN_SNAP_DIST = 8;
+const REMOTE_SLOT_SNAP_DIST = 20;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
 const REMOTE_HUMAN_MAX_PREDICT = 0.18;
 const REMOTE_HUMAN_SMOOTH = 20;
+const previousCharacterPos = new THREE.Vector3();
 const MULTI_KILL_WINDOW = 2.75;
 const MAX_KILL_AWARD = 7;
 const KILL_AWARD_LABELS = {
@@ -264,7 +270,118 @@ let multiplayerVotingTimer = 0;
 const lastSpawnByKey = new Map();
 const lastSpawnFaceByKey = new Map();
 
+function hierarchyPairs(source, copy) {
+  const sourceNodes = [];
+  const copyNodes = [];
+  source.traverse(node => sourceNodes.push(node));
+  copy.traverse(node => copyNodes.push(node));
+  if (sourceNodes.length !== copyNodes.length) return null;
+  return sourceNodes.map((node, i) => [node, copyNodes[i]]);
+}
+
+function syncHierarchyPairs(pairs, skipRoot = true) {
+  if (!pairs) return;
+  for (let i = skipRoot ? 1 : 0; i < pairs.length; i++) {
+    const [source, copy] = pairs[i];
+    copy.position.copy(source.position);
+    copy.quaternion.copy(source.quaternion);
+    copy.scale.copy(source.scale);
+    copy.visible = source.visible;
+    copy.renderOrder = source.renderOrder;
+    copy.castShadow = source.castShadow;
+    copy.receiveShadow = source.receiveShadow;
+    copy.layers.mask = source.layers.mask;
+    if ('geometry' in source) copy.geometry = source.geometry;
+    if ('material' in source) copy.material = source.material;
+    if (source.morphTargetInfluences && copy.morphTargetInfluences) {
+      const count = Math.min(source.morphTargetInfluences.length, copy.morphTargetInfluences.length);
+      for (let j = 0; j < count; j++) copy.morphTargetInfluences[j] = source.morphTargetInfluences[j];
+    }
+  }
+}
+
+// The first-person player has no canonical world body. Infinite Bloom still
+// needs to show that same player in its adjacent recursive layers, so keep one
+// detached third-person source built by the exact normal-character factory.
+// The map clones this source; it never enters the canonical scene or physics.
+function syncRecursivePlayerAvatar(player) {
+  if (!player?.world?.recursiveVisual) return null;
+  let state = player._recursiveAvatarState;
+  if (!state) {
+    const color = colorHex(player);
+    const { group, body, head, visor } = buildBotMesh(color);
+    group.name = 'infinite-bloom-local-player-source';
+    state = {
+      root: group,
+      body,
+      visor,
+      ownedMeshes: [body, head, visor],
+      color,
+      weaponSource: null,
+      gun: null,
+      gunPairs: null,
+    };
+    player._recursiveAvatarState = state;
+    player.recursiveRenderSource = group;
+  }
+
+  const color = colorHex(player);
+  if (state.color !== color) {
+    state.color = color;
+    state.body.material.color.setHex(color);
+    state.visor.material.emissive.setHex(color);
+  }
+
+  const weaponSource = player.vmWeapons?.[player.weapon || 'blaster'];
+  if (weaponSource && state.weaponSource !== weaponSource) {
+    if (state.gun) state.root.remove(state.gun);
+    state.weaponSource = weaponSource;
+    state.gun = weaponSource.clone(true);
+    state.gun.name = `infinite-bloom-local-${player.weapon || 'blaster'}`;
+    state.gunPairs = hierarchyPairs(weaponSource, state.gun);
+    state.root.add(state.gun);
+  }
+  if (state.gun) {
+    // Copy shell material replacements and nested Whomper charge animation
+    // from the live viewmodel, but retain the normal third-person hand pose.
+    syncHierarchyPairs(state.gunPairs);
+    state.gun.visible = true;
+    state.gun.scale.setScalar(0.55);
+    state.gun.position.set(0.32, 1.05, 0.25);
+    state.gun.rotation.set(0, Math.PI, 0);
+  }
+
+  state.root.visible = player.alive !== false;
+  state.root.position.copy(player.pos);
+  state.root.rotation.set(0, (player.yaw || 0) + Math.PI, 0);
+  state.root.scale.set(1, 1, 1);
+  return state.root;
+}
+
+function disposeRecursivePlayerAvatar(player) {
+  const state = player?._recursiveAvatarState;
+  if (!state) return;
+  if (state.gun) state.root.remove(state.gun); // shares viewmodel resources
+  for (const mesh of state.ownedMeshes) {
+    mesh.geometry?.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      material?.map?.dispose();
+      material?.normalMap?.dispose();
+      material?.dispose();
+    }
+  }
+  state.root.clear();
+  player.recursiveRenderSource = null;
+  player._recursiveAvatarState = null;
+}
+
 function bindWorldPresentation(world, syncToMultiplayer = false) {
+  if (world?.recursiveVisual) {
+    world.characterMirrorSource = character => character?.isPlayer
+      ? syncRecursivePlayerAvatar(character)
+      : (character?.recursiveRenderSource || character?.mesh || null);
+  }
   if (!world?.runeEngine) return;
   if (syncToMultiplayer && Number.isFinite(multiplayer.phaseEndsAt)) {
     const remaining = Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000);
@@ -330,14 +447,17 @@ function teardown() {
   G.meteors = [];
   G.comets = [];
   G.mpTracerPool?.dispose();
+  for (const marker of dmgMarkers) disposeDmgMarker(marker, G.scene);
+  dmgMarkers = [];
   camera.remove(G.player.viewmodel);
   hud.els.hud.classList.remove('endboard');
   setStyle(hud.els.board, 'display', 'none');
   setStyle(hud.els.board, 'top', '');
   setStyle(hud.els.board, 'zIndex', '');
   setStyle(hud.els.board, 'background', '');
+  G.world.dispose?.();
+  disposeRecursivePlayerAvatar(G.player);
   G.scene.clear();
-  dmgMarkers = [];
   G = null;
 }
 
@@ -642,7 +762,9 @@ function startMatch(mapDef, mode = 'ffa') {
   player.color = '#ffd23c';
 
   const characters = [player];
-  const playerCount = Math.max(2, Math.floor(world.playerCount || 8));
+  // Map-specific caps override the normal population, while maps such as
+  // Olympus can still opt into a larger single-player crowd on their world.
+  const playerCount = Math.max(2, Math.floor(mapPlayerLimit(mapDef, world.playerCount || 8)));
   if (mode === 'tdm') {
     const teamSize = Math.floor(playerCount / 2);
     const teams = { blue: Math.max(0, teamSize - 1), red: playerCount - teamSize };
@@ -793,7 +915,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const playerSlot = multiplayerSlotById();
   const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
   player.id = multiplayer.slotId;
-  player.color = multiplayerColorForTeam(playerTeam, '#ffd23c');
+  player.color = multiplayerColorForTeam(playerTeam, playerSlot?.color || '#ffd23c');
   player.team = playerTeam;
   player.name = multiplayer.name || 'YOU';
   player.score = 0;
@@ -864,7 +986,7 @@ function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
   G.player.id = multiplayer.slotId;
   G.player.name = multiplayer.name || 'YOU';
-  G.player.color = multiplayerColorForTeam(playerTeam, '#ffd23c');
+  G.player.color = multiplayerColorForTeam(playerTeam, playerSlot?.color || '#ffd23c');
   G.player.team = playerTeam;
   addTeamMarker(G.player);
   let botIdx = 0;
@@ -929,8 +1051,12 @@ function removeCharacter(ch) {
 }
 
 function addReplacementBot() {
-  if (!G?.multiplayerHost || G.characters.length >= 8) return;
-  const i = G.characters.filter(ch => !ch.isPlayer && !ch.remoteHuman).length;
+  if (!G?.multiplayerHost) return;
+  const playerLimit = Math.max(2, Math.floor(mapPlayerLimit(G.mapDef, G.world.playerCount || 8)));
+  if (G.characters.length >= playerLimit) return;
+  const usedIds = new Set(G.characters.map(ch => ch.id).filter(Boolean));
+  let i = 0;
+  while (usedIds.has(`bot-${i}`)) i++;
   let team = `ffa-bot-${i}`;
   let color = FFA_COLORS[i % FFA_COLORS.length];
   if (G.mode === 'tdm') {
@@ -1030,7 +1156,10 @@ function updateRemoteHuman(ch, dt, fire) {
         -Math.cos(ch.yaw || 0) * cp,
       ).normalize();
     const up = ch.up || new THREE.Vector3(0, 1, 0);
-    const origin = ch.pos.clone().addScaledVector(up, 1.55).addScaledVector(dir, 0.8);
+    const visualScale = G.world.characterVisualScale?.(ch) || 1;
+    const origin = ch.pos.clone()
+      .addScaledVector(up, 1.55 * visualScale)
+      .addScaledVector(dir, 0.8 * visualScale);
     fire(ch, origin, dir, ch.weapon || 'blaster');
     ch.finishWeaponShot(w, 0);
     if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) {
@@ -1081,7 +1210,6 @@ function makeNameTagSprite(text, color) {
     depthTest: true,
   }));
   sprite.scale.set(2.6, 0.65, 1);
-  sprite.userData.tex = tex;
   return sprite;
 }
 
@@ -1362,7 +1490,7 @@ function queueMultiplayerEvent(ev) {
 function recordMultiplayerShot(owner, origin, dir, weaponId) {
   if (!G?.multiplayerHost) return;
   const w = WEAPONS[weaponId] || WEAPONS.blaster;
-  const distance = Math.min(80, Math.max(24, w.speed * 0.45));
+  const distance = w.beamRange ?? Math.min(80, Math.max(24, w.speed * 0.45));
   queueMultiplayerEvent({
     type: 'shot',
     shooterId: characterNetworkId(owner),
@@ -1377,7 +1505,8 @@ function updateRemoteSlots(dt) {
   if (!G?.remoteSlots) return;
   const a = Math.min(1, dt * 14);
   for (const remote of G.remoteSlots.values()) {
-    remote.pos.lerp(remote.targetPos, a);
+    if (remote.pos.distanceToSquared(remote.targetPos) > REMOTE_SLOT_SNAP_DIST ** 2) remote.pos.copy(remote.targetPos);
+    else remote.pos.lerp(remote.targetPos, a);
     remote.mesh.position.copy(remote.pos);
     remote.mesh.rotation.y = remote.yaw || 0;
     updateWeaponWarmupVisual(
@@ -1399,7 +1528,20 @@ function createMultiplayerTracerPool(scene, geometry, capacity = 64) {
     });
     const mesh = new THREE.Mesh(geometry, mat);
     mesh.visible = false;
-    pool.free.push({ mesh, mat, from: new THREE.Vector3(), to: new THREE.Vector3(), t: 0, life: 0.1, impact: false, color: 0xffffff });
+    pool.free.push({
+      mesh, mat,
+      from: new THREE.Vector3(),
+      to: new THREE.Vector3(),
+      pos: new THREE.Vector3(),
+      vel: new THREE.Vector3(),
+      previous: new THREE.Vector3(),
+      t: 0,
+      life: 0.1,
+      impact: false,
+      color: 0xffffff,
+      generation: 0,
+      _bloomRecursionCrossings: 0,
+    });
   }
   pool.acquire = () => {
     if (pool.free.length) return pool.free.pop();
@@ -1437,6 +1579,12 @@ function spawnMultiplayerTracer(ev) {
   const weaponId = WEAPONS[ev.weapon] ? ev.weapon : 'blaster';
   const weapon = WEAPONS[weaponId];
   const color = parseInt(String(ev.color || '#ffd23c').replace('#', ''), 16) || 0xffd23c;
+  if (weapon.beam) {
+    mpTracerDir.subVectors(to, from).normalize();
+    G.projectiles.spawnVisualBeam(from, mpTracerDir, weapon);
+    G.fxPool.spawnPuff(from, color, 0.22);
+    return;
+  }
   const pellets = Math.min(weapon.pellets || 1, 6);
   const dir = mpTracerDir.subVectors(to, from).normalize();
   const right = Math.abs(dir.y) > 0.9
@@ -1444,12 +1592,19 @@ function spawnMultiplayerTracer(ev) {
     : mpTracerRight.crossVectors(dir, mpTracerWorldUp).normalize();
   const up = mpTracerUp.crossVectors(right, dir).normalize();
   const dist = Math.sqrt(distSq);
-  const life = Math.min(0.2, Math.max(0.07, dist / Math.max(weapon.speed, 1)));
+  const life = Math.min(
+    weapon.tracerLife ?? 0.7,
+    Math.max(0.07, dist / Math.max(weapon.speed, 1)),
+  );
   for (let i = 0; i < pellets; i++) {
     const tracer = pool.acquire();
     const { mesh, mat } = tracer;
+    mesh.geometry = G.projectiles.geoBall;
     if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
     else mesh.scale.setScalar(Math.max(weapon.size, 0.1));
+    // Pooled tracers may previously have been a fifth-stage OUROBOROS cube.
+    // Replace the baseline every time so later shots never inherit its growth.
+    mesh._recursiveBaseScale = mesh.scale.clone();
     tracer.to.copy(to);
     if (pellets > 1) {
       const spread = dist * 0.03;
@@ -1462,9 +1617,19 @@ function spawnMultiplayerTracer(ev) {
     tracer.life = life;
     tracer.impact = !!ev.hit;
     tracer.color = color;
+    tracer.generation++;
+    tracer._bloomRecursionCrossings = 0;
+    tracer.onRecursionCrossing = null;
+    tracer.pos.copy(tracer.from);
+    tracer.vel.subVectors(tracer.to, tracer.from).multiplyScalar(1 / tracer.life);
+    if (G.world.prepareVisualProjectile?.(tracer) === false) {
+      pool.release(tracer);
+      continue;
+    }
     mat.color.setHex(color);
     mat.opacity = 0.95;
-    mesh.position.copy(from);
+    mesh.material = mat;
+    mesh.position.copy(tracer.pos);
     mesh.visible = true;
     G.scene.add(mesh);
     pool.active.push(tracer);
@@ -1477,13 +1642,35 @@ function updateMultiplayerTracers(dt) {
   if (!pool) return;
   for (let i = pool.active.length - 1; i >= 0; i--) {
     const tr = pool.active[i];
-    tr.t += dt;
-    const done = tr.t >= tr.life;
+    const moveDt = Math.min(dt, Math.max(0, tr.life - tr.t));
+    tr.t += moveDt;
+    let remaining = moveDt;
+    let traversalFailed = false;
+    let guard = 0;
+    while (remaining > 1e-6 && !traversalFailed) {
+      if (++guard > 512) {
+        traversalFailed = true;
+        break;
+      }
+      const speed = tr.vel.length();
+      const stepDt = speed > 1e-6 ? Math.min(remaining, 0.5 / speed) : remaining;
+      remaining -= stepDt;
+      tr.previous.copy(tr.pos);
+      tr.pos.addScaledVector(tr.vel, stepDt);
+      if (G.world.postVisualProjectileMove?.(tr, tr.previous) === false) traversalFailed = true;
+    }
+    const done = traversalFailed || tr.t >= tr.life;
     const a = Math.min(1, tr.t / tr.life);
-    tr.mesh.position.lerpVectors(tr.from, tr.to, a);
+    tr.mesh.position.copy(tr.pos);
     tr.mat.opacity = Math.max(0, 1 - a);
     if (done) {
-      if (tr.impact) G.fxPool.spawnPuff(tr.to, tr.color, 0.45);
+      if (tr.impact) {
+        G.fxPool.spawnPuff(
+          tr.pos,
+          tr.currentColor || tr.color,
+          0.45 * Math.sqrt(tr.recursionScale || 1),
+        );
+      }
       pool.active.splice(i, 1);
       pool.release(tr);
     }
@@ -2017,8 +2204,7 @@ function showVictoryPodium(result) {
   setStyle(document.getElementById('scores'), 'display', 'none');
 
   for (const marker of dmgMarkers) {
-    oldScene.remove(marker.sprite);
-    marker.tex.dispose();
+    disposeDmgMarker(marker, oldScene);
   }
   dmgMarkers = [];
   G.projectiles.clear();
@@ -2100,10 +2286,17 @@ function spawnDmgMarker(target, amount) {
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: tex, transparent: true, depthWrite: false, depthTest: false }));
-  sprite.scale.set(1.7, 1.7, 1);
-  sprite.position.set(target.pos.x, target.pos.y + 2.5, target.pos.z);
+  const visualScale = G.world.characterVisualScale?.(target) || 1;
+  const rise = target.up?.clone?.() || new THREE.Vector3(0, 1, 0);
+  if (rise.lengthSq() < 1e-6) rise.set(0, 1, 0);
+  else rise.normalize();
+  sprite.scale.set(1.7 * visualScale, 1.7 * visualScale, 1);
+  sprite.position.copy(target.pos).addScaledVector(rise, 2.5 * visualScale);
   G.scene.add(sprite);
-  const m = { target, amount, age: 0, sprite, tex, canvas: c };
+  const m = {
+    target, amount, age: 0, sprite, tex, canvas: c,
+    rise: rise.multiplyScalar(visualScale),
+  };
   drawDmg(m);
   dmgMarkers.push(m);
 }
@@ -2137,14 +2330,20 @@ function updateDmgMarkers(dt) {
   for (let i = dmgMarkers.length - 1; i >= 0; i--) {
     const m = dmgMarkers[i];
     m.age += dt;
-    m.sprite.position.y += dt * 1.1;
+    m.sprite.position.addScaledVector(m.rise, dt * 1.1);
     m.sprite.material.opacity = Math.min(1, 2.5 * (1 - m.age / 0.9));
     if (m.age > 0.9) {
-      G.scene.remove(m.sprite);
-      m.tex.dispose();
+      disposeDmgMarker(m, G.scene);
       dmgMarkers.splice(i, 1);
     }
   }
+}
+
+function disposeDmgMarker(marker, scene = G?.scene) {
+  if (!marker) return;
+  scene?.remove(marker.sprite);
+  marker.sprite?.material?.dispose();
+  marker.tex?.dispose();
 }
 
 function ensureAwards(ch) {
@@ -2728,6 +2927,19 @@ function tick(now) {
 }
 
 function renderFrame() {
+  G.world.beforeRender?.({
+    renderer,
+    scene: renderPass.scene,
+    camera,
+    player: G.player,
+    characters: G.characters,
+    projectiles: G.projectiles?.projectiles,
+    remoteTracers: G.mpTracerPool?.active,
+    effects: G.fxPool?.puffs,
+    damageMarkers: dmgMarkers,
+    pickups: G.pickups?.items,
+    lowQuality: usesLightRenderPath(),
+  });
   if (performanceProfile.postprocessing && !usesLightRenderPath()) composer.render();
   else renderer.render(renderPass.scene, camera);
 }
@@ -2755,7 +2967,7 @@ function stepAtrium(dt) {
     return;
   }
   for (const p of G.world.portals) {
-    if (Math.hypot(G.player.pos.x - p.x, G.player.pos.z - p.z) < 2.6) {
+    if (Math.hypot(G.player.pos.x - p.x, G.player.pos.z - p.z) < (p.radius ?? 2.6)) {
       G.pendingMap = MAPS.find(m => m.id === p.map);
       if (G.pendingMap?.secret) unlockSecretMap(G.pendingMap.id);
       sfx('powerup');
@@ -3362,12 +3574,17 @@ function step(dt) {
     G.projectiles.fire(owner, origin, dir, weaponId);
     recordMultiplayerShot(owner, origin, dir, weaponId);
   };
+  const moveHook = G.world.postCharacterMove;
+  if (moveHook) previousCharacterPos.copy(G.player.pos);
   G.player.update(dt, fire);
+  if (moveHook) moveHook(G.player, previousCharacterPos);
   setJetpackThrust(!!(G.player.alive && G.player.jetpack?.active));
   for (const ch of G.characters) {
     if (!ch.isPlayer) {
+      if (moveHook) previousCharacterPos.copy(ch.pos);
       if (ch.remoteHuman) updateRemoteHuman(ch, dt, fire);
       else ch.update(dt, G.characters, fire);
+      if (moveHook) moveHook(ch, previousCharacterPos);
     }
   }
 
@@ -3524,7 +3741,10 @@ function stepMultiplayer(dt) {
   G.world.updateDoors?.(G.characters, dt);
   updateStormAudio();
   const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
+  const moveHook = G.world.postCharacterMove;
+  if (moveHook) previousCharacterPos.copy(G.player.pos);
   G.player.update(dt, fire);
+  if (moveHook) moveHook(G.player, previousCharacterPos);
   setJetpackThrust(!!(G.player.alive && G.player.jetpack?.active));
   G.projectiles.update(dt, G.characters);
   G.pickups.update(dt, [G.player]);

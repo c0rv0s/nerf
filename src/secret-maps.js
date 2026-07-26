@@ -1,4 +1,4 @@
-const SECRET_MAP_IDS = new Set(['olympus', 'prism']);
+const SECRET_MAP_IDS = new Set(['olympus', 'prism', 'bloom']);
 const UNLOCK_STORAGE_PREFIX = 'nerf-arena-secret-map-unlocked-v1:';
 
 function unlockStorageKey(mapId) {

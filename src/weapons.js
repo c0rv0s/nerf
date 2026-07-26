@@ -7,7 +7,7 @@ import { sfx } from './audio.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
-export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'refractor', 'thunderbolt'];
+export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'ouroboros', 'refractor', 'thunderbolt'];
 
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
@@ -38,6 +38,14 @@ export const WEAPONS = {
                 bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
                 homingRange: 38, homingTurn: 0.58, childHomingRange: 34, childHomingTurn: 0.72,
                 trail: true, sound: 'hyper' },
+  ouroboros:  { name: 'OUROBOROS',      slot: 9, dmg: 35, rof: 0.55, speed: 0, spread: 0,
+                pellets: 1, ammo: 0, pickupAmmo: 5, color: 0x79ff16, size: 0.22,
+                beam: true, recursiveBeam: true, beamRange: 190, beamLife: 0.85, beamRetract: 0.36,
+                beamDamageInterval: 1.1, beamCoreRadius: 0.11, beamGlowRadius: 0.32,
+                recursionMaxCrossings: 5,
+                recursionDamageGain: 15, recursionSizeGain: 0.4,
+                recursionColors: [0x79ff16, 0xb8ff19, 0xf0ee1b, 0xffb018, 0xff6816, 0xff3016],
+                secretMapOnly: true, texture: 'infinite-bloom-surface', sound: 'hyper' },
   refractor:  { name: 'REFRACTOR',     slot: 9, dmg: 22, rof: 0.5, speed: 0,   spread: 0,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,
                 beam: true, beamBounces: 8, beamRange: 130, beamLife: 2.8, beamRetract: 0.9,
@@ -60,6 +68,7 @@ export const WEAPON_FEEL = {
   whomper:    { recoil: 1.8,  camera: 0.02,  return: 6,  flash: 1.6 },
   hyper:      { recoil: 1.15, camera: 0.011, return: 9,  flash: 1.1 },
   parasite:   { recoil: 0.92, camera: 0.008, return: 10, flash: 1.05 },
+  ouroboros:  { recoil: 1.42, camera: 0.014, return: 7, flash: 1.55 },
   refractor:  { recoil: 0.7,  camera: 0.006, return: 8,  flash: 1.35 },
   thunderbolt:{ recoil: 1.45, camera: 0.016, return: 7,  flash: 1.65 },
 };
@@ -228,6 +237,23 @@ export function buildBlaster(id) {
     add(glow, C(0.115, 0.115, 0.035), 0, -0.13, 0.02, -0.16, HPI);
     add(glow, C(0.115, 0.115, 0.035), 0, 0.13, 0.02, -0.16, HPI);
     add(glow, B(0.14, 0.035, 0.35), 0, 0, 0.08, 0.18);
+  } else if (id === 'ouroboros') {
+    // Nested square rails make the barrel look like a tiny arena containing
+    // itself. Acid-green energy moves through yellow and red as its projectile
+    // survives more recursive seams.
+    add(geos, B(0.26, 0.3, 0.82), SHELL, 0, 0, 0.08);
+    add(geos, B(0.18, 0.16, 0.42), DARK, 0, -0.06, 0.55);
+    add(geos, B(0.13, 0.32, 0.17), DARK, 0, -0.25, 0.3, 0.28);
+    add(geos, B(0.32, 0.08, 0.62), 0xffb018, 0, 0.19, -0.13);
+    for (const [s, z, color] of [[0.32, -0.34, WHITE], [0.25, -0.58, 0xf0ee1b], [0.18, -0.78, 0xff6816]]) {
+      const bar = 0.045;
+      add(geos, B(s, bar, 0.16), color, 0, s * 0.5, z);
+      add(geos, B(s, bar, 0.16), color, 0, -s * 0.5, z);
+      add(geos, B(bar, s, 0.16), color, s * 0.5, 0, z);
+      add(geos, B(bar, s, 0.16), color, -s * 0.5, 0, z);
+    }
+    add(glow, new THREE.OctahedronGeometry(0.105, 0), 0, 0, 0.04, -0.86);
+    add(glow, new THREE.TorusGeometry(0.15, 0.025, 7, 20), 0, 0, 0.04, -0.3);
   } else if (id === 'thunderbolt') {
     // A compact ceremonial rail-launcher: twin golden prongs cradle an
     // energized zig-zag core, giving Olympus its own unmistakable silhouette.
@@ -262,7 +288,10 @@ export function buildBlaster(id) {
   const { body, energy } = blasterMats(w.color, w.texture);
   const g = new THREE.Group();
   const shellMesh = new THREE.Mesh(mergeGeometries(geos.map(x => x.toNonIndexed()), false), body);
-  shellMesh.userData.baseMaterial = body;
+  // Keep live Three.js objects out of userData. Object3D.clone() serializes
+  // userData, so storing a Material here prevented recursive arena copies from
+  // cloning the real held-weapon hierarchy safely.
+  shellMesh._baseMaterial = body;
   shellMesh.castShadow = true;
   g.add(shellMesh);
   if (glow.length) g.add(new THREE.Mesh(mergeGeometries(glow.map(x => x.toNonIndexed()), false), energy));
@@ -285,13 +314,16 @@ export function buildBlaster(id) {
     chargeOrb.visible = false;
     chargeOrb.add(core, aura);
     g.add(chargeOrb);
-    g.userData.chargeOrb = chargeOrb;
+    // This is an object reference (and therefore circular through `parent`).
+    // A private runtime field survives our source model without poisoning
+    // Object3D.clone()'s JSON-based userData copy.
+    g._chargeOrb = chargeOrb;
   }
   return g;
 }
 
 export function updateWeaponWarmupVisual(model, progress = -1, time = 0) {
-  const orb = model?.userData?.chargeOrb;
+  const orb = model?._chargeOrb;
   if (!orb) return;
   if (progress < 0) {
     orb.visible = false;
@@ -412,14 +444,29 @@ export class ProjectileSystem {
     return best;
   }
 
-  makeBeamSegment(start, end, color) {
+  makeBeamSegment(start, end, color, options = {}) {
     const len = start.distanceTo(end);
+    const widthScale = options.widthScale || 1;
+    const displayScale = options.displayScale || 1;
+    const coreRadius = (options.coreRadius || 0.055) * widthScale * displayScale;
+    const glowRadius = (options.glowRadius || 0.16) * widthScale * displayScale;
     const g = new THREE.Group();
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1, 10), this.beamMatFor(color, 0.86));
-    const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1, 10), this.beamMatFor(color, 0.18));
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(coreRadius, coreRadius, 1, 10), this.beamMatFor(color, 0.9));
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(glowRadius, glowRadius, 1, 12), this.beamMatFor(color, 0.2));
     g.add(glow, core);
     this.scene.add(g);
-    const seg = { group: g, start: start.clone(), end: end.clone(), len, activeStart: start.clone(), activeEnd: end.clone() };
+    const seg = {
+      group: g,
+      start: start.clone(),
+      end: end.clone(),
+      len,
+      activeStart: start.clone(),
+      activeEnd: end.clone(),
+      displayScale,
+      stage: options.stage || 0,
+      damage: options.damage,
+      color,
+    };
     this.placeBeamSegment(seg, start, end);
     return seg;
   }
@@ -475,12 +522,75 @@ export class ProjectileSystem {
     seg.activeEnd.copy(end);
     seg.group.visible = len > 0.05;
     if (!seg.group.visible) return;
-    seg.group.position.copy(start).lerp(end, 0.5);
+    seg.group.position.copy(start).lerp(end, 0.5).multiplyScalar(seg.displayScale || 1);
     seg.group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
-    for (const m of seg.group.children) m.scale.y = len;
+    for (const m of seg.group.children) m.scale.y = len * (seg.displayScale || 1);
   }
 
-  spawnBeam(owner, origin, dir, weapon, shotGroup = this.makeShotGroup(owner, weapon)) {
+  traceRecursiveBeam(origin, dir, weapon) {
+    const specs = [];
+    const velocity = dir.clone().normalize();
+    let pos = origin.clone();
+    let remaining = weapon.beamRange || 120;
+    let displayScale = 1;
+    const maxCrossings = weapon.recursionMaxCrossings ?? 5;
+    let stage = 0;
+    for (let guard = 0; guard < maxCrossings + 2 && remaining > 0.05; guard++) {
+      const boundary = this.world.recursiveRayBoundary?.(pos, velocity, remaining);
+      const wall = this.rayWorld(pos, velocity, remaining);
+      const boundaryDistance = boundary?.distance ?? Infinity;
+      const wallDistance = wall?.t ?? Infinity;
+      const distance = Math.min(remaining, boundaryDistance, wallDistance);
+      if (!Number.isFinite(distance) || distance <= 0.001) break;
+      const end = pos.clone().addScaledVector(velocity, distance);
+      const widthScale = 1 + stage * (weapon.recursionSizeGain || 0);
+      const colors = weapon.recursionColors || [weapon.color];
+      specs.push({
+        start: pos.clone(),
+        end,
+        stage,
+        displayScale,
+        widthScale,
+        color: colors[Math.min(stage, colors.length - 1)],
+        damage: weapon.dmg + stage * (weapon.recursionDamageGain || 0),
+      });
+      remaining -= distance;
+      if (wallDistance <= boundaryDistance || !boundary || stage >= maxCrossings) break;
+      // Step through the boundary before changing charts. Dividing the visual
+      // scale by the coordinate transform keeps the two rendered endpoints
+      // coincident, while widthScale makes each new local beam unmistakably
+      // thicker relative to its arena.
+      const seamNudge = Math.min(0.035, remaining);
+      pos.copy(end).addScaledVector(velocity, seamNudge).multiplyScalar(boundary.factor);
+      displayScale /= boundary.factor;
+      remaining -= seamNudge;
+      stage++;
+    }
+    return specs;
+  }
+
+  spawnBeam(owner, origin, dir, weapon, shotGroup = this.makeShotGroup(owner, weapon), visualOnly = false) {
+    if (weapon.recursiveBeam && this.world.recursiveRayBoundary) {
+      const specs = this.traceRecursiveBeam(origin, dir, weapon);
+      if (!specs.length) return;
+      const segments = specs.map(spec => this.makeBeamSegment(spec.start, spec.end, spec.color, {
+        widthScale: spec.widthScale,
+        displayScale: spec.displayScale,
+        coreRadius: weapon.beamCoreRadius,
+        glowRadius: weapon.beamGlowRadius,
+        stage: spec.stage,
+        damage: spec.damage,
+      }));
+      const totalLen = segments.reduce((sum, seg) => sum + seg.len, 0);
+      this.beams.push({
+        id: this.nextBeamId++, owner, weapon, shotGroup, segments, totalLen,
+        age: 0, life: weapon.beamLife || 0.85, retract: weapon.beamRetract || 0.36,
+        hitCooldowns: new Map(), visualOnly,
+      });
+      const final = segments[segments.length - 1];
+      this.fx.spawnPuff(final.end.clone().multiplyScalar(final.displayScale), final.color, 0.45);
+      return;
+    }
     const points = [origin.clone()];
     let pos = origin.clone();
     let vel = dir.clone().normalize();
@@ -509,9 +619,14 @@ export class ProjectileSystem {
     this.beams.push({
       id: this.nextBeamId++, owner, weapon, shotGroup, segments, totalLen,
       age: 0, life: weapon.beamLife || 2.5, retract: weapon.beamRetract || 0.8,
-      hitCooldowns: new Map(),
+      hitCooldowns: new Map(), visualOnly,
     });
     this.fx.spawnPuff(points[points.length - 1], weapon.color, 0.45);
+  }
+
+  spawnVisualBeam(origin, dir, weapon) {
+    const owner = { damageMult: 0, team: '__remote_visual__', isPlayer: false };
+    this.spawnBeam(owner, origin, dir, weapon, { id: `visual-${this.nextShotId++}`, owner, weaponId: 'ouroboros', kills: 0 }, true);
   }
 
   spawnProjectile(owner, origin, dir, weapon, opts = {}) {
@@ -529,17 +644,20 @@ export class ProjectileSystem {
     else mesh.scale.setScalar(opts.size ?? weapon.size);
     mesh.position.copy(origin);
     this.scene.add(mesh);
-    this.projectiles.push({
+    const projectile = {
       mesh, owner, weapon,
       pos: origin.clone(),
       vel: dir.clone().multiplyScalar(opts.speed ?? weapon.speed),
-      life: opts.life ?? 4,
+      life: opts.life ?? weapon.projectileLife ?? 4,
       trailT: 0,
       bounced: 0,
       bounceLimit: opts.bounce ?? weapon.bounce,
       pierced: weapon.pierce ? new Set() : null,
       ignore: opts.ignore ? new Set(opts.ignore) : null,
       damage: opts.damage ?? weapon.dmg,
+      baseDamage: opts.damage ?? weapon.dmg,
+      baseProjectileSize: opts.size ?? weapon.size,
+      projectileSize: opts.size ?? weapon.size,
       homingRange: opts.homingRange ?? weapon.homingRange,
       homingTurn: opts.homingTurn ?? weapon.homingTurn,
       homingTurnGain: opts.homingTurnGain ?? weapon.homingTurnGain,
@@ -549,7 +667,17 @@ export class ProjectileSystem {
       limitedTargetMinBounces: opts.limitedTargetMinBounces ?? 0,
       noSplit: opts.noSplit === true,
       shotGroup: opts.shotGroup || this.makeShotGroup(owner, weapon),
-    });
+    };
+    // A muzzle can extend across a recursive seam even while its owner remains
+    // canonical. Give that map a chance to choose the equivalent spawn before
+    // the first movement substep, otherwise the projectile can begin stranded
+    // in a non-physical visual copy and never cross a boundary.
+    if (this.world.prepareProjectile?.(projectile) === false) {
+      this.scene.remove(mesh);
+      return;
+    }
+    mesh.position.copy(projectile.pos);
+    this.projectiles.push(projectile);
   }
 
   fire(owner, origin, dir, weaponId) {
@@ -617,7 +745,8 @@ export class ProjectileSystem {
       let best = (p.weapon.chainRange || 0) ** 2;
       for (const ch of characters) {
         if (!ch.alive || ch === p.owner || ch.team === p.owner.team || struck.has(ch)) continue;
-        const center = ch.pos.clone().addScaledVector(ch.up || WORLD_UP, ch.height * 0.55);
+        const visualScale = this.world.characterVisualScale?.(ch) || 1;
+        const center = ch.pos.clone().addScaledVector(ch.up || WORLD_UP, ch.height * 0.55 * visualScale);
         const distSq = center.distanceToSquared(origin);
         if (distSq >= best) continue;
         const dist = Math.sqrt(distSq);
@@ -648,17 +777,25 @@ export class ProjectileSystem {
 
   characterTouchesSegment(ch, a, b, pad = 0.25) {
     const up = ch.up || new THREE.Vector3(0, 1, 0);
-    const samples = [0.35, 0.55, 0.8].map(f => ch.pos.clone().addScaledVector(up, ch.height * f));
-    const r = (ch.radius || 0.45) + pad;
+    const visualScale = this.world.characterVisualScale?.(ch) || 1;
+    const samples = [0.35, 0.55, 0.8].map(f =>
+      ch.pos.clone().addScaledVector(up, ch.height * f * visualScale));
+    const r = (ch.radius || 0.45) * visualScale + pad;
     return samples.some(p => this.distancePointToSegment(p, a, b) < r);
   }
 
   projectileTouchesCharacter(ch, p) {
     const up = ch.up || new THREE.Vector3(0, 1, 0);
-    const radius = (ch.radius || 0.45) + (p.weapon.size || 0.12) * 0.6 + 0.35;
-    const foot = ch.pos.clone().addScaledVector(up, ch.radius || 0.45);
-    const head = ch.pos.clone().addScaledVector(up, Math.max(ch.height - (ch.radius || 0.45), ch.height * 0.55));
-    return this.distancePointToSegment(p.pos, foot, head) < radius;
+    const visualScale = this.world.characterVisualScale?.(ch) || 1;
+    const scaledRadius = (ch.radius || 0.45) * visualScale;
+    const foot = ch.pos.clone().addScaledVector(up, scaledRadius);
+    const headHeight = Math.max(
+      (ch.height - (ch.radius || 0.45)) * visualScale,
+      ch.height * 0.55 * visualScale,
+    );
+    const head = ch.pos.clone().addScaledVector(up, headHeight);
+    return this.distancePointToSegment(p.pos, foot, head) <
+      scaledRadius + (p.projectileSize || p.weapon.size || 0.12) * 0.6 + 0.35;
   }
 
   shootableTargets() {
@@ -667,7 +804,7 @@ export class ProjectileSystem {
   }
 
   projectileTouchesTarget(target, p) {
-    const radius = (target.radius || 1) + (p.weapon.size || 0.12) * 0.6;
+    const radius = (target.radius || 1) + (p.projectileSize || p.weapon.size || 0.12) * 0.6;
     return p.pos.distanceToSquared(target.pos) < radius * radius;
   }
 
@@ -681,14 +818,23 @@ export class ProjectileSystem {
     if (!p.homingRange || !p.homingTurn) return;
 
     let target = null;
+    let targetScale = 1;
     let closestDistSq = p.homingRange * p.homingRange;
     for (const ch of characters) {
       if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
           p.pierced?.has(ch) || p.ignore?.has(ch) || this.hitLimitReached(p, ch)) continue;
-      const distSq = ch.pos.distanceToSquared(p.pos);
+      const candidateScale = this.world.projectileTargetScale?.(p, ch) || 1;
+      const targetUp = ch.up || WORLD_UP;
+      const visualScale = this.world.characterVisualScale?.(ch) || 1;
+      const centerHeight = ch.height * 0.55 * visualScale;
+      const dx = (ch.pos.x + targetUp.x * centerHeight) * candidateScale - p.pos.x;
+      const dy = (ch.pos.y + targetUp.y * centerHeight) * candidateScale - p.pos.y;
+      const dz = (ch.pos.z + targetUp.z * centerHeight) * candidateScale - p.pos.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
       if (distSq < closestDistSq) {
         closestDistSq = distSq;
         target = ch;
+        targetScale = candidateScale;
       }
     }
     if (!target) return;
@@ -696,7 +842,9 @@ export class ProjectileSystem {
     const speed = p.vel.length();
     if (speed < 1e-4) return;
     const desired = target.pos.clone();
-    desired.addScaledVector(target.up || WORLD_UP, target.height * 0.55);
+    const targetVisualScale = this.world.characterVisualScale?.(target) || 1;
+    desired.addScaledVector(target.up || WORLD_UP, target.height * 0.55 * targetVisualScale);
+    desired.multiplyScalar(targetScale);
     desired.sub(p.pos).normalize();
     const current = p.vel.clone().multiplyScalar(1 / speed);
     const angle = current.angleTo(desired);
@@ -727,29 +875,49 @@ export class ProjectileSystem {
         cursor += seg.len;
       }
       for (const [ch, t] of b.hitCooldowns) b.hitCooldowns.set(ch, Math.max(0, t - dt));
-      for (const ch of characters) {
-        if (!ch.alive || ch === b.owner || ch.team === b.owner.team) continue;
-        if ((b.hitCooldowns.get(ch) || 0) > 0) continue;
-        if (b.segments.some(seg => seg.group.visible && this.characterTouchesSegment(ch, seg.activeStart, seg.activeEnd))) {
-          this.fx.onDamage(ch, b.weapon.dmg * b.owner.damageMult, b.owner, { shotGroup: b.shotGroup });
-          const hitPos = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), ch.height * 0.55);
-          this.fx.spawnPuff(hitPos, b.weapon.color, 0.45);
-          b.hitCooldowns.set(ch, b.weapon.beamDamageInterval || 0.4);
+      if (!b.visualOnly) {
+        for (const ch of characters) {
+          if (!ch.alive || ch === b.owner || ch.team === b.owner.team) continue;
+          if ((b.hitCooldowns.get(ch) || 0) > 0) continue;
+          const hitSegment = b.segments
+            .filter(seg => seg.group.visible && this.characterTouchesSegment(ch, seg.activeStart, seg.activeEnd))
+            .sort((a, c) => (c.damage ?? b.weapon.dmg) - (a.damage ?? b.weapon.dmg))[0];
+          if (hitSegment) {
+            this.fx.onDamage(
+              ch,
+              (hitSegment.damage ?? b.weapon.dmg) * b.owner.damageMult,
+              b.owner,
+              { shotGroup: b.shotGroup },
+            );
+            const hitPos = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), ch.height * 0.55);
+            this.fx.spawnPuff(hitPos, hitSegment.color || b.weapon.color, 0.45);
+            b.hitCooldowns.set(ch, b.weapon.beamDamageInterval || 0.4);
+          }
         }
-      }
-      for (const target of this.shootableTargets()) {
-        if ((b.hitCooldowns.get(target) || 0) > 0) continue;
-        const radius = (target.radius || 1) + 0.18;
-        if (b.segments.some(seg => seg.group.visible &&
-            this.distancePointToSegment(target.pos, seg.activeStart, seg.activeEnd) < radius)) {
-          this.fx.onTargetDamage?.(
-            target, b.weapon.dmg * b.owner.damageMult, b.owner, { shotGroup: b.shotGroup });
-          this.fx.spawnPuff(target.pos, b.weapon.color, 0.72);
-          b.hitCooldowns.set(target, b.weapon.beamDamageInterval || 0.4);
+        for (const target of this.shootableTargets()) {
+          if ((b.hitCooldowns.get(target) || 0) > 0) continue;
+          const radius = (target.radius || 1) + 0.18;
+          const hitSegment = b.segments
+            .filter(seg => seg.group.visible &&
+              this.distancePointToSegment(target.pos, seg.activeStart, seg.activeEnd) < radius)
+            .sort((a, c) => (c.damage ?? b.weapon.dmg) - (a.damage ?? b.weapon.dmg))[0];
+          if (hitSegment) {
+            this.fx.onTargetDamage?.(
+              target,
+              (hitSegment.damage ?? b.weapon.dmg) * b.owner.damageMult,
+              b.owner,
+              { shotGroup: b.shotGroup },
+            );
+            this.fx.spawnPuff(target.pos, hitSegment.color || b.weapon.color, 0.72);
+            b.hitCooldowns.set(target, b.weapon.beamDamageInterval || 0.4);
+          }
         }
       }
       if (b.age >= b.life) {
-        for (const seg of b.segments) this.scene.remove(seg.group);
+        for (const seg of b.segments) {
+          this.scene.remove(seg.group);
+          for (const child of seg.group.children) child.geometry?.dispose();
+        }
         this.beams.splice(bi, 1);
       }
     }
@@ -769,19 +937,50 @@ export class ProjectileSystem {
       this.steerHomingProjectile(p, characters, dt);
       if (p.weapon.trail) {
         p.trailT += dt;
-        if (p.trailT > 0.05) { p.trailT = 0; this.fx.spawnPuff(p.pos, p.weapon.color, 0.25); }
+        if (p.trailT > 0.05) {
+          p.trailT = 0;
+          this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.25 * Math.sqrt(p.recursionScale || 1));
+        }
       }
 
-      const moveLen = p.vel.length() * dt;
       // The spatial broad phase keeps these checks cheap enough to sample at
       // half-metre intervals, preventing small rounds from skipping most thin
-      // railings and deck lips without turning every shot into a heavy sweep.
-      const nSteps = Math.max(1, Math.ceil(moveLen / 0.5));
+      // railings and deck lips. Recomputing the time slice after each movement
+      // is important in recursive space: only the substep that crosses a seam
+      // is rescaled into the new chart, while future motion keeps the weapon's
+      // authored speed just like character movement does.
+      let remainingDt = dt;
+      let substepGuard = 0;
       let dead = p.life <= 0;
-      for (let s = 0; s < nSteps && !dead; s++) {
-        step.copy(p.vel).multiplyScalar(dt / nSteps);
+      while (remainingDt > 1e-6 && !dead) {
+        if (++substepGuard > 512) {
+          // A malformed recursive traversal is expendable after this bounded
+          // guard; never trade a frame hitch for another copy.
+          p.life = 0;
+          dead = true;
+          break;
+        }
+        const speed = p.vel.length();
+        const requestedStepDistance = this.world.projectileStepDistance?.(p);
+        const maxStepDistance = Number.isFinite(requestedStepDistance) && requestedStepDistance > 0
+          ? Math.min(0.5, requestedStepDistance)
+          : 0.5;
+        const stepDt = speed > 1e-6 ? Math.min(remainingDt, maxStepDistance / speed) : remainingDt;
+        remainingDt -= stepDt;
+        step.copy(p.vel).multiplyScalar(stepDt);
         prev.copy(p.pos);
         p.pos.add(step);
+        const traversalResult = this.world.postProjectileMove?.(p, prev);
+        if (traversalResult === false || p.life <= 0) {
+          dead = true;
+          break;
+        }
+        if (Number.isFinite(traversalResult) && traversalResult !== 1) {
+          // Bounce rollback/probes below must operate in the same recursive
+          // chart as the transformed projectile position.
+          prev.multiplyScalar(traversalResult);
+          step.multiplyScalar(traversalResult);
+        }
 
         // hit a character?
         for (const ch of characters) {
@@ -792,7 +991,7 @@ export class ProjectileSystem {
             p.directTarget = ch;
             this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
             if (p.weapon.lightning) p.chainPrimary = ch;
-            this.fx.spawnPuff(p.pos, p.weapon.color, 0.6);
+            this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.6 * Math.sqrt(p.recursionScale || 1));
             if (p.weapon.split && !p.noSplit) {
               this.splitParasite(p, ch);
               dead = true;
@@ -813,16 +1012,16 @@ export class ProjectileSystem {
             if (!this.projectileTouchesTarget(target, p)) continue;
             this.fx.onTargetDamage?.(
               target, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
-            this.fx.spawnPuff(p.pos, p.weapon.color, 0.72);
+            this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.72 * Math.sqrt(p.recursionScale || 1));
             if (p.weapon.pierce && p.pierced.size < p.weapon.pierce) p.pierced.add(target);
             else dead = true;
             break;
           }
         }
-        if (!dead && pointHitsWorld(p.pos, p.weapon.size * 0.6, this.world)) {
+        if (!dead && pointHitsWorld(p.pos, (p.projectileSize || p.weapon.size) * 0.6, this.world)) {
           if (p.bounceLimit && p.bounced < p.bounceLimit) {
             // Sidewinder disc: reflect off whichever axis is blocked
-            const r = p.weapon.size * 0.6;
+            const r = (p.projectileSize || p.weapon.size) * 0.6;
             p.pos.copy(prev);
             let hitAxis = false;
             if (pointHitsWorld(probe.set(prev.x + step.x, prev.y, prev.z), r, this.world)) { p.vel.x *= -1; hitAxis = true; }
@@ -833,7 +1032,7 @@ export class ProjectileSystem {
             p.bounced++;
             if (p.weapon.bounceDmgGain) p.damage += p.weapon.bounceDmgGain;
             if (p.homingTurnGain) p.homingTurn += p.homingTurnGain;
-            this.fx.spawnPuff(p.pos, p.weapon.color, 0.3);
+            this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.3);
           } else {
             dead = true;
           }
@@ -844,7 +1043,7 @@ export class ProjectileSystem {
       if (dead) {
         if (p.weapon.lightning && p.life > 0) this.dischargeThunderbolt(p, p.chainPrimary, characters);
         if (p.weapon.splash && p.life > 0) this.explode(p);
-        else if (p.life > 0) this.fx.spawnPuff(p.pos, p.weapon.color, 0.5);
+        else if (p.life > 0) this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.5);
         this.scene.remove(p.mesh);
         this.projectiles.splice(pi, 1);
         continue;
@@ -883,7 +1082,12 @@ export class ProjectileSystem {
   clear() {
     for (const p of this.projectiles) this.scene.remove(p.mesh);
     this.projectiles.length = 0;
-    for (const b of this.beams) for (const seg of b.segments) this.scene.remove(seg.group);
+    for (const b of this.beams) {
+      for (const seg of b.segments) {
+        this.scene.remove(seg.group);
+        for (const child of seg.group.children) child.geometry?.dispose();
+      }
+    }
     this.beams.length = 0;
     for (const arc of this.lightningArcs) {
       this.scene.remove(arc.group);

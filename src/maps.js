@@ -98,6 +98,8 @@ const TEXES = { checker: texChecker, panel: texPanel, crate: texCrate, rock: tex
 const AI_TEX = {};
 const AI_TEX_SOURCES = {
   'canopy-wall': './textures/canopy-wall.jpg',
+  'infinite-bloom-sky-eyeless': './textures/infinite-bloom-sky-eyeless.png',
+  'infinite-bloom-eye-atlas': './textures/infinite-bloom-eye-atlas.png',
   parasite: './textures/parasite.jpg',
   refractor: './textures/refractor.jpg',
   'power-gold': './textures/power-gold.jpg',
@@ -153,6 +155,7 @@ export const texturesReady = Promise.all(
    'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
    'power-gold', 'power-silver',
    'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
+   'infinite-bloom-surface', 'infinite-bloom-faces', 'infinite-bloom-sky-eyeless', 'infinite-bloom-eye-atlas',
    'atrium-gate-frame-atlas']
     .map((name) => new Promise((done) => {
       const url = AI_TEX_SOURCES[name] || `./textures/${name}.jpg`;
@@ -280,11 +283,19 @@ function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color, vi
   const vh0 = h0 + dh * t0;
   const vh1 = h0 + dh * t1;
   const slopeLen = Math.hypot(vLen, vh1 - vh0);
+  const ang = Math.atan2(dh, len);
+  const halfThickness = 0.2;
   const geo = new THREE.BoxGeometry(
     axis === 'x' ? slopeLen : width, 0.4, axis === 'x' ? width : slopeLen);
   const m = new THREE.Mesh(geo, mat(color, { tex: 'panel', repeat: [Math.max(1, slopeLen / 5), Math.max(1, width / 5)] }));
-  m.position.set((minX + maxX) / 2, (vh0 + vh1) / 2 - 0.2, (minZ + maxZ) / 2);
-  const ang = Math.atan2(dh, len);
+  // Rotation moves the slab's top face backward/down by its projected half
+  // thickness. Offset the center by the inverse projection so the visible top
+  // still begins at h0 and ends exactly at h1.
+  m.position.set(
+    (minX + maxX) / 2 + (axis === 'x' ? halfThickness * Math.sin(ang) : 0),
+    (vh0 + vh1) / 2 - halfThickness * Math.cos(ang),
+    (minZ + maxZ) / 2 + (axis === 'z' ? halfThickness * Math.sin(ang) : 0),
+  );
   // rising along +x tilts the box by +ang about z; rising along +z by −ang about x
   if (axis === 'x') m.rotation.z = ang; else m.rotation.x = -ang;
   m.castShadow = m.receiveShadow = true;
@@ -3462,6 +3473,1289 @@ function buildPrism(scene) {
   return world;
 }
 
+/* ============== SECRET MAP — INFINITE BLOOM (recursive machine realm) ==============
+   One square annulus is repeated at exact powers of its own inner/outer scale.
+   The playable copy therefore meets a giant outer copy and a miniature inner
+   copy edge-for-edge instead of presenting the center as a portal or pit. */
+function bloomTexture(name, rx = 1, ry = 1) {
+  const source = AI_TEX[name]?.map;
+  if (!source) return null;
+  const map = source.clone();
+  map.needsUpdate = true;
+  map.repeat.set(rx, ry);
+  return map;
+}
+
+function addBloomFacePortal(scene, world, x, y, z, w, h, yaw = 0) {
+  addMagicPortal(scene, world, x, y, z, w, h, 0x365f08, yaw);
+  const map = bloomTexture('infinite-bloom-faces', 1.15, 1.15);
+  if (!map) return;
+  const normalX = Math.sin(yaw), normalZ = Math.cos(yaw);
+  const material = new THREE.MeshBasicMaterial({
+    map,
+    color: 0xffe56a,
+    transparent: true,
+    opacity: 0.79,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const faces = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.94, h * 0.94), material);
+  faces.position.set(x + normalX * 0.09, y, z + normalZ * 0.09);
+  faces.rotation.y = yaw;
+  scene.add(faces);
+  world.anim.push((dt, t) => {
+    material.opacity = 0.73 + Math.sin(t * 2.7) * 0.07;
+    map.offset.set(Math.sin(t * 0.17) * 0.035, Math.cos(t * 0.13) * 0.035);
+  });
+}
+
+function buildInfiniteBloom(scene) {
+  const ARENA_HALF = 36;
+  const PORTAL_HALF = 7;
+  const PORTAL_SCALE = ARENA_HALF / PORTAL_HALF;
+  const INNER_SCALE = 1 / PORTAL_SCALE;
+  const DEEP_SCALE = INNER_SCALE * INNER_SCALE;
+  const ULTRA_DEEP_SCALE = DEEP_SCALE * INNER_SCALE;
+  const OUTER_VISUAL_HALF = ARENA_HALF * PORTAL_SCALE;
+  const FLOOR_BAND_COUNT = 4;
+  const FOG_EDGE_MARGIN = 10;
+  const FOG_FADE_SPAN = 82;
+  const FOG_REVEAL_RATE = 1.6;
+  const STRUCTURE_DETAIL_SCALE = 1.35;
+  const sceneRootsBeforeBuild = new Set(scene.children);
+  let bloomOwnedRoots = [];
+  const world = newWorld({
+    gravity: 18,
+    jumpVel: 10.4,
+    killY: -85,
+    playerSpeed: 12.2,
+    waypointLinkDist: 19,
+    waypointLinkDy: 5.4,
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'ouroboros'],
+  });
+  world.playerCount = 4;
+  world.recursivePortal = {
+    half: PORTAL_HALF,
+    outerHalf: ARENA_HALF,
+    scale: PORTAL_SCALE,
+    innerScale: INNER_SCALE,
+    deepScale: DEEP_SCALE,
+    maxProjectileCrossings: 5,
+  };
+
+  scene.background = new THREE.Color(0x050800);
+  // This baseline is refined from the live camera in beforeRender. The fade
+  // always reaches full opacity just before the nearest edge of the rendered
+  // outer copy, so its finite boundary can never give away the illusion.
+  scene.fog = new THREE.Fog(0x070a00, 96, 178);
+  baseLighting(scene, 0xb6ff38, 0x3a0800, [34, 92, -46], 64);
+
+  // Everything parented to this root is one canonical copy of the arena.
+  // Cloning only this root (rather than the whole scene) keeps the repeated
+  // layers free of cameras, lights, particles, actors, and gameplay colliders.
+  const arenaRoot = new THREE.Group();
+  arenaRoot.name = 'infinite-bloom-canonical-arena';
+  scene.add(arenaRoot);
+
+  // A dark, tiled crowd of circuit-built faces surrounds the arena. Mirrored
+  // repeat is intentional here: this is an endless material, not a mural.
+  const skyMap = bloomTexture('infinite-bloom-sky-eyeless', 2, 1);
+  let sky = null;
+  let skySparks = null;
+  if (skyMap) {
+    sky = new THREE.Mesh(
+      new THREE.SphereGeometry(285, 48, 24),
+      new THREE.MeshBasicMaterial({
+        map: skyMap,
+        color: 0xdfff86,
+        side: THREE.BackSide,
+        fog: false,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    sky.renderOrder = -1000;
+    sky.frustumCulled = false;
+    scene.add(sky);
+  }
+
+  // The sky architecture is deliberately eyeless. Independent billboarded
+  // atlas sprites sit just inside it, so every gaze shift and blink is real
+  // animation rather than a baked texture sliding over the sphere.
+  const eyeField = new THREE.Group();
+  eyeField.name = 'infinite-bloom-animated-sky-eyes';
+  scene.add(eyeField);
+  const eyeStates = [];
+  const eyeRnd = seededRandom(0xe7e5b11);
+  const eyeMotionRnd = seededRandom(0x51e7a11);
+  const eyeGazeFrames = [0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15];
+  const eyeAtlasSource = AI_TEX['infinite-bloom-eye-atlas']?.map;
+  const setEyeFrame = (state, frame) => {
+    if (state.frame === frame) return;
+    state.frame = frame;
+    const column = frame % 4;
+    const row = Math.floor(frame / 4);
+    state.map.offset.set(column * 0.25, 1 - (row + 1) * 0.25);
+  };
+  if (eyeAtlasSource) {
+    const eyeCount = 30;
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < eyeCount; i++) {
+      const map = eyeAtlasSource.clone();
+      map.needsUpdate = true;
+      map.flipY = false;
+      map.wrapS = map.wrapT = THREE.ClampToEdgeWrapping;
+      map.repeat.set(0.25, 0.25);
+      const material = new THREE.SpriteMaterial({
+        map,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.94,
+        alphaTest: 0.035,
+        depthWrite: false,
+        fog: false,
+      });
+      const sprite = new THREE.Sprite(material);
+      const yNorm = THREE.MathUtils.clamp(-0.62 + 1.24 * (i / (eyeCount - 1)) + (eyeRnd() - 0.5) * 0.055, -0.68, 0.68);
+      const longitude = i * goldenAngle + (eyeRnd() - 0.5) * 0.24;
+      const radial = Math.sqrt(1 - yNorm * yNorm);
+      const radius = 272 + eyeRnd() * 5;
+      sprite.position.set(
+        Math.sin(longitude) * radial * radius,
+        yNorm * radius,
+        Math.cos(longitude) * radial * radius,
+      );
+      const baseSize = 17 + eyeRnd() * 11;
+      const size = baseSize * (1 + eyeRnd() * 2);
+      sprite.scale.set(size, size, 1);
+      material.rotation = (eyeRnd() - 0.5) * 0.18;
+      eyeField.add(sprite);
+      const gazeFrame = eyeGazeFrames[Math.floor(eyeRnd() * eyeGazeFrames.length)];
+      const state = { map, frame: -1, gazeFrame, closed: false };
+      setEyeFrame(state, gazeFrame);
+      eyeStates.push(state);
+    }
+  }
+  const eyeMotion = {
+    stillT: 0,
+    transition: null,
+  };
+  eyeField.userData.currentFrames = eyeStates.map(state => state.frame);
+  eyeField.userData.action = 'still';
+  eyeField.userData.stillDuration = 5;
+  eyeField.userData.transitionDuration = 0.5;
+  const beginEyeTransition = () => {
+    const entries = eyeStates.map(state => {
+      const roll = eyeMotionRnd();
+      const action = state.closed ? 'open' : (roll < 0.5 ? 'gaze' : roll < 0.82 ? 'blink' : 'close');
+      let frames;
+      let finalFrame;
+      if (action === 'blink') {
+        frames = [state.gazeFrame, 5, 6, 7, 7, 6, 5, state.gazeFrame];
+        finalFrame = state.gazeFrame;
+      } else if (action === 'close') {
+        frames = [state.gazeFrame, 5, 6, 7];
+        finalFrame = 7;
+        state.closed = true;
+      } else if (action === 'open') {
+        frames = [7, 6, 5, state.gazeFrame];
+        finalFrame = state.gazeFrame;
+        state.closed = false;
+      } else {
+        const previous = state.gazeFrame;
+        let nextIndex = Math.floor(eyeMotionRnd() * eyeGazeFrames.length);
+        if (eyeGazeFrames[nextIndex] === previous) nextIndex = (nextIndex + 1) % eyeGazeFrames.length;
+        state.gazeFrame = eyeGazeFrames[nextIndex];
+        const intermediate = ({ 9: 3, 10: 3, 11: 4, 12: 4 })[state.gazeFrame] ?? 0;
+        frames = [previous];
+        if (intermediate !== previous && intermediate !== state.gazeFrame) frames.push(intermediate);
+        frames.push(state.gazeFrame);
+        finalFrame = state.gazeFrame;
+      }
+      setEyeFrame(state, frames[0]);
+      return { state, action, frames, finalFrame, frameIndex: 0 };
+    });
+    eyeMotion.transition = { entries, elapsed: 0 };
+    eyeField.userData.action = 'mixed';
+    eyeField.userData.currentActions = entries.map(entry => entry.action);
+    eyeField.userData.currentFrames = eyeStates.map(state => state.frame);
+  };
+  world.anim.push((dt, t) => {
+    const yaw = t * 0.012;
+    const roll = Math.sin(t * 0.035) * 0.025;
+    if (sky) {
+      sky.rotation.y = yaw;
+      sky.rotation.z = roll;
+    }
+    eyeField.rotation.y = yaw;
+    eyeField.rotation.z = roll;
+    if (!eyeStates.length) return;
+    if (!eyeMotion.transition) {
+      eyeMotion.stillT += dt;
+      if (eyeMotion.stillT >= 5) beginEyeTransition();
+      return;
+    }
+    const transition = eyeMotion.transition;
+    transition.elapsed = Math.min(0.5, transition.elapsed + dt);
+    const progress = transition.elapsed / 0.5;
+    for (const entry of transition.entries) {
+      const frameIndex = Math.min(
+        entry.frames.length - 1,
+        Math.floor(progress * entry.frames.length),
+      );
+      if (frameIndex === entry.frameIndex) continue;
+      entry.frameIndex = frameIndex;
+      setEyeFrame(entry.state, entry.frames[frameIndex]);
+    }
+    eyeField.userData.currentFrames = eyeStates.map(state => state.frame);
+    if (transition.elapsed >= 0.5) {
+      for (const entry of transition.entries) setEyeFrame(entry.state, entry.finalFrame);
+      eyeMotion.transition = null;
+      eyeMotion.stillT = 0;
+      eyeField.userData.action = 'still';
+      eyeField.userData.currentActions = [];
+      eyeField.userData.currentFrames = eyeStates.map(state => state.frame);
+    }
+  });
+
+  // Main square ring. Its outer half-width and inner half-width use the same
+  // ratio as every repeated layer, so adjoining copies meet edge-for-edge.
+  const surface = { tex: 'infinite-bloom-surface' };
+  const addBloomFloorCollider = (x, z, w, d) => {
+    world.colliders.push({
+      type: 'box',
+      min: V(x - w / 2, -1, z - d / 2),
+      max: V(x + w / 2, 0, z + d / 2),
+    });
+  };
+  for (const [x, z, w, d] of [
+    [0, 21.5, 72, 29],
+    [0, -21.5, 72, 29],
+    [21.5, 0, 29, 14],
+    [-21.5, 0, 29, 14],
+  ]) {
+    addBloomFloorCollider(x, z, w, d);
+  }
+
+  // The ground is an infinite sequence of concentric square bands rather
+  // than a texture. Each recursion contains four logarithmically spaced
+  // bands: white at the inner edge, then black, white, black at the outer
+  // edge. Because four is even, the adjacent copy begins white again and the
+  // shared boundary reads as one more stripe instead of a layer seam.
+  const floorPalette = [new THREE.Color(0xf4f2df), new THREE.Color(0x070806)];
+  const floorGeometries = [];
+  const addFloorSheet = (x, z, w, d, color) => {
+    const geometry = new THREE.PlaneGeometry(w, d);
+    geometry.rotateX(-Math.PI / 2);
+    geometry.translate(x, 0, z);
+    const vertexColors = new Float32Array(geometry.attributes.position.count * 3);
+    for (let i = 0; i < geometry.attributes.position.count; i++) {
+      vertexColors.set([color.r, color.g, color.b], i * 3);
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(vertexColors, 3));
+    floorGeometries.push(geometry);
+  };
+  const addFloorBand = (innerHalf, outerHalf, color) => {
+    const edgeWidth = outerHalf - innerHalf;
+    const sideCenter = (innerHalf + outerHalf) / 2;
+    addFloorSheet(0, sideCenter, outerHalf * 2, edgeWidth, color);
+    addFloorSheet(0, -sideCenter, outerHalf * 2, edgeWidth, color);
+    addFloorSheet(sideCenter, 0, edgeWidth, innerHalf * 2, color);
+    addFloorSheet(-sideCenter, 0, edgeWidth, innerHalf * 2, color);
+  };
+  for (let band = 0; band < FLOOR_BAND_COUNT; band++) {
+    const innerHalf = band === 0
+      ? PORTAL_HALF
+      : PORTAL_HALF * Math.pow(PORTAL_SCALE, band / FLOOR_BAND_COUNT);
+    const outerHalf = band === FLOOR_BAND_COUNT - 1
+      ? ARENA_HALF
+      : PORTAL_HALF * Math.pow(PORTAL_SCALE, (band + 1) / FLOOR_BAND_COUNT);
+    addFloorBand(innerHalf, outerHalf, floorPalette[band % 2]);
+  }
+  const floorMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+  const floor = new THREE.Mesh(mergeGeometries(floorGeometries, false), floorMaterial);
+  floor.name = 'infinite-bloom-concentric-floor';
+  arenaRoot.add(floor);
+  for (const geometry of floorGeometries) geometry.dispose();
+
+  // Four raised "petals" make the silhouette readable again inside every
+  // recursive copy. Their ramps point inward toward the next scale.
+  const decks = [
+    { x: 0, z: 24, w: 16, d: 12, color: 0xd9ef20 },
+    { x: 0, z: -24, w: 16, d: 12, color: 0xe53e13 },
+    { x: 24, z: 0, w: 12, d: 16, color: 0xff9d12 },
+    { x: -24, z: 0, w: 12, d: 16, color: 0x69d51a },
+  ];
+  for (const deck of decks) {
+    addBox(arenaRoot, world, deck.x, 3.5, deck.z, deck.w, 1, deck.d, deck.color, {
+      ...surface,
+      repeat: [
+        Math.max(1.25, deck.w / (4 * STRUCTURE_DETAIL_SCALE)),
+        Math.max(1.25, deck.d / (4 * STRUCTURE_DETAIL_SCALE)),
+      ],
+    });
+  }
+  const styleBloomRamp = (ramp, color) => {
+    ramp.material.map?.dispose();
+    ramp.material.normalMap?.dispose();
+    ramp.material.dispose();
+    ramp.material = mat(color, {
+      tex: 'infinite-bloom-surface',
+      repeat: [2.4 / STRUCTURE_DETAIL_SCALE, 1.25 / STRUCTURE_DETAIL_SCALE],
+      roughness: 0.58,
+      metalness: 0.12,
+    });
+  };
+  styleBloomRamp(addRamp(arenaRoot, world, {
+    axis: 'z', minX: -4, maxX: 4, minZ: 12, maxZ: 18,
+    h0: 0, h1: 4, color: 0xd9ef20,
+  }), 0xbfd923);
+  styleBloomRamp(addRamp(arenaRoot, world, {
+    axis: 'z', minX: -4, maxX: 4, minZ: -18, maxZ: -12,
+    h0: 4, h1: 0, color: 0xe53e13,
+  }), 0xe1531d);
+  styleBloomRamp(addRamp(arenaRoot, world, {
+    axis: 'x', minX: 12, maxX: 18, minZ: -4, maxZ: 4,
+    h0: 0, h1: 4, color: 0xff9d12,
+  }), 0xe8931b);
+  styleBloomRamp(addRamp(arenaRoot, world, {
+    axis: 'x', minX: -18, maxX: -12, minZ: -4, maxZ: 4,
+    h0: 4, h1: 0, color: 0x69d51a,
+  }), 0x64c522);
+
+  // Blocky machine-elf totems stare toward the center. The texture crop on
+  // each screen is different, so the same tile produces many distinct faces.
+  const faceRnd = seededRandom(0xe1f51f);
+  const addWatcher = (x, y, z, w, h, yaw, tint = 0xffffff, blocking = false) => {
+    let panelX = x;
+    let panelZ = z;
+    if (blocking) {
+      // Perimeter watchers are square cover blocks, not intangible cards. The
+      // supplied coordinate remains their outer face; the solid extends into
+      // the playable ring so it never crosses the recursive 36m boundary.
+      const thickness = 1.1;
+      const nx = Math.sin(yaw);
+      const nz = Math.cos(yaw);
+      const blockX = x + nx * thickness * 0.5;
+      const blockZ = z + nz * thickness * 0.5;
+      const alongX = Math.abs(nx) > 0.5;
+      addBox(
+        arenaRoot,
+        world,
+        blockX,
+        y,
+        blockZ,
+        alongX ? thickness : w,
+        h,
+        alongX ? w : thickness,
+        tint,
+        {
+          ...surface,
+          repeat: [1 / STRUCTURE_DETAIL_SCALE, 1 / STRUCTURE_DETAIL_SCALE],
+        },
+      );
+      panelX = blockX + nx * (thickness * 0.5 + 0.012);
+      panelZ = blockZ + nz * (thickness * 0.5 + 0.012);
+    }
+    const map = bloomTexture('infinite-bloom-faces', 0.34, 0.34);
+    if (!map) return;
+    map.offset.set(faceRnd(), faceRnd());
+    const material = new THREE.MeshStandardMaterial({
+      map,
+      color: tint,
+      emissive: new THREE.Color(tint).multiplyScalar(0.28),
+      emissiveIntensity: 0.72,
+      roughness: 0.46,
+      metalness: 0.18,
+      side: THREE.DoubleSide,
+    });
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
+    panel.position.set(panelX, y, panelZ);
+    panel.rotation.y = yaw;
+    arenaRoot.add(panel);
+    world.anim.push((dt, t) => {
+      material.emissiveIntensity = 0.58 + Math.sin(t * 2.1 + x * 0.17 + z * 0.11) * 0.18;
+    });
+  };
+  const totems = [
+    [-14, -14, 0xff4b17], [14, -14, 0xf2db18],
+    [-14, 14, 0x60d817], [14, 14, 0xff9615],
+  ];
+  for (const [x, z, color] of totems) {
+    addBox(arenaRoot, world, x, 2.8, z, 3.6, 5.6, 3.6, color, {
+      ...surface,
+      repeat: [1 / STRUCTURE_DETAIL_SCALE, 2 / STRUCTURE_DETAIL_SCALE],
+    });
+    const yaw = Math.atan2(-x, -z);
+    const nx = Math.sin(yaw), nz = Math.cos(yaw);
+    addWatcher(x + nx * 1.83, 3.25, z + nz * 1.83, 2.7, 3.5, yaw, color);
+    const eye = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.32, 0),
+      new THREE.MeshBasicMaterial({ color: 0xffff79, toneMapped: false }),
+    );
+    eye.position.set(x + nx * 2.08, 4.05, z + nz * 2.08);
+    arenaRoot.add(eye);
+  }
+  for (const [x, y, z, yaw, tint] of [
+    [-24, 6, -35.94, 0, 0xff5417], [0, 8, -35.94, 0, 0xe8ed1a], [24, 5, -35.94, 0, 0x79d91c],
+    [24, 7, 35.94, Math.PI, 0xff7315], [0, 5, 35.94, Math.PI, 0xd8ef1a], [-24, 8, 35.94, Math.PI, 0x68d219],
+    [-35.94, 6, -23, Math.PI / 2, 0x71d718], [-35.94, 8, 23, Math.PI / 2, 0xe9e719],
+    [35.94, 8, -23, -Math.PI / 2, 0xff4615], [35.94, 6, 23, -Math.PI / 2, 0xff9d16],
+  ]) addWatcher(x, y, z, 5.6, 5.6, yaw, tint, true);
+
+  // Cardinal seeds double as cover and scale landmarks in the miniature.
+  const seeds = [];
+  for (const [x, y, z, color, phase] of [
+    [0, 6.2, 24, 0xeaff29, 0],
+    [0, 6.2, -24, 0xff3d14, 1.4],
+    [24, 6.2, 0, 0xffa414, 2.8],
+    [-24, 6.2, 0, 0x63e31a, 4.2],
+  ]) {
+    const seed = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(1.15, 0),
+      new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 1.05,
+        metalness: 0.4,
+        roughness: 0.28,
+      }),
+    );
+    seed.position.set(x, y, z);
+    arenaRoot.add(seed);
+    seeds.push({ seed, y, phase });
+    const light = new THREE.PointLight(color, 16, 24);
+    light.position.set(x, y + 0.5, z);
+    scene.add(light);
+  }
+  world.anim.push((dt, t) => {
+    for (const { seed, y, phase } of seeds) {
+      seed.rotation.x = t * 0.7 + phase;
+      seed.rotation.y = t * 1.05 - phase;
+      seed.position.y = y + Math.sin(t * 1.8 + phase) * 0.35;
+    }
+  });
+
+  // Materialize the canonical static geometry before cloning it. The outer
+  // copy's 14-unit opening becomes exactly 72 units wide (the current arena),
+  // while the inner copy's 72-unit outside becomes exactly 14 units wide (the
+  // current opening). The result is one continuous, coplanar onion of arenas.
+  mergeStatic(arenaRoot, world);
+  const sourceNodes = [];
+  arenaRoot.traverse(node => sourceNodes.push(node));
+  const repeatedLayers = [];
+  const addRepeatedLayer = (name, scale, mirrorActors) => {
+    const root = arenaRoot.clone(true);
+    root.name = name;
+    root.scale.setScalar(scale);
+    root.traverse(obj => {
+      if (!obj.isMesh) return;
+      obj.castShadow = false;
+      obj.receiveShadow = true;
+    });
+    scene.add(root);
+    const nodes = [];
+    root.traverse(node => nodes.push(node));
+    repeatedLayers.push({ root, nodes, scale, mirrorActors });
+    return root;
+  };
+  // One extra miniature copy is normally below the visible detail threshold,
+  // but keeps the center filled while the post-crossing fog reveals the newly
+  // adjacent inner layer.
+  const outerArenaRoot = addRepeatedLayer('infinite-bloom-outer-arena', PORTAL_SCALE, true);
+  const innerArenaRoot = addRepeatedLayer('infinite-bloom-inner-arena', INNER_SCALE, true);
+  const deepArenaRoot = addRepeatedLayer('infinite-bloom-deep-arena', DEEP_SCALE, false);
+  const ultraDeepArenaRoot = addRepeatedLayer('infinite-bloom-ultra-deep-arena', ULTRA_DEEP_SCALE, false);
+  world.recursiveVisual = {
+    canonicalRoot: arenaRoot,
+    outerRoot: outerArenaRoot,
+    innerRoot: innerArenaRoot,
+    deepRoot: deepArenaRoot,
+    ultraDeepRoot: ultraDeepArenaRoot,
+    layers: repeatedLayers,
+    outerScale: PORTAL_SCALE,
+    innerScale: INNER_SCALE,
+    deepScale: DEEP_SCALE,
+    ultraDeepScale: ULTRA_DEEP_SCALE,
+  };
+  // Animated landmarks stay phase-locked across all visible scales. Materials
+  // and geometry are shared by clone(), while these local transforms are not.
+  world.anim.push(() => {
+    for (const { nodes } of repeatedLayers) {
+      const count = Math.min(sourceNodes.length, nodes.length);
+      for (let i = 1; i < count; i++) {
+        nodes[i].position.copy(sourceNodes[i].position);
+        nodes[i].quaternion.copy(sourceNodes[i].quaternion);
+        nodes[i].visible = sourceNodes[i].visible;
+      }
+    }
+  });
+
+  // The fourth visible level is deliberately static and capped. The cap is
+  // only half a metre wide in world space, enough to avoid a black pinhole
+  // without reintroducing the conspicuous flat portal used by the first pass.
+  const deepCap = new THREE.Mesh(
+    new THREE.PlaneGeometry(PORTAL_HALF * 2 * ULTRA_DEEP_SCALE * 1.02, PORTAL_HALF * 2 * ULTRA_DEEP_SCALE * 1.02),
+    new THREE.MeshBasicMaterial({ color: floorPalette[1], side: THREE.DoubleSide, fog: true }),
+  );
+  deepCap.name = 'infinite-bloom-deep-cap';
+  deepCap.rotation.x = -Math.PI / 2;
+  deepCap.position.y = 0.008;
+  scene.add(deepCap);
+
+  // Dynamic copies use real perspective geometry too. The playable character
+  // meshes remain canonical; exact copies of their live render hierarchies
+  // occupy the immediately adjacent inner and outer repetitions. The deepest
+  // decorative copy stays empty, matching the finite recursion budget above.
+  const mirrorRoot = new THREE.Group();
+  mirrorRoot.name = 'infinite-bloom-entity-mirrors';
+  scene.add(mirrorRoot);
+  world.recursiveVisual.mirrorRoot = mirrorRoot;
+
+  const actorMirrors = new Map();
+  const actorAuthoredScales = new WeakMap();
+  const projectileMirrors = new Map();
+  const tracerMirrors = new Map();
+  const effectMirrors = new Map();
+  const damageMarkerMirrors = new Map();
+  const pickupMirrors = new Map();
+  const mirrorScales = [INNER_SCALE, PORTAL_SCALE];
+  const ACTOR_SEAM_BLEND = 8;
+
+  // Bodies change representative at the 7m/36m similarity seam. Ease their
+  // *height* toward the adjacent layer's scale over the last few metres, but
+  // keep the group origin at the feet. Scaling around the eye lifted grounded
+  // actors several metres into the air on the corresponding outer copy.
+  const seamVisualScale = point => {
+    const norm = Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(point.z));
+    const seamT = THREE.MathUtils.clamp(
+      (norm - PORTAL_HALF) / ACTOR_SEAM_BLEND,
+      0,
+      1,
+    );
+    const easedT = seamT * seamT * (3 - 2 * seamT);
+    return THREE.MathUtils.lerp(INNER_SCALE, 1, easedT);
+  };
+  world.characterVisualScale = character => seamVisualScale(character.pos);
+  world.characterMoveScale = character => seamVisualScale(character.pos);
+
+  const actorSource = character => world.characterMirrorSource?.(character) ||
+    character?.recursiveRenderSource || character?.mesh || null;
+  const authoredScale = source => {
+    let scale = actorAuthoredScales.get(source);
+    if (!scale) {
+      scale = source.scale.clone();
+      actorAuthoredScales.set(source, scale);
+    }
+    return scale;
+  };
+  // Name tags are screen-facing UI, not part of the character model. Copy the
+  // full render tree otherwise—including gun, suit, visor, team marker, and
+  // nested charge effects—without sharing scene-graph nodes.
+  const excludeActorNode = (node, character, root) => node !== root &&
+    (node === character?.nameTag || node.isSprite || node.userData?.recursiveMirrorExclude);
+  const cloneActorHierarchy = (source, character) => {
+    const sourceNodes = [];
+    const copyNodes = [];
+    const cloneNode = node => {
+      const copy = node.clone(false);
+      sourceNodes.push(node);
+      copyNodes.push(copy);
+      for (const child of node.children) {
+        if (excludeActorNode(child, character, source)) continue;
+        copy.add(cloneNode(child));
+      }
+      return copy;
+    };
+    return { root: cloneNode(source), sourceNodes, copyNodes };
+  };
+  const actorHierarchyMatches = (entry, source, character) => {
+    if (entry.source !== source) return false;
+    let cursor = 0;
+    let matches = true;
+    const visit = node => {
+      if (!matches || entry.sourceNodes[cursor++] !== node) {
+        matches = false;
+        return;
+      }
+      for (const child of node.children) {
+        if (!excludeActorNode(child, character, source)) visit(child);
+      }
+    };
+    visit(source);
+    return matches && cursor === entry.sourceNodes.length;
+  };
+  const syncActorNode = (source, copy) => {
+    copy.position.copy(source.position);
+    copy.quaternion.copy(source.quaternion);
+    copy.scale.copy(source.scale);
+    copy.visible = source.visible;
+    copy.renderOrder = source.renderOrder;
+    copy.castShadow = source.castShadow;
+    copy.receiveShadow = source.receiveShadow;
+    copy.layers.mask = source.layers.mask;
+    copy.matrixAutoUpdate = source.matrixAutoUpdate;
+    if (!source.matrixAutoUpdate) copy.matrix.copy(source.matrix);
+    copy.matrixWorldNeedsUpdate = true;
+    if ('geometry' in source) copy.geometry = source.geometry;
+    if ('material' in source) copy.material = source.material;
+    if (source.morphTargetInfluences && copy.morphTargetInfluences) {
+      const count = Math.min(source.morphTargetInfluences.length, copy.morphTargetInfluences.length);
+      for (let i = 0; i < count; i++) copy.morphTargetInfluences[i] = source.morphTargetInfluences[i];
+    }
+  };
+  const removeActorMirror = entry => {
+    if (!entry) return;
+    mirrorRoot.remove(entry.inner, entry.outer);
+  };
+  const addActorMirror = (character, source) => {
+    const innerTree = cloneActorHierarchy(source, character);
+    const outerTree = cloneActorHierarchy(source, character);
+    const inner = innerTree.root;
+    const outer = outerTree.root;
+    inner.name = `infinite-bloom-inner-${character.name || 'character'}`;
+    outer.name = `infinite-bloom-outer-${character.name || 'character'}`;
+    inner.userData.recursiveMirror = true;
+    outer.userData.recursiveMirror = true;
+    mirrorRoot.add(inner, outer);
+    const entry = {
+      source,
+      sourceNodes: innerTree.sourceNodes,
+      innerNodes: innerTree.copyNodes,
+      outerNodes: outerTree.copyNodes,
+      inner,
+      outer,
+      baseMeshScale: character.mesh ? authoredScale(character.mesh) : null,
+      baseSourceScale: authoredScale(source),
+    };
+    actorMirrors.set(character, entry);
+    return entry;
+  };
+  const syncActorMirrors = characters => {
+    const live = new Set(characters || []);
+    for (const character of live) {
+      const source = actorSource(character);
+      let entry = actorMirrors.get(character);
+      if (!source) {
+        removeActorMirror(entry);
+        actorMirrors.delete(character);
+        continue;
+      }
+      if (!entry || !actorHierarchyMatches(entry, source, character)) {
+        removeActorMirror(entry);
+        entry = addActorMirror(character, source);
+      }
+      for (let i = 1; i < entry.sourceNodes.length; i++) {
+        syncActorNode(entry.sourceNodes[i], entry.innerNodes[i]);
+        syncActorNode(entry.sourceNodes[i], entry.outerNodes[i]);
+      }
+      const visible = character.alive !== false && source.visible !== false;
+      // At the inner/current seam an equivalence-class representative changes
+      // from the canonical body to its scaled copy (or vice versa). Shrinking
+      // every visible representative over the final few metres makes the two
+      // overlapping bodies meet at exactly the same apparent size instead of
+      // popping by the full recursion ratio on the crossing frame. Character
+      // meshes are authored with their origin at their feet, which is also the
+      // correct fixed point for a player standing on the y=0 arena plane.
+      const visualScale = seamVisualScale(character.pos);
+      if (character.mesh && entry.baseMeshScale) {
+        character.mesh.scale.copy(entry.baseMeshScale).multiplyScalar(visualScale);
+        character.mesh.position.copy(character.pos);
+      }
+      for (let i = 0; i < mirrorScales.length; i++) {
+        const scale = mirrorScales[i];
+        const proxy = i === 0 ? entry.inner : entry.outer;
+        proxy.visible = visible;
+        proxy.position.copy(character.pos).multiplyScalar(scale);
+        proxy.quaternion.copy(source.quaternion);
+        proxy.scale.copy(entry.baseSourceScale).multiplyScalar(scale * visualScale);
+      }
+    }
+    for (const [character, entry] of actorMirrors) {
+      if (live.has(character)) continue;
+      removeActorMirror(entry);
+      actorMirrors.delete(character);
+    }
+  };
+
+  world.projectileTargetScale = (projectile, character) => {
+    const up = character.up || THREE.Object3D.DEFAULT_UP;
+    const centerHeight = (character.height || 1.8) * 0.55 * seamVisualScale(character.pos);
+    const cx = character.pos.x + up.x * centerHeight;
+    const cy = character.pos.y + up.y * centerHeight;
+    const cz = character.pos.z + up.z * centerHeight;
+    let bestScale = 1;
+    let bestDistance = Infinity;
+    for (const scale of [INNER_SCALE, 1, PORTAL_SCALE]) {
+      const dx = cx * scale - projectile.pos.x;
+      const dy = cy * scale - projectile.pos.y;
+      const dz = cz * scale - projectile.pos.z;
+      const distance = dx * dx + dy * dy + dz * dz;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestScale = scale;
+      }
+    }
+    return bestScale;
+  };
+
+  // Transient gameplay visuals borrow the exact canonical render hierarchy.
+  // Geometry, materials, textures, and animated child transforms stay shared;
+  // only Object3D transforms are cloned so one object can occupy three scene
+  // locations simultaneously without becoming three gameplay objects.
+  const cloneBorrowedHierarchy = source => {
+    const sourceNodes = [];
+    const copyNodes = [];
+    const cloneNode = node => {
+      const copy = node.clone(false);
+      sourceNodes.push(node);
+      copyNodes.push(copy);
+      for (const child of node.children) copy.add(cloneNode(child));
+      return copy;
+    };
+    return { root: cloneNode(source), sourceNodes, copyNodes };
+  };
+  const borrowedHierarchyMatches = (entry, source) => {
+    if (entry.source !== source) return false;
+    let cursor = 0;
+    let matches = true;
+    source.traverse(node => {
+      if (matches && entry.sourceNodes[cursor++] !== node) matches = false;
+    });
+    return matches && cursor === entry.sourceNodes.length;
+  };
+  const addBorrowedMirrors = (source, name) => {
+    const innerTree = cloneBorrowedHierarchy(source);
+    const outerTree = cloneBorrowedHierarchy(source);
+    const entry = {
+      source,
+      sourceNodes: innerTree.sourceNodes,
+      innerNodes: innerTree.copyNodes,
+      outerNodes: outerTree.copyNodes,
+      inner: innerTree.root,
+      outer: outerTree.root,
+    };
+    entry.inner.name = `infinite-bloom-inner-${name}`;
+    entry.outer.name = `infinite-bloom-outer-${name}`;
+    entry.inner.userData.recursiveMirror = true;
+    entry.outer.userData.recursiveMirror = true;
+    mirrorRoot.add(entry.inner, entry.outer);
+    return entry;
+  };
+  const removeBorrowedMirrors = entry => {
+    if (entry) mirrorRoot.remove(entry.inner, entry.outer);
+  };
+  const syncBorrowedChildren = entry => {
+    for (let i = 1; i < entry.sourceNodes.length; i++) {
+      syncActorNode(entry.sourceNodes[i], entry.innerNodes[i]);
+      syncActorNode(entry.sourceNodes[i], entry.outerNodes[i]);
+    }
+  };
+  const syncBorrowedRoot = (source, copy, scale) => {
+    syncActorNode(source, copy);
+    copy.position.copy(source.position).multiplyScalar(scale);
+    copy.scale.copy(source.scale).multiplyScalar(scale);
+  };
+
+  const addProjectileMirror = projectile => {
+    const entry = addBorrowedMirrors(projectile.mesh, 'projectile');
+    entry.baseScale = (projectile.mesh._recursiveBaseScale || projectile.mesh.scale).clone();
+    projectileMirrors.set(projectile, entry);
+    return entry;
+  };
+  const syncProjectileMirrors = projectiles => {
+    const live = new Set(projectiles || []);
+    for (const projectile of live) {
+      let entry = projectileMirrors.get(projectile);
+      if (!entry || !borrowedHierarchyMatches(entry, projectile.mesh)) {
+        removeBorrowedMirrors(entry);
+        entry = addProjectileMirror(projectile);
+      }
+      syncBorrowedChildren(entry);
+      // The representative swaps at a seam. Apply the same linear shrink as
+      // actors so the exact projectile entering the inner arena is the exact
+      // size of the copy continuing from the opposite edge on the next frame.
+      const visualScale = seamVisualScale(projectile.pos);
+      projectile.mesh.scale.copy(entry.baseScale).multiplyScalar(
+        visualScale * (projectile.recursionScale || 1),
+      );
+      projectile.mesh.visible = projectile.life > 0;
+      for (let i = 0; i < mirrorScales.length; i++) {
+        const scale = mirrorScales[i];
+        const proxy = i === 0 ? entry.inner : entry.outer;
+        syncBorrowedRoot(projectile.mesh, proxy, scale);
+      }
+    }
+    for (const [projectile, entry] of projectileMirrors) {
+      if (live.has(projectile)) continue;
+      removeBorrowedMirrors(entry);
+      projectileMirrors.delete(projectile);
+    }
+  };
+
+  const addTracerMirror = tracer => {
+    const entry = addBorrowedMirrors(tracer.mesh, 'remote-tracer');
+    entry.baseScale = (tracer.mesh._recursiveBaseScale || tracer.mesh.scale).clone();
+    entry.generation = tracer.generation;
+    tracerMirrors.set(tracer, entry);
+    return entry;
+  };
+  const syncTracerMirrors = tracers => {
+    const live = new Set(tracers || []);
+    for (const tracer of live) {
+      let entry = tracerMirrors.get(tracer);
+      if (!entry || entry.generation !== tracer.generation ||
+          !borrowedHierarchyMatches(entry, tracer.mesh)) {
+        removeBorrowedMirrors(entry);
+        entry = addTracerMirror(tracer);
+      }
+      syncBorrowedChildren(entry);
+      const visualScale = seamVisualScale(tracer.mesh.position);
+      tracer.mesh.scale.copy(entry.baseScale).multiplyScalar(
+        visualScale * (tracer.recursionScale || 1),
+      );
+      for (let i = 0; i < mirrorScales.length; i++) {
+        const scale = mirrorScales[i];
+        const proxy = i === 0 ? entry.inner : entry.outer;
+        syncBorrowedRoot(tracer.mesh, proxy, scale);
+      }
+    }
+    for (const [tracer, entry] of tracerMirrors) {
+      if (live.has(tracer)) continue;
+      removeBorrowedMirrors(entry);
+      tracerMirrors.delete(tracer);
+    }
+  };
+
+  const syncEffectMirrors = effects => {
+    // Projectiles themselves are never capped. Only secondary trail/impact
+    // puffs use this ceiling so a four-player rapid-fire exchange cannot turn
+    // the two presentation layers into hundreds of extra draw calls.
+    const mirroredEffects = effects?.length > 24 ? effects.slice(-24) : (effects || []);
+    const live = new Set(mirroredEffects);
+    for (const effect of live) {
+      const source = effect?.m;
+      if (!source) continue;
+      let entry = effectMirrors.get(effect);
+      if (!entry || !borrowedHierarchyMatches(entry, source)) {
+        removeBorrowedMirrors(entry);
+        entry = addBorrowedMirrors(source, 'effect');
+        effectMirrors.set(effect, entry);
+      }
+      syncBorrowedChildren(entry);
+      for (let i = 0; i < mirrorScales.length; i++) {
+        syncBorrowedRoot(source, i === 0 ? entry.inner : entry.outer, mirrorScales[i]);
+      }
+    }
+    for (const [effect, entry] of effectMirrors) {
+      if (live.has(effect)) continue;
+      removeBorrowedMirrors(entry);
+      effectMirrors.delete(effect);
+    }
+  };
+
+  const syncDamageMarkerMirrors = markers => {
+    const live = new Set(markers || []);
+    for (const marker of live) {
+      const source = marker?.sprite;
+      if (!source) continue;
+      let entry = damageMarkerMirrors.get(marker);
+      if (!entry || !borrowedHierarchyMatches(entry, source)) {
+        removeBorrowedMirrors(entry);
+        entry = addBorrowedMirrors(source, 'damage-marker');
+        damageMarkerMirrors.set(marker, entry);
+      }
+      for (let i = 0; i < mirrorScales.length; i++) {
+        syncBorrowedRoot(source, i === 0 ? entry.inner : entry.outer, mirrorScales[i]);
+      }
+    }
+    for (const [marker, entry] of damageMarkerMirrors) {
+      if (live.has(marker)) continue;
+      removeBorrowedMirrors(entry);
+      damageMarkerMirrors.delete(marker);
+    }
+  };
+
+  const syncPickupMirrors = pickups => {
+    const live = new Set(pickups || []);
+    for (const pickup of live) {
+      const source = pickup?.mesh;
+      if (!source) continue;
+      let entry = pickupMirrors.get(pickup);
+      if (!entry || !borrowedHierarchyMatches(entry, source)) {
+        removeBorrowedMirrors(entry);
+        entry = addBorrowedMirrors(source, 'pickup');
+        pickupMirrors.set(pickup, entry);
+      }
+      syncBorrowedChildren(entry);
+      for (let i = 0; i < mirrorScales.length; i++) {
+        syncBorrowedRoot(source, i === 0 ? entry.inner : entry.outer, mirrorScales[i]);
+      }
+    }
+    for (const [pickup, entry] of pickupMirrors) {
+      if (live.has(pickup)) continue;
+      removeBorrowedMirrors(entry);
+      pickupMirrors.delete(pickup);
+    }
+  };
+
+  world.beforeRender = ({
+    camera, characters = [], projectiles = [], remoteTracers = [], effects = [], damageMarkers = [], pickups = [],
+  }) => {
+    // Sky and atmospheric eyes are direction-only scenery. Keeping their
+    // center on the active camera removes all parallax from the 36 -> 7 chart
+    // rebase, so the backdrop cannot jump vertically or slide at a seam.
+    if (camera) {
+      if (sky) sky.position.copy(camera.position);
+      eyeField.position.copy(camera.position);
+      if (skySparks) {
+        skySparks.position.set(
+          camera.position.x,
+          camera.position.y + (skySparks.userData.floatY || 0),
+          camera.position.z,
+        );
+      }
+    }
+    // Linear scene fog is camera-relative, but its far plane must also follow
+    // the square recursion. Moving toward a seam shortens the view just enough
+    // to keep the nearest finite outer edge hidden; after the coordinate
+    // rebase, it eases outward and reveals what reads as the next repetition.
+    if (camera && scene.fog) {
+      const cameraRadius = Math.max(Math.abs(camera.position.x), Math.abs(camera.position.z));
+      const edgeDistance = OUTER_VISUAL_HALF - cameraRadius;
+      const targetFar = THREE.MathUtils.clamp(edgeDistance - FOG_EDGE_MARGIN, 54, 178);
+      const targetNear = Math.max(24, targetFar - FOG_FADE_SPAN);
+      const now = world._t || 0;
+      const dt = world._bloomFogT == null
+        ? 1 / 60
+        : THREE.MathUtils.clamp(now - world._bloomFogT, 0, 0.05);
+      world._bloomFogT = now;
+      // Both expansion and contraction ease. The crossing hook below first
+      // transforms the live fog distances by the exact recursion factor, so
+      // objects keep the same fog coverage on the crossing frame and then
+      // feather in or out while the chart settles.
+      scene.fog.near = THREE.MathUtils.damp(scene.fog.near, targetNear, FOG_REVEAL_RATE, dt);
+      scene.fog.far = THREE.MathUtils.damp(scene.fog.far, targetFar, FOG_REVEAL_RATE, dt);
+    }
+    syncActorMirrors(characters);
+    syncProjectileMirrors(projectiles);
+    syncTracerMirrors(remoteTracers);
+    syncEffectMirrors(effects);
+    syncDamageMarkerMirrors(damageMarkers);
+    syncPickupMirrors(pickups);
+  };
+
+  // Canonical physics lives in the middle annulus. Crossing either similarity
+  // boundary simply chooses the adjacent equivalent coordinate. The max norm
+  // is deliberate: it matches the square arena and also makes a straight fall
+  // through the origin re-scale before it can ever reach the center.
+  const RECURSION_EPSILON = 0.03;
+  const recursiveNorm = point => Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(point.z));
+  const crossingFactor = (previous, current) => {
+    const previousNorm = recursiveNorm(previous);
+    const currentNorm = recursiveNorm(current);
+    if (previousNorm >= PORTAL_HALF && currentNorm < PORTAL_HALF) return PORTAL_SCALE;
+    if (previousNorm <= ARENA_HALF && currentNorm > ARENA_HALF) return INNER_SCALE;
+    return 1;
+  };
+  const canonicalFactor = point => {
+    const norm = recursiveNorm(point);
+    if (norm < PORTAL_HALF - RECURSION_EPSILON) return PORTAL_SCALE;
+    if (norm > ARENA_HALF + RECURSION_EPSILON) return INNER_SCALE;
+    return 1;
+  };
+  const rayCubeInterval = (origin, dir, half) => {
+    let enter = -Infinity;
+    let exit = Infinity;
+    for (const axis of ['x', 'y', 'z']) {
+      if (Math.abs(dir[axis]) < 1e-7) {
+        if (origin[axis] < -half || origin[axis] > half) return null;
+        continue;
+      }
+      let a = (-half - origin[axis]) / dir[axis];
+      let b = (half - origin[axis]) / dir[axis];
+      if (a > b) [a, b] = [b, a];
+      enter = Math.max(enter, a);
+      exit = Math.min(exit, b);
+      if (enter > exit) return null;
+    }
+    return { enter, exit };
+  };
+  // Hitscan beams need the exact next chart boundary. Returning the similarity
+  // transform lets OUROBOROS draw one connected segment on each recursion
+  // level instead of pretending to be a fast projectile or a flat portal.
+  world.recursiveRayBoundary = (origin, dir, maxDistance = Infinity) => {
+    const candidates = [];
+    const inner = rayCubeInterval(origin, dir, PORTAL_HALF);
+    if (inner?.enter > RECURSION_EPSILON && inner.enter <= maxDistance) {
+      candidates.push({ distance: inner.enter, factor: PORTAL_SCALE });
+    }
+    const outer = rayCubeInterval(origin, dir, ARENA_HALF);
+    if (outer?.exit > RECURSION_EPSILON && outer.exit <= maxDistance) {
+      candidates.push({ distance: outer.exit, factor: INNER_SCALE });
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates[0] || null;
+  };
+  const syncRecursivePlayerCamera = (character, up, eyeHeight) => {
+    if (!character.isPlayer || !character.camera) return;
+    // The first-person eye follows the same linear body shrink as the actor
+    // proxies. Just inside the seam, multiplying the camera by PORTAL_SCALE
+    // therefore lands on the full-height camera just outside it without a
+    // vertical pop or the old several-metre launch/fall.
+    const visualScale = seamVisualScale(character.pos);
+    character.camera.position.copy(character.pos).addScaledVector(up, eyeHeight * visualScale);
+  };
+  world.postCharacterMove = (character, previous) => {
+    if (!character?.alive || !previous) return;
+    const up = character.up || new THREE.Vector3(0, 1, 0);
+    const eyeHeight = character.isPlayer ? (character.eyeHeight || 1.6) : 0;
+    const factor = crossingFactor(previous, character.pos);
+    if (factor === 1) {
+      syncRecursivePlayerCamera(character, up, eyeHeight);
+      return;
+    }
+    // Position is a feet-space coordinate. Scaling it directly keeps y=0
+    // fixed for a grounded crossing and preserves full 3D similarity for a
+    // player falling through the recursive opening. A grounded runner's
+    // planar velocity uses the same similarity transform; characterMoveScale
+    // then eases it back across the inner band, so apparent speed is continuous
+    // instead of jumping by the full recursion ratio on the crossing frame.
+    const planarFloorCrossing = up.y > 0.9 &&
+      Math.abs(previous.y) < 0.25 && Math.abs(character.pos.y) < 0.25 &&
+      Math.abs(character.vel.y) < 2;
+    if (character.isPlayer && scene.fog) {
+      const scaledNear = scene.fog.near * factor;
+      const scaledFar = Math.min(820, scene.fog.far * factor);
+      scene.fog.far = Math.max(2, scaledFar);
+      scene.fog.near = THREE.MathUtils.clamp(scaledNear, 0.5, scene.fog.far - 1);
+      // Prevent beforeRender from consuming the transition on the same tick.
+      world._bloomFogT = world._t || 0;
+    }
+    character.pos.multiplyScalar(factor);
+    if (planarFloorCrossing) {
+      character.pos.y = 0;
+      character.vel.x *= factor;
+      character.vel.y = 0;
+      character.vel.z *= factor;
+    }
+    if (factor > 1 && character.vel.y < -12) character.vel.y = -12;
+    character.grounded = planarFloorCrossing;
+    character._camSnap = true;
+    character._bloomRecursionLevel = (character._bloomRecursionLevel || 0) + (factor > 1 ? 1 : -1);
+    character.path = null;
+    character.pathIdx = 0;
+    character.mesh?.position.copy(character.pos);
+    syncRecursivePlayerCamera(character, up, eyeHeight);
+    world._recursivePulse = 1;
+  };
+  world.postProjectileMove = (projectile, previous) => {
+    if (!projectile?.pos || !previous) return true;
+    // Keep every live shot inside the canonical half-open shell. Unlike a
+    // character, a shot can originate beyond a seam because the muzzle is in
+    // front of its owner, so relying only on a previous/current sign change is
+    // insufficient. The tiny deadband prevents floating-point ping-pong.
+    const factor = canonicalFactor(projectile.pos);
+    if (factor === 1) return 1;
+    projectile._bloomRecursionCrossings = (projectile._bloomRecursionCrossings || 0) + 1;
+    if (projectile._bloomRecursionCrossings > world.recursivePortal.maxProjectileCrossings) {
+      projectile.life = 0;
+      return false;
+    }
+    // Piercing is scoped to one topological pass through the arena. Once the
+    // shot crosses a seam it has entered the next recursive copy, so a player
+    // it already pierced is a valid target again there. This lets Hyperstrike
+    // loop through Bloom and damage the same canonical player once per layer.
+    projectile.pierced?.clear();
+    projectile.onRecursionCrossing?.(projectile._bloomRecursionCrossings, factor);
+    projectile.pos.multiplyScalar(factor);
+    projectile._bloomRecursionLevel = (projectile._bloomRecursionLevel || 0) + (factor > 1 ? 1 : -1);
+    return factor;
+  };
+  // Multiplayer clients render remote shots as lightweight tracers rather
+  // than authoritative projectiles. Move those presentation objects through
+  // the same quotient-space chart so they continue through the inner/outer
+  // seam instead of drawing a straight Euclidean line through the recursion.
+  world.postVisualProjectileMove = visual => {
+    if (!visual?.pos || !visual?.vel) return true;
+    const factor = canonicalFactor(visual.pos);
+    if (factor === 1) return 1;
+    visual._bloomRecursionCrossings = (visual._bloomRecursionCrossings || 0) + 1;
+    if (visual._bloomRecursionCrossings > world.recursivePortal.maxProjectileCrossings) {
+      return false;
+    }
+    visual.onRecursionCrossing?.(visual._bloomRecursionCrossings, factor);
+    visual.pos.multiplyScalar(factor);
+    return factor;
+  };
+  // A normal half-metre projectile step grows to 2.57m when it crosses the
+  // inward seam. Refine only the final half-metre before that boundary so the
+  // transformed collision segment remains <= 0.5m without taxing every shot.
+  world.projectileStepDistance = projectile =>
+    recursiveNorm(projectile.pos) <= PORTAL_HALF + 0.51
+      ? 0.5 * INNER_SCALE
+      : 0.5;
+  world.prepareProjectile = projectile => {
+    if (!projectile?.pos || !projectile?.vel) return false;
+    // At most one correction is expected (muzzles are only ~1m long), but the
+    // bounded loop also makes split projectiles safe if a future weapon emits
+    // them farther from its owner. Spawn normalization is not travel, so it
+    // does not consume one of the projectile's five visible seam crossings.
+    for (let i = 0; i < 2; i++) {
+      const factor = canonicalFactor(projectile.pos);
+      if (factor === 1) return true;
+      projectile.pos.multiplyScalar(factor);
+      projectile._bloomRecursionLevel = (projectile._bloomRecursionLevel || 0) + (factor > 1 ? 1 : -1);
+    }
+    return canonicalFactor(projectile.pos) === 1;
+  };
+  world.prepareVisualProjectile = visual => {
+    if (!visual?.pos || !visual?.vel) return false;
+    for (let i = 0; i < 2; i++) {
+      const factor = canonicalFactor(visual.pos);
+      if (factor === 1) return true;
+      visual.pos.multiplyScalar(factor);
+    }
+    return canonicalFactor(visual.pos) === 1;
+  };
+  world.anim.push(dt => {
+    world._recursivePulse = Math.max(0, (world._recursivePulse || 0) - dt * 2.8);
+  });
+
+  world.dispose = () => {
+    const disposed = new Set();
+    const disposeOnce = resource => {
+      if (!resource || disposed.has(resource)) return;
+      disposed.add(resource);
+      resource.dispose?.();
+    };
+    // Actor copies borrow the canonical character/weapon resources. Detach
+    // them before disposing map-owned roots so leaving Bloom cannot invalidate
+    // the globally shared blaster materials or another character's model.
+    mirrorRoot.clear();
+    for (const root of bloomOwnedRoots) {
+      if (root === mirrorRoot) continue;
+      root.traverse(obj => {
+        disposeOnce(obj.geometry);
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (!material) continue;
+          for (const value of Object.values(material)) {
+            if (value?.isTexture) disposeOnce(value);
+          }
+          disposeOnce(material);
+        }
+      });
+    }
+    scene.remove(mirrorRoot);
+    actorMirrors.clear();
+    projectileMirrors.clear();
+    tracerMirrors.clear();
+    effectMirrors.clear();
+    damageMarkerMirrors.clear();
+    pickupMirrors.clear();
+    bloomOwnedRoots = [];
+  };
+
+  // Floating circuit sparks are part of the direction-only sky field. Like
+  // the dome and eyes, they stay camera-relative so a chart rebase cannot
+  // slide the atmosphere past the arena.
+  {
+    const rnd = seededRandom(0xb100f11);
+    const count = 280;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const palette = [new THREE.Color(0x79ff16), new THREE.Color(0xffe61b), new THREE.Color(0xff3d12)];
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (rnd() - 0.5) * 100;
+      positions[i * 3 + 1] = 2 + rnd() * 54;
+      positions[i * 3 + 2] = (rnd() - 0.5) * 100;
+      const c = palette[Math.floor(rnd() * palette.length)];
+      colors.set([c.r, c.g, c.b], i * 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const sparks = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({
+        size: 0.18,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.72,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    skySparks = sparks;
+    scene.add(sparks);
+    world.anim.push((dt, t) => {
+      sparks.rotation.y = t * 0.018;
+      sparks.userData.floatY = Math.sin(t * 0.16) * 1.8;
+    });
+  }
+
+  const spawns = [
+    V(-24, 0.1, -24), V(24, 0.1, 24), V(-24, 0.1, 24), V(24, 0.1, -24),
+    V(0, 0.1, -27), V(0, 0.1, 27), V(-27, 0.1, 0), V(27, 0.1, 0),
+  ];
+  world.spawns.ffa = spawns;
+  world.spawns.blue = [spawns[0], spawns[2], spawns[4], spawns[6]];
+  world.spawns.red = [spawns[1], spawns[3], spawns[5], spawns[7]];
+
+  pk(world, 'gold', 0, 4.2, 24);
+  pk(world, 'silver', 0, 4.2, -24);
+  pk(world, 'shield', 24, 4.2, 0);
+  pk(world, 'speed', -24, 4.2, 0);
+  pk(world, 'star', -31, 0.2, 31, { hidden: true });
+  pk(world, 'star', 31, 0.2, -31, { hidden: true });
+  pk(world, 'star', 14, 5.8, 14, { hidden: true });
+  pk(world, 'star', -14, 5.8, -14, { hidden: true });
+  pk(world, 'weapon', -18, 0.2, -27, { weapon: 'scatter' });
+  pk(world, 'weapon', 18, 0.2, 27, { weapon: 'pulsar' });
+  pk(world, 'weapon', 27, 0.2, -18, { weapon: 'zooka' });
+  pk(world, 'weapon', -27, 0.2, 18, { weapon: 'parasite' });
+  pk(world, 'weapon', 0, 4.2, 20, { weapon: 'ouroboros' });
+  pk(world, 'weapon', 5, 4.2, 27, { weapon: 'hyper' });
+  pk(world, 'weapon', -5, 4.2, -27, { weapon: 'whomper' });
+  pk(world, 'ammo', -13, 0.2, -27, { weapon: 'scatter' });
+  pk(world, 'ammo', 13, 0.2, 27, { weapon: 'pulsar' });
+  pk(world, 'ammo', 27, 0.2, -13, { weapon: 'zooka' });
+  pk(world, 'ammo', -27, 0.2, 13, { weapon: 'parasite' });
+  pk(world, 'ammo', 0, 4.2, -20, { weapon: 'ouroboros' });
+  pk(world, 'ammo', -5, 4.2, 26, { weapon: 'hyper' });
+  pk(world, 'ammo', 5, 4.2, -26, { weapon: 'whomper' });
+  pk(world, 'health', -10, 0.2, -10);
+  pk(world, 'health', 10, 0.2, 10);
+  pk(world, 'health', -10, 0.2, 10);
+  pk(world, 'health', 10, 0.2, -10);
+
+  for (const x of [-28, -14, 0, 14, 28]) {
+    for (const z of [-28, -14, 0, 14, 28]) {
+      if (Math.abs(x) < 9 && Math.abs(z) < 9) continue;
+      if (Math.abs(Math.abs(x) - 14) < 1 && Math.abs(Math.abs(z) - 14) < 1) continue;
+      wp(world, x, 0, z);
+    }
+  }
+  for (const [x, y, z] of [
+    [0, 0, 0],
+    [0, 2, 15], [0, 4, 21], [0, 4, 27],
+    [0, 2, -15], [0, 4, -21], [0, 4, -27],
+    [15, 2, 0], [21, 4, 0], [27, 4, 0],
+    [-15, 2, 0], [-21, 4, 0], [-27, 4, 0],
+  ]) wp(world, x, y, z);
+
+  mergeStatic(scene, world);
+  bloomOwnedRoots = scene.children.filter(child => !sceneRootsBeforeBuild.has(child));
+  return world;
+}
+
 /* ============== THE LOBBY — walk-in map select, like the original ==============
    A dusk courtyard: grass strip, fountain, and five glowing gates. Walk into
    a gate to enter that arena; step on the mode pad to toggle FFA/TDM. */
@@ -4240,6 +5534,27 @@ export function buildAtrium(scene) {
   sancLight.position.set(44, 3, 14);
   scene.add(sancLight);
 
+  // A second secret is inset into the same hidden passage as Prism Run.
+  // Its trigger hugs the east wall, so simply walking down the corridor does
+  // not enter it; the player has to notice the watching faces and approach.
+  addBloomFacePortal(scene, world, 47.34, 3, 27.2, 5.7, 5.45, -Math.PI / 2);
+  for (const [y, z, w, h, d] of [
+    [3, 24.05, 0.46, 6, 0.46],
+    [3, 30.35, 0.46, 6, 0.46],
+    [0.22, 27.2, 0.46, 0.44, 6.75],
+    [5.78, 27.2, 0.46, 0.44, 6.75],
+  ]) {
+    addBox(scene, world, 47.24, y, z, w, h, d, 0x91b91c, {
+      collide: false,
+      shadow: false,
+      emissive: 0x4d0a00,
+      emissiveIntensity: 0.32,
+    });
+  }
+  const bloomGateLight = new THREE.PointLight(0xcfff2c, 9, 15);
+  bloomGateLight.position.set(45.2, 3.2, 27.2);
+  scene.add(bloomGateLight);
+
   // grass boulevard + fountain. End rim slabs own the corners; side slabs stop
   // between them so their top faces never overlap and shimmer.
   addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 9] });
@@ -4296,6 +5611,7 @@ export function buildAtrium(scene) {
     else world.portals.push({ ...trigger, map: id, name });
   }
   world.portals.push({ x: 44, z: 11.5, map: 'prism', name: '???' });
+  world.portals.push({ x: 46.7, z: 27.2, radius: 1.35, map: 'bloom', name: '???' });
 
   // flower borders flanking the boulevard
   addBox(scene, world, -8.5, 0.036, 14, 5, 0.07, 52, 0xd8a8c8, { tex: 'flowers', repeat: [1, 10] });
@@ -6187,6 +7503,9 @@ export const MAPS = [
   { id: 'prism', name: 'PRISM RUN', emoji: '🌈', secret: true,
     desc: 'Inside a neon tesseract in deep space: walk every wall, floor and ceiling. Gravity always pulls to the nearest surface — you never fall out.',
     thumb: 'linear-gradient(135deg,#0b0518,#ff40e0)', build: buildPrism },
+  { id: 'bloom', name: 'INFINITE BLOOM', emoji: '👁️', secret: true,
+    desc: 'A sentient machine realm recursively contains itself. Fall or fire into the living miniature and emerge above the full-size arena at the same point.',
+    thumb: 'linear-gradient(135deg,#101600,#b7ed1c 52%,#e43814)', build: buildInfiniteBloom },
   { id: 'olympus', name: 'OLYMPUS MONS', emoji: '🔴', secret: true,
     desc: 'A cliff-temple city on Mars: an ornate Aether Crown, jungle conservatory, connected roof arenas, a mountain-sized Hades cavern, waterfall caves, and a secret storm weapon.',
     thumb: 'linear-gradient(135deg,#351a24,#c75b36)', build: buildOlympusMons },

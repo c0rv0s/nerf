@@ -95,13 +95,20 @@ function rampOBB(r) {
     const dh = r.h1 - r.h0;
     const slopeLen = Math.hypot(len, dh);
     const ang = Math.atan2(dh, len);
+    const halfThickness = 0.22;
     const rot = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(
       r.axis === 'z' ? -ang : 0, 0, r.axis === 'x' ? ang : 0));
     r._obb = {
-      c: new THREE.Vector3((r.minX + r.maxX) / 2, (r.h0 + r.h1) / 2 - 0.2, (r.minZ + r.maxZ) / 2),
+      // Match the rendered slab's compensated center: the OBB top face is the
+      // analytic ramp surface, including at a flush destination deck.
+      c: new THREE.Vector3(
+        (r.minX + r.maxX) / 2 + (r.axis === 'x' ? halfThickness * Math.sin(ang) : 0),
+        (r.h0 + r.h1) / 2 - halfThickness * Math.cos(ang),
+        (r.minZ + r.maxZ) / 2 + (r.axis === 'z' ? halfThickness * Math.sin(ang) : 0),
+      ),
       rot, inv: rot.clone().invert(),
       // top face flush with the walk surface, bottom at the visual underside
-      he: new THREE.Vector3(r.axis === 'x' ? slopeLen / 2 : width / 2, 0.22,
+      he: new THREE.Vector3(r.axis === 'x' ? slopeLen / 2 : width / 2, halfThickness,
                             r.axis === 'x' ? width / 2 : slopeLen / 2),
     };
   }

@@ -106,7 +106,7 @@ export class Player {
     const mat = blasterSkin(kind);
     for (const m of Object.values(this.vmWeapons)) {
       const shell = m.children[0];
-      shell.material = kind ? mat : (shell.userData.baseMaterial || mat);
+      shell.material = kind ? mat : (shell._baseMaterial || mat);
     }
   }
 
@@ -197,10 +197,11 @@ export class Player {
     this.camera.getWorldDirection(dir);
     // launch from the gun muzzle (right and below the eye), not the face
     const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize();
+    const visualScale = this.world.characterVisualScale?.(this) || 1;
     const origin = this.camera.position.clone()
-      .addScaledVector(dir, 1.1)
-      .addScaledVector(right, 0.18)
-      .addScaledVector(this.camera.up, -0.22);
+      .addScaledVector(dir, 1.1 * visualScale)
+      .addScaledVector(right, 0.18 * visualScale)
+      .addScaledVector(this.camera.up, -0.22 * visualScale);
     fire(this, origin, dir, this.weapon);
     if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
     // Warmup weapons pay their entire firing delay before the shot releases.
@@ -297,7 +298,8 @@ export class Player {
 
     if (this.grounded && !wasGrounded && fallSpeed < -4.5) sfx('land');
     if (this.grounded && moving > 0.16) {
-      this.stepDistance += this.world.playerSpeed * moving * dt;
+      const moveScale = this.world.characterMoveScale?.(this) || 1;
+      this.stepDistance += this.world.playerSpeed * moveScale * moving * dt;
       if (this.stepDistance >= 3.25) {
         this.stepDistance %= 3.25;
         sfx('footstep');
@@ -328,7 +330,8 @@ export class Player {
       this.firing = false;
     }
     const env = this._environmentState();
-    const speed = this.world.playerSpeed * (this.speedMult || 1) * env.speedMult;
+    const moveScale = this.world.characterMoveScale?.(this) || 1;
+    const speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * env.speedMult;
     const f = paralyzed ? 0 : (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = paralyzed ? 0 : (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
@@ -394,7 +397,8 @@ export class Player {
     this.coyote = this.grounded ? 0.14 : Math.max(0, this.coyote - dt);
 
     this.camera.up.set(0, 1, 0);
-    this.camera.position.set(this.pos.x, this.pos.y + this.eyeHeight, this.pos.z);
+    const visualScale = this.world.characterVisualScale?.(this) || 1;
+    this.camera.position.set(this.pos.x, this.pos.y + this.eyeHeight * visualScale, this.pos.z);
     this.camera.rotation.set(0, 0, 0);
     this.camera.rotateY(this.yaw);
     this.camera.rotateX(this.pitch);
@@ -414,7 +418,8 @@ export class Player {
     fwd.normalize();
     this._moveFwd = fwd.clone();
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    const speed = this.world.playerSpeed * (this.speedMult || 1) * this._waterSpeedMult();
+    const moveScale = this.world.characterMoveScale?.(this) || 1;
+    const speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * this._waterSpeedMult();
     const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
     const want = new THREE.Vector3().addScaledVector(fwd, f).addScaledVector(right, s);

@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { DEFAULT_MAP_PLAYER_LIMIT, mapPlayerLimit } from '../src/map-rules.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -32,7 +33,7 @@ const MATCH_TIME = envSeconds('MATCH_TIME', 5 * 60);
 const VOTE_TIME = envSeconds('VOTE_TIME', 10);
 const PODIUM_TIME = envSeconds('PODIUM_TIME', 15);
 const MAX_LOBBIES = 5;
-const SLOTS = 8;
+const SLOTS = DEFAULT_MAP_PLAYER_LIMIT;
 const TICK_HZ = 30;
 const SNAPSHOT_HZ = 20;
 const RESPAWN_TIME = 3;
@@ -52,7 +53,7 @@ const COLORS = ['#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40'
 const MODES = ['ffa', 'tdm'];
 const DEFAULT_MODE = 'ffa';
 const TEAM_COLORS = { blue: '#5cb3ff', red: '#ff5c5c' };
-const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor', 'thunderbolt']);
+const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'ouroboros', 'refractor', 'thunderbolt']);
 const WORLD_EVENT_IDS = new Set(['lava', 'water', 'storm', 'void', 'meteor', 'comet']);
 const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(?:er|ing)?|motherfucker|nigg(?:er|a)|piss|shit|slut|wanker|whore)\b/gi;
 const MAPS = [
@@ -67,6 +68,7 @@ const MAPS = [
   { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },
   { id: 'prism', name: 'PRISM RUN', secret: true, bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
+  { id: 'bloom', name: 'INFINITE BLOOM', secret: true, bounds: 48, spawns: [[-24, 0.1, -24], [24, 0.1, 24], [-24, 0.1, 24], [24, 0.1, -24], [0, 0.1, -27], [0, 0.1, 27], [-27, 0.1, 0], [27, 0.1, 0]] },
   { id: 'olympus', name: 'OLYMPUS MONS', secret: true, bounds: 170, spawns: [[-18, 60.6, 32], [18, 60.6, 32], [-52, 60.6, 38], [52, 60.6, 38], [-44, 60.6, -14], [44, 60.6, -14], [-15, 60.6, -52], [15, 60.6, -52], [-44, 74.6, 20], [44, 74.6, 20], [-20, 90.6, 26], [20, 90.6, 26]] },
 ];
 const LEADERBOARD_MAP_IDS = new Set([...MAPS.map(map => map.id), 'olympus']);
@@ -439,8 +441,14 @@ function handleMessage(conn, msg) {
     joinLobby(conn, String(msg.lobbyId || ''));
   } else if (msg.type === 'voteMap') {
     const lobby = lobbies.get(conn.lobbyId);
-    if (!lobby || lobby.phase !== 'voting' || !MAPS.some(m => m.id === msg.mapId)) return;
-    lobby.votes.set(conn.id, msg.mapId);
+    const map = MAPS.find(m => m.id === msg.mapId);
+    if (!lobby || lobby.phase !== 'voting' || !map) return;
+    const limit = mapPlayerLimit(map);
+    if (lobbyOccupiedSeats(lobby) > limit) {
+      send(conn, { type: 'error', message: `${map.name} supports up to ${limit} players.` });
+      return;
+    }
+    lobby.votes.set(conn.id, map.id);
     broadcastLobbyMeta(lobby);
   } else if (msg.type === 'voteMode') {
     const lobby = lobbies.get(conn.lobbyId);
@@ -462,7 +470,7 @@ function handleMessage(conn, msg) {
     if (seq <= (slot.lastInputSeq ?? -1)) return;
     const pos = sanitizePos(msg.pos, lobby.map);
     const now = Date.now();
-    if (!pos || !plausibleInputPosition(slot, pos, now)) return;
+    if (!pos || !plausibleInputPosition(slot, pos, now, lobby.map)) return;
     const weapon = String(msg.weapon || slot.weapon || 'blaster');
     const input = {
       seq,
@@ -561,14 +569,44 @@ function sanitizeVel(vel) {
   };
 }
 
-function plausibleInputPosition(slot, pos, now) {
+function plausibleBloomRecursiveJump(from, to, maxDistance) {
+  const innerHalf = 7;
+  const outerHalf = 36;
+  const scale = outerHalf / innerHalf;
+  const slop = 1.5;
+  const positionNorm = pos => Math.max(Math.abs(pos.x), Math.abs(pos.y), Math.abs(pos.z));
+  const fromNorm = positionNorm(from);
+
+  // Undo each of the two legal similarity transforms. If that inferred raw
+  // endpoint was reachable from the last accepted position and crossed the
+  // matching boundary, the large network-space jump is only Bloom wrapping.
+  for (const factor of [scale, 1 / scale]) {
+    const inverse = 1 / factor;
+    const raw = {
+      x: to.x * inverse,
+      y: to.y * inverse,
+      z: to.z * inverse,
+    };
+    const rawNorm = positionNorm(raw);
+    const crossed = factor > 1
+      ? fromNorm >= innerHalf - 0.25 && rawNorm < innerHalf + 0.25
+      : fromNorm <= outerHalf + 0.25 && rawNorm > outerHalf - 0.25;
+    if (!crossed) continue;
+    const rawDistance = Math.hypot(raw.x - from.x, raw.y - from.y, raw.z - from.z);
+    if (rawDistance <= maxDistance + slop) return true;
+  }
+  return false;
+}
+
+function plausibleInputPosition(slot, pos, now, map) {
   if (!slot.lastInputPos || !slot.lastInputAt) return true;
   const dt = Math.max(1 / 120, Math.min(0.25, (now - slot.lastInputAt) / 1000));
   const maxDistance = INPUT_POSITION_SLOP + INPUT_MAX_METERS_PER_SECOND * dt;
   const dx = pos.x - slot.lastInputPos.x;
   const dy = pos.y - slot.lastInputPos.y;
   const dz = pos.z - slot.lastInputPos.z;
-  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+  if (dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance) return true;
+  return map?.id === 'bloom' && plausibleBloomRecursiveJump(slot.lastInputPos, pos, maxDistance);
 }
 
 function sanitizeUnitVec(vec, fallback) {
@@ -581,8 +619,24 @@ function sanitizeUnitVec(vec, fallback) {
   return { x: x / len, y: y / len, z: z / len };
 }
 
+function lobbyOccupiedSeats(lobby) {
+  return lobby.slots.filter(slot => slot.human || slot.reservedToken).length;
+}
+
+function lobbyPlayerLimit(lobby) {
+  return lobby.phase === 'voting' ? SLOTS : mapPlayerLimit(lobby.map);
+}
+
+function pruneOverCapacityVotes(lobby) {
+  const occupied = lobbyOccupiedSeats(lobby);
+  for (const [connId, mapId] of lobby.votes) {
+    if (occupied > mapPlayerLimit(mapId)) lobby.votes.delete(connId);
+  }
+}
+
 function autoJoin(conn) {
-  const active = [...lobbies.values()].filter(l => l.humanCount() > 0 && l.humanCount() < SLOTS);
+  const active = [...lobbies.values()].filter(l =>
+    l.humanCount() > 0 && lobbyOccupiedSeats(l) < lobbyPlayerLimit(l));
   const occupied = [...lobbies.values()].filter(l => l.humanCount() > 0);
   if (active.length <= 1) {
     if (!active[0] && occupied.length >= MAX_LOBBIES) {
@@ -726,7 +780,7 @@ function joinLobby(conn, lobbyId) {
     broadcastLobbyMeta(lobby);
     return;
   }
-  if (lobby.humanCount() >= SLOTS) {
+  if (lobbyOccupiedSeats(lobby) >= lobbyPlayerLimit(lobby)) {
     const occupied = [...lobbies.values()].filter(l => l.humanCount() > 0);
     if (occupied.length < MAX_LOBBIES) lobby = createLobby();
     else {
@@ -742,6 +796,7 @@ function joinLobby(conn, lobbyId) {
     return;
   }
   resetSlotForHuman(slot, conn, lobby);
+  pruneOverCapacityVotes(lobby);
   conn.lobbyId = lobby.id;
   conn.slotId = slot.id;
   if (!lobby.hostConnId) setLobbyHost(lobby, conn.id, false);
@@ -763,7 +818,7 @@ function sendJoinedLobby(conn, lobby, resumed) {
     phaseEndsAt: lobby.phaseEndsAt,
     authorityEpoch: lobby.authorityEpoch,
     resumed,
-    maps: MAPS.map(({ id, name }) => ({ id, name })),
+    maps: MAPS.map(({ id, name }) => ({ id, name, maxPlayers: mapPlayerLimit(id) })),
     slots: publicSlots(lobby),
   });
 }
@@ -839,7 +894,7 @@ function lobbyList() {
     id: l.id,
     label: l.label,
     humans: l.humanCount(),
-    max: SLOTS,
+    max: lobbyPlayerLimit(l),
     phase: l.phase,
     mapId: l.map.id,
     mapName: l.map.name,
@@ -920,7 +975,10 @@ function publicSlots(lobby) {
 
 function chooseVotedMap(lobby) {
   const counts = new Map();
-  for (const id of lobby.votes.values()) counts.set(id, (counts.get(id) || 0) + 1);
+  const occupied = lobbyOccupiedSeats(lobby);
+  for (const id of lobby.votes.values()) {
+    if (occupied <= mapPlayerLimit(id)) counts.set(id, (counts.get(id) || 0) + 1);
+  }
   const publicMaps = MAPS.filter(map => !map.secret);
   if (counts.size === 0) return publicMaps[Math.floor(Math.random() * publicMaps.length)] || MAPS[0];
   const max = Math.max(...counts.values());
@@ -1055,13 +1113,18 @@ function promoteHostIfStale(lobby, now = Date.now()) {
 }
 
 function ranked(lobby) {
-  return [...lobby.slots].sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths)
+  const limit = mapPlayerLimit(lobby.map);
+  const humans = lobby.slots.filter(slot => slot.human);
+  const bots = lobby.slots.filter(slot => !slot.human && !slot.reservedToken);
+  return [...humans, ...bots].slice(0, limit)
+    .sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths)
     .map(s => ({ id: s.id, name: s.name, team: s.team, score: s.score, kills: s.kills, deaths: s.deaths, color: s.color, human: s.human }));
 }
 
 function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
   if (!snapshot || typeof snapshot !== 'object') return null;
-  const players = Array.isArray(snapshot.players) ? snapshot.players.slice(0, SLOTS) : [];
+  const playerLimit = mapPlayerLimit(lobby.map);
+  const players = Array.isArray(snapshot.players) ? snapshot.players.slice(0, playerLimit) : [];
   const humanSlots = new Map(lobby.slots.filter(s => s.human).map(s => [s.id, s]));
   const seenIds = new Set();
   const sanitizedPlayers = players.map((p, i) => {
@@ -1103,6 +1166,10 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       warmup: -1,
     });
   }
+  // Missing canonical humans are restored above. Keep those before bots if a
+  // malformed host payload attempted to exceed this map's participant limit.
+  sanitizedPlayers.sort((a, b) => Number(b.human) - Number(a.human));
+  sanitizedPlayers.length = Math.min(playerLimit, sanitizedPlayers.length);
   const ranked = [...sanitizedPlayers].sort((a, b) =>
     b.score - a.score || b.kills - a.kills || a.deaths - b.deaths || a.id.localeCompare(b.id));
   const scores = snapshot.scores && typeof snapshot.scores === 'object'
