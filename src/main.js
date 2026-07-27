@@ -11,7 +11,7 @@ import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
 import {
   ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster,
-  updateWeaponWarmupVisual, nextLoadedWeaponAfter,
+  updateWeaponWarmupVisual, nextLoadedWeaponAfter, applyProjectileBounce,
 } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
@@ -1541,6 +1541,12 @@ function createMultiplayerTracerPool(scene, geometry, capacity = 64) {
       color: 0xffffff,
       generation: 0,
       _bloomRecursionCrossings: 0,
+      weapon: null,
+      weaponId: 'blaster',
+      shooterId: null,
+      projectileSize: 0.1,
+      bounced: 0,
+      bounceLimit: 0,
     });
   }
   pool.acquire = () => {
@@ -1567,6 +1573,8 @@ const mpTracerTo = new THREE.Vector3();
 const mpTracerDir = new THREE.Vector3();
 const mpTracerRight = new THREE.Vector3();
 const mpTracerUp = new THREE.Vector3();
+const mpTracerStep = new THREE.Vector3();
+const mpTracerProbe = new THREE.Vector3();
 const mpTracerWorldUp = new THREE.Vector3(0, 1, 0);
 
 function spawnMultiplayerTracer(ev) {
@@ -1578,6 +1586,7 @@ function spawnMultiplayerTracer(ev) {
   if (distSq < 0.01) return;
   const weaponId = WEAPONS[ev.weapon] ? ev.weapon : 'blaster';
   const weapon = WEAPONS[weaponId];
+  if (weapon.remoteBounce && ev.shooterId === multiplayer.slotId) return;
   const color = parseInt(String(ev.color || '#ffd23c').replace('#', ''), 16) || 0xffd23c;
   if (weapon.beam) {
     mpTracerDir.subVectors(to, from).normalize();
@@ -1592,18 +1601,20 @@ function spawnMultiplayerTracer(ev) {
     : mpTracerRight.crossVectors(dir, mpTracerWorldUp).normalize();
   const up = mpTracerUp.crossVectors(right, dir).normalize();
   const dist = Math.sqrt(distSq);
-  const life = Math.min(
-    weapon.tracerLife ?? 0.7,
-    Math.max(0.07, dist / Math.max(weapon.speed, 1)),
-  );
+  const life = weapon.remoteBounce
+    ? weapon.projectileLife
+    : Math.min(
+      weapon.tracerLife ?? 0.7,
+      Math.max(0.07, dist / Math.max(weapon.speed, 1)),
+    );
   for (let i = 0; i < pellets; i++) {
     const tracer = pool.acquire();
     const { mesh, mat } = tracer;
     mesh.geometry = G.projectiles.geoBall;
     if (weapon.disc) mesh.scale.set(weapon.size * 1.5, weapon.size * 0.35, weapon.size * 1.5);
     else mesh.scale.setScalar(Math.max(weapon.size, 0.1));
-    // Pooled tracers may previously have been a fifth-stage OUROBOROS cube.
-    // Replace the baseline every time so later shots never inherit its growth.
+    // Pooled tracers may previously have represented a differently sized shot.
+    // Replace the baseline every time so later shots never inherit its scale.
     mesh._recursiveBaseScale = mesh.scale.clone();
     tracer.to.copy(to);
     if (pellets > 1) {
@@ -1617,11 +1628,18 @@ function spawnMultiplayerTracer(ev) {
     tracer.life = life;
     tracer.impact = !!ev.hit;
     tracer.color = color;
+    tracer.weapon = weapon;
+    tracer.weaponId = weaponId;
+    tracer.shooterId = ev.shooterId || null;
+    tracer.projectileSize = weapon.size || 0.1;
+    tracer.bounced = 0;
+    tracer.bounceLimit = weapon.bounce || 0;
     tracer.generation++;
     tracer._bloomRecursionCrossings = 0;
     tracer.onRecursionCrossing = null;
     tracer.pos.copy(tracer.from);
-    tracer.vel.subVectors(tracer.to, tracer.from).multiplyScalar(1 / tracer.life);
+    if (weapon.remoteBounce) tracer.vel.copy(dir).multiplyScalar(weapon.speed);
+    else tracer.vel.subVectors(tracer.to, tracer.from).multiplyScalar(1 / tracer.life);
     if (G.world.prepareVisualProjectile?.(tracer) === false) {
       pool.release(tracer);
       continue;
@@ -1644,8 +1662,12 @@ function updateMultiplayerTracers(dt) {
     const tr = pool.active[i];
     const moveDt = Math.min(dt, Math.max(0, tr.life - tr.t));
     tr.t += moveDt;
+    if (tr.weapon?.remoteBounce && tr.weapon.gravity) {
+      tr.vel.y -= G.world.gravity * 0.9 * moveDt;
+    }
     let remaining = moveDt;
     let traversalFailed = false;
+    let detonated = false;
     let guard = 0;
     while (remaining > 1e-6 && !traversalFailed) {
       if (++guard > 512) {
@@ -1656,15 +1678,47 @@ function updateMultiplayerTracers(dt) {
       const stepDt = speed > 1e-6 ? Math.min(remaining, 0.5 / speed) : remaining;
       remaining -= stepDt;
       tr.previous.copy(tr.pos);
-      tr.pos.addScaledVector(tr.vel, stepDt);
-      if (G.world.postVisualProjectileMove?.(tr, tr.previous) === false) traversalFailed = true;
+      mpTracerStep.copy(tr.vel).multiplyScalar(stepDt);
+      tr.pos.add(mpTracerStep);
+      const traversalResult = G.world.postVisualProjectileMove?.(tr, tr.previous);
+      if (traversalResult === false) {
+        traversalFailed = true;
+        break;
+      }
+      if (Number.isFinite(traversalResult) && traversalResult !== 1) {
+        tr.previous.multiplyScalar(traversalResult);
+        mpTracerStep.multiplyScalar(traversalResult);
+      }
+      if (tr.weapon?.remoteBounce) {
+        const shooter = G.characters.find(ch => ch.id === tr.shooterId);
+        for (const ch of G.characters) {
+          if (!ch.alive || ch.id === tr.shooterId || (shooter && ch.team === shooter.team)) continue;
+          if (!G.projectiles.projectileTouchesCharacter(ch, tr)) continue;
+          detonated = true;
+          break;
+        }
+        if (detonated) break;
+        const radius = tr.projectileSize * 0.6;
+        if (pointHitsWorld(tr.pos, radius, G.world)) {
+          applyProjectileBounce(tr, tr.previous, mpTracerStep, mpTracerProbe, G.world);
+        }
+      }
     }
-    const done = traversalFailed || tr.t >= tr.life;
+    const done = traversalFailed || detonated || tr.t >= tr.life;
     const a = Math.min(1, tr.t / tr.life);
     tr.mesh.position.copy(tr.pos);
-    tr.mat.opacity = Math.max(0, 1 - a);
+    tr.mat.opacity = tr.weapon?.remoteBounce
+      ? Math.min(0.95, Math.max(0, (1 - a) * 4))
+      : Math.max(0, 1 - a);
     if (done) {
-      if (tr.impact) {
+      if (tr.weapon?.remoteBounce) {
+        sfx('explode', tr.pos);
+        G.fxPool.spawnPuff(
+          tr.pos,
+          tr.weapon.explosionColor ?? tr.color,
+          Math.max(3.2, (tr.weapon.splash || 0) * 0.75),
+        );
+      } else if (tr.impact) {
         G.fxPool.spawnPuff(
           tr.pos,
           tr.currentColor || tr.color,

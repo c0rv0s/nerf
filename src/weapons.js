@@ -7,7 +7,7 @@ import { sfx } from './audio.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
-export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'ouroboros', 'refractor', 'thunderbolt'];
+export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'loophole', 'refractor', 'thunderbolt'];
 
 export const WEAPONS = {
   blaster:    { name: 'SECRET SHOT',  slot: 1, dmg: 12, rof: 3.2, speed: 65,  spread: 0.012,
@@ -38,14 +38,14 @@ export const WEAPONS = {
                 bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
                 homingRange: 38, homingTurn: 0.58, childHomingRange: 34, childHomingTurn: 0.72,
                 trail: true, sound: 'hyper' },
-  ouroboros:  { name: 'OUROBOROS',      slot: 9, dmg: 35, rof: 0.55, speed: 0, spread: 0,
-                pellets: 1, ammo: 0, pickupAmmo: 5, color: 0x79ff16, size: 0.22,
-                beam: true, recursiveBeam: true, beamRange: 190, beamLife: 0.85, beamRetract: 0.36,
-                beamDamageInterval: 1.1, beamCoreRadius: 0.11, beamGlowRadius: 0.32,
-                recursionMaxCrossings: 5,
-                recursionDamageGain: 15, recursionSizeGain: 0.4,
-                recursionColors: [0x79ff16, 0xb8ff19, 0xf0ee1b, 0xffb018, 0xff6816, 0xff3016],
-                secretMapOnly: true, texture: 'infinite-bloom-surface', sound: 'hyper' },
+  loophole:   { name: 'LOOPHOLE',       slot: 5, dmg: 38, rof: 0.72, speed: 34, spread: 0.006,
+                pellets: 1, ammo: 0, pickupAmmo: 6, color: 0x79ff16, size: 0.52,
+                splash: 6.2, splashDmg: 38, gravity: true, trail: true, glowingProjectile: true,
+                bounce: Infinity, groundBounce: true, bounceRestitution: 0.46,
+                wallRestitution: 0.82, bounceFriction: 0.985, minBounceSpeed: 2.5,
+                projectileLife: 8, explodeOnExpiry: true,
+                explosionColor: 0x9dff24, remoteBounce: true,
+                secretMapOnly: true, texture: 'infinite-bloom-surface', sound: 'zooka' },
   refractor:  { name: 'REFRACTOR',     slot: 9, dmg: 22, rof: 0.5, speed: 0,   spread: 0,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff4ff7, size: 0.09,
                 beam: true, beamBounces: 8, beamRange: 130, beamLife: 2.8, beamRetract: 0.9,
@@ -68,7 +68,7 @@ export const WEAPON_FEEL = {
   whomper:    { recoil: 1.8,  camera: 0.02,  return: 6,  flash: 1.6 },
   hyper:      { recoil: 1.15, camera: 0.011, return: 9,  flash: 1.1 },
   parasite:   { recoil: 0.92, camera: 0.008, return: 10, flash: 1.05 },
-  ouroboros:  { recoil: 1.42, camera: 0.014, return: 7, flash: 1.55 },
+  loophole:   { recoil: 1.55, camera: 0.016, return: 7, flash: 1.55 },
   refractor:  { recoil: 0.7,  camera: 0.006, return: 8,  flash: 1.35 },
   thunderbolt:{ recoil: 1.45, camera: 0.016, return: 7,  flash: 1.65 },
 };
@@ -237,10 +237,9 @@ export function buildBlaster(id) {
     add(glow, C(0.115, 0.115, 0.035), 0, -0.13, 0.02, -0.16, HPI);
     add(glow, C(0.115, 0.115, 0.035), 0, 0.13, 0.02, -0.16, HPI);
     add(glow, B(0.14, 0.035, 0.35), 0, 0, 0.08, 0.18);
-  } else if (id === 'ouroboros') {
+  } else if (id === 'loophole') {
     // Nested square rails make the barrel look like a tiny arena containing
-    // itself. Acid-green energy moves through yellow and red as its projectile
-    // survives more recursive seams.
+    // itself. The wide cage muzzle launches the oversized recursive blast orb.
     add(geos, B(0.26, 0.3, 0.82), SHELL, 0, 0, 0.08);
     add(geos, B(0.18, 0.16, 0.42), DARK, 0, -0.06, 0.55);
     add(geos, B(0.13, 0.32, 0.17), DARK, 0, -0.25, 0.3, 0.28);
@@ -335,6 +334,44 @@ export function updateWeaponWarmupVisual(model, progress = -1, time = 0) {
   orb.rotation.y = time * 2.4;
   orb.rotation.z = time * 1.7;
   orb.visible = true;
+}
+
+export function applyProjectileBounce(projectile, previous, step, probe, world) {
+  const radius = (projectile.projectileSize || projectile.weapon.size) * 0.6;
+  projectile.pos.copy(previous);
+  let hitAxis = false;
+  const hitX = pointHitsWorld(
+    probe.set(previous.x + step.x, previous.y, previous.z), radius, world);
+  const hitY = pointHitsWorld(
+    probe.set(previous.x, previous.y + step.y, previous.z), radius, world);
+  const hitZ = pointHitsWorld(
+    probe.set(previous.x, previous.y, previous.z + step.z), radius, world);
+  if (projectile.weapon.groundBounce) {
+    const wallRestitution = projectile.weapon.wallRestitution ?? 0.82;
+    if (hitX) { projectile.vel.x *= -wallRestitution; hitAxis = true; }
+    if (hitY) {
+      projectile.vel.y *= -(projectile.weapon.bounceRestitution ?? 0.5);
+      const minBounceSpeed = projectile.weapon.minBounceSpeed || 0;
+      if (Math.abs(projectile.vel.y) < minBounceSpeed) {
+        projectile.vel.y = Math.sign(projectile.vel.y || -step.y || 1) * minBounceSpeed;
+      }
+      const friction = projectile.weapon.bounceFriction ?? 0.985;
+      projectile.vel.x *= friction;
+      projectile.vel.z *= friction;
+      hitAxis = true;
+    }
+    if (hitZ) { projectile.vel.z *= -wallRestitution; hitAxis = true; }
+    if (!hitAxis) projectile.vel.negate().multiplyScalar(wallRestitution);
+  } else {
+    if (hitX) { projectile.vel.x *= -1; hitAxis = true; }
+    if (hitY) { projectile.vel.y *= -1; hitAxis = true; }
+    if (hitZ) { projectile.vel.z *= -1; hitAxis = true; }
+    if (!hitAxis) projectile.vel.negate(); // cornered — bounce straight back
+    projectile.vel.multiplyScalar(0.95);
+  }
+  projectile.bounced++;
+  if (projectile.weapon.bounceDmgGain) projectile.damage += projectile.weapon.bounceDmgGain;
+  if (projectile.homingTurnGain) projectile.homingTurn += projectile.homingTurnGain;
 }
 
 export class ProjectileSystem {
@@ -626,7 +663,7 @@ export class ProjectileSystem {
 
   spawnVisualBeam(origin, dir, weapon) {
     const owner = { damageMult: 0, team: '__remote_visual__', isPlayer: false };
-    this.spawnBeam(owner, origin, dir, weapon, { id: `visual-${this.nextShotId++}`, owner, weaponId: 'ouroboros', kills: 0 }, true);
+    this.spawnBeam(owner, origin, dir, weapon, { id: `visual-${this.nextShotId++}`, owner, weaponId: 'beam', kills: 0 }, true);
   }
 
   spawnProjectile(owner, origin, dir, weapon, opts = {}) {
@@ -1020,18 +1057,10 @@ export class ProjectileSystem {
         }
         if (!dead && pointHitsWorld(p.pos, (p.projectileSize || p.weapon.size) * 0.6, this.world)) {
           if (p.bounceLimit && p.bounced < p.bounceLimit) {
-            // Sidewinder disc: reflect off whichever axis is blocked
-            const r = (p.projectileSize || p.weapon.size) * 0.6;
-            p.pos.copy(prev);
-            let hitAxis = false;
-            if (pointHitsWorld(probe.set(prev.x + step.x, prev.y, prev.z), r, this.world)) { p.vel.x *= -1; hitAxis = true; }
-            if (pointHitsWorld(probe.set(prev.x, prev.y + step.y, prev.z), r, this.world)) { p.vel.y *= -1; hitAxis = true; }
-            if (pointHitsWorld(probe.set(prev.x, prev.y, prev.z + step.z), r, this.world)) { p.vel.z *= -1; hitAxis = true; }
-            if (!hitAxis) p.vel.negate(); // cornered — bounce straight back
-            p.vel.multiplyScalar(0.95);
-            p.bounced++;
-            if (p.weapon.bounceDmgGain) p.damage += p.weapon.bounceDmgGain;
-            if (p.homingTurnGain) p.homingTurn += p.homingTurnGain;
+            // Reflect off whichever axis is blocked. Sidewinder keeps its
+            // near-elastic ricochet; Loophole uses a lower vertical response
+            // and preserves planar speed so its orb skips along the ground.
+            applyProjectileBounce(p, prev, step, probe, this.world);
             this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.3);
           } else {
             dead = true;
@@ -1042,7 +1071,7 @@ export class ProjectileSystem {
 
       if (dead) {
         if (p.weapon.lightning && p.life > 0) this.dischargeThunderbolt(p, p.chainPrimary, characters);
-        if (p.weapon.splash && p.life > 0) this.explode(p);
+        if (p.weapon.splash && (p.life > 0 || p.weapon.explodeOnExpiry)) this.explode(p);
         else if (p.life > 0) this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.5);
         this.scene.remove(p.mesh);
         this.projectiles.splice(pi, 1);
@@ -1054,7 +1083,11 @@ export class ProjectileSystem {
 
   explode(p) {
     sfx('explode', p.pos);
-    this.fx.spawnPuff(p.pos, 0xffa030, Math.max(3.2, p.weapon.splash * 0.75));
+    this.fx.spawnPuff(
+      p.pos,
+      p.weapon.explosionColor ?? 0xffa030,
+      Math.max(3.2, p.weapon.splash * 0.75),
+    );
     for (const ch of this.fx.characters()) {
       if (!ch.alive || ch.team === p.owner.team && ch !== p.owner) continue;
       if (ch === p.owner) continue; // no self-splash damage (keeps zooka fun)

@@ -3517,10 +3517,11 @@ function buildInfiniteBloom(scene) {
   const INNER_SCALE = 1 / PORTAL_SCALE;
   const DEEP_SCALE = INNER_SCALE * INNER_SCALE;
   const ULTRA_DEEP_SCALE = DEEP_SCALE * INNER_SCALE;
+  const FAR_OUTER_SCALE = PORTAL_SCALE * PORTAL_SCALE;
   const OUTER_VISUAL_HALF = ARENA_HALF * PORTAL_SCALE;
   const FLOOR_BAND_COUNT = 4;
-  const FOG_EDGE_MARGIN = 10;
-  const FOG_FADE_SPAN = 82;
+  const FOG_EDGE_LEAD = 10;
+  const NEXT_OUTER_PEEK = (OUTER_VISUAL_HALF - ARENA_HALF) * 0.2;
   const FOG_REVEAL_RATE = 1.6;
   const STRUCTURE_DETAIL_SCALE = 1.35;
   const sceneRootsBeforeBuild = new Set(scene.children);
@@ -3532,7 +3533,7 @@ function buildInfiniteBloom(scene) {
     playerSpeed: 12.2,
     waypointLinkDist: 19,
     waypointLinkDy: 5.4,
-    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'ouroboros'],
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'loophole', 'hyper', 'parasite', 'whomper'],
   });
   world.playerCount = 4;
   world.recursivePortal = {
@@ -3541,14 +3542,14 @@ function buildInfiniteBloom(scene) {
     scale: PORTAL_SCALE,
     innerScale: INNER_SCALE,
     deepScale: DEEP_SCALE,
-    maxProjectileCrossings: 5,
+    maxProjectileCrossings: 9,
   };
 
   scene.background = new THREE.Color(0x050800);
-  // This baseline is refined from the live camera in beforeRender. The fade
-  // always reaches full opacity just before the nearest edge of the rendered
-  // outer copy, so its finite boundary can never give away the illusion.
-  scene.fog = new THREE.Fog(0x070a00, 96, 178);
+  // This baseline is refined from the live camera in beforeRender. The full
+  // adjacent outer edge stays readable and the fade continues a short way
+  // into the following recursion instead of concealing the first copy early.
+  scene.fog = new THREE.Fog(0x070a00, 150, 190);
   baseLighting(scene, 0xb6ff38, 0x3a0800, [34, 92, -46], 64);
 
   // Everything parented to this root is one canonical copy of the arena.
@@ -3560,7 +3561,9 @@ function buildInfiniteBloom(scene) {
 
   // A dark, tiled crowd of circuit-built faces surrounds the arena. Mirrored
   // repeat is intentional here: this is an endless material, not a mural.
-  const skyMap = bloomTexture('infinite-bloom-sky-eyeless', 2, 1);
+  // The source is square, so 6x3 tiles keep each repeat roughly square in
+  // angular space on this 2:1 sphere while tripling the apparent detail.
+  const skyMap = bloomTexture('infinite-bloom-sky-eyeless', 6, 3);
   let sky = null;
   let skySparks = null;
   if (skyMap) {
@@ -3599,7 +3602,9 @@ function buildInfiniteBloom(scene) {
     state.map.offset.set(column * 0.25, 1 - (row + 1) * 0.25);
   };
   if (eyeAtlasSource) {
-    const eyeCount = 30;
+    const horizonEyeCount = 30;
+    const overheadEyeCount = 6;
+    const eyeCount = horizonEyeCount + overheadEyeCount;
     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
     for (let i = 0; i < eyeCount; i++) {
       const map = eyeAtlasSource.clone();
@@ -3617,7 +3622,12 @@ function buildInfiniteBloom(scene) {
         fog: false,
       });
       const sprite = new THREE.Sprite(material);
-      const yNorm = THREE.MathUtils.clamp(-0.62 + 1.24 * (i / (eyeCount - 1)) + (eyeRnd() - 0.5) * 0.055, -0.68, 0.68);
+      const isOverhead = i >= horizonEyeCount;
+      const bandIndex = isOverhead ? i - horizonEyeCount : i;
+      const bandProgress = bandIndex / ((isOverhead ? overheadEyeCount : horizonEyeCount) - 1);
+      const yNorm = isOverhead
+        ? THREE.MathUtils.clamp(0.76 + 0.18 * bandProgress + (eyeRnd() - 0.5) * 0.035, 0.74, 0.95)
+        : THREE.MathUtils.clamp(-0.62 + 1.24 * bandProgress + (eyeRnd() - 0.5) * 0.055, -0.68, 0.68);
       const longitude = i * goldenAngle + (eyeRnd() - 0.5) * 0.24;
       const radial = Math.sqrt(1 - yNorm * yNorm);
       const radius = 272 + eyeRnd() * 5;
@@ -3627,7 +3637,7 @@ function buildInfiniteBloom(scene) {
         Math.cos(longitude) * radial * radius,
       );
       const baseSize = 17 + eyeRnd() * 11;
-      const size = baseSize * (1 + eyeRnd() * 2);
+      const size = baseSize * (1 + eyeRnd() * 2) * 1.3;
       sprite.scale.set(size, size, 1);
       material.rotation = (eyeRnd() - 0.5) * 0.18;
       eyeField.add(sprite);
@@ -3965,20 +3975,23 @@ function buildInfiniteBloom(scene) {
     repeatedLayers.push({ root, nodes, scale, mirrorActors });
     return root;
   };
-  // One extra miniature copy is normally below the visible detail threshold,
-  // but keeps the center filled while the post-crossing fog reveals the newly
-  // adjacent inner layer.
+  // One extra copy on either side of the immediately adjacent layers keeps
+  // both sightline ends recursive. The far outer copy is atmospheric only:
+  // fog reveals just its inward edge beyond the complete playable outer copy.
+  const farOuterArenaRoot = addRepeatedLayer('infinite-bloom-far-outer-arena', FAR_OUTER_SCALE, false);
   const outerArenaRoot = addRepeatedLayer('infinite-bloom-outer-arena', PORTAL_SCALE, true);
   const innerArenaRoot = addRepeatedLayer('infinite-bloom-inner-arena', INNER_SCALE, true);
   const deepArenaRoot = addRepeatedLayer('infinite-bloom-deep-arena', DEEP_SCALE, false);
   const ultraDeepArenaRoot = addRepeatedLayer('infinite-bloom-ultra-deep-arena', ULTRA_DEEP_SCALE, false);
   world.recursiveVisual = {
     canonicalRoot: arenaRoot,
+    farOuterRoot: farOuterArenaRoot,
     outerRoot: outerArenaRoot,
     innerRoot: innerArenaRoot,
     deepRoot: deepArenaRoot,
     ultraDeepRoot: ultraDeepArenaRoot,
     layers: repeatedLayers,
+    farOuterScale: FAR_OUTER_SCALE,
     outerScale: PORTAL_SCALE,
     innerScale: INNER_SCALE,
     deepScale: DEEP_SCALE,
@@ -4423,14 +4436,15 @@ function buildInfiniteBloom(scene) {
       }
     }
     // Linear scene fog is camera-relative, but its far plane must also follow
-    // the square recursion. Moving toward a seam shortens the view just enough
-    // to keep the nearest finite outer edge hidden; after the coordinate
-    // rebase, it eases outward and reveals what reads as the next repetition.
+    // the square recursion. Start fading just before the adjacent outer edge,
+    // keep that boundary legible, and finish roughly twenty percent of one
+    // outer-ring span into the next copy. This preserves the useful large
+    // target layer without letting the extra recursion dominate the scene.
     if (camera && scene.fog) {
       const cameraRadius = Math.max(Math.abs(camera.position.x), Math.abs(camera.position.z));
       const edgeDistance = OUTER_VISUAL_HALF - cameraRadius;
-      const targetFar = THREE.MathUtils.clamp(edgeDistance - FOG_EDGE_MARGIN, 54, 178);
-      const targetNear = Math.max(24, targetFar - FOG_FADE_SPAN);
+      const targetNear = Math.max(54, edgeDistance - FOG_EDGE_LEAD);
+      const targetFar = edgeDistance + NEXT_OUTER_PEEK;
       const now = world._t || 0;
       const dt = world._bloomFogT == null
         ? 1 / 60
@@ -4487,9 +4501,9 @@ function buildInfiniteBloom(scene) {
     }
     return { enter, exit };
   };
-  // Hitscan beams need the exact next chart boundary. Returning the similarity
-  // transform lets OUROBOROS draw one connected segment on each recursion
-  // level instead of pretending to be a fast projectile or a flat portal.
+  // Recursive hitscan effects need the exact next chart boundary. Returning
+  // the similarity transform lets them draw one connected segment on each
+  // recursion level instead of pretending the seam is a flat portal.
   world.recursiveRayBoundary = (origin, dir, maxDistance = Infinity) => {
     const candidates = [];
     const inner = rayCubeInterval(origin, dir, PORTAL_HALF);
@@ -4564,7 +4578,9 @@ function buildInfiniteBloom(scene) {
     const factor = canonicalFactor(projectile.pos);
     if (factor === 1) return 1;
     projectile._bloomRecursionCrossings = (projectile._bloomRecursionCrossings || 0) + 1;
-    if (projectile._bloomRecursionCrossings > world.recursivePortal.maxProjectileCrossings) {
+    const maxCrossings = projectile.weapon?.maxRecursiveCrossings ??
+      world.recursivePortal.maxProjectileCrossings;
+    if (projectile._bloomRecursionCrossings > maxCrossings) {
       projectile.life = 0;
       return false;
     }
@@ -4587,7 +4603,9 @@ function buildInfiniteBloom(scene) {
     const factor = canonicalFactor(visual.pos);
     if (factor === 1) return 1;
     visual._bloomRecursionCrossings = (visual._bloomRecursionCrossings || 0) + 1;
-    if (visual._bloomRecursionCrossings > world.recursivePortal.maxProjectileCrossings) {
+    const maxCrossings = visual.weapon?.maxRecursiveCrossings ??
+      world.recursivePortal.maxProjectileCrossings;
+    if (visual._bloomRecursionCrossings > maxCrossings) {
       return false;
     }
     visual.onRecursionCrossing?.(visual._bloomRecursionCrossings, factor);
@@ -4606,7 +4624,7 @@ function buildInfiniteBloom(scene) {
     // At most one correction is expected (muzzles are only ~1m long), but the
     // bounded loop also makes split projectiles safe if a future weapon emits
     // them farther from its owner. Spawn normalization is not travel, so it
-    // does not consume one of the projectile's five visible seam crossings.
+    // does not consume one of the projectile's visible seam crossings.
     for (let i = 0; i < 2; i++) {
       const factor = canonicalFactor(projectile.pos);
       if (factor === 1) return true;
@@ -4719,16 +4737,14 @@ function buildInfiniteBloom(scene) {
   pk(world, 'star', -14, 5.8, -14, { hidden: true });
   pk(world, 'weapon', -18, 0.2, -27, { weapon: 'scatter' });
   pk(world, 'weapon', 18, 0.2, 27, { weapon: 'pulsar' });
-  pk(world, 'weapon', 27, 0.2, -18, { weapon: 'zooka' });
+  pk(world, 'weapon', 27, 0.2, -18, { weapon: 'loophole' });
   pk(world, 'weapon', -27, 0.2, 18, { weapon: 'parasite' });
-  pk(world, 'weapon', 0, 4.2, 20, { weapon: 'ouroboros' });
   pk(world, 'weapon', 5, 4.2, 27, { weapon: 'hyper' });
   pk(world, 'weapon', -5, 4.2, -27, { weapon: 'whomper' });
   pk(world, 'ammo', -13, 0.2, -27, { weapon: 'scatter' });
   pk(world, 'ammo', 13, 0.2, 27, { weapon: 'pulsar' });
-  pk(world, 'ammo', 27, 0.2, -13, { weapon: 'zooka' });
+  pk(world, 'ammo', 27, 0.2, -13, { weapon: 'loophole' });
   pk(world, 'ammo', -27, 0.2, 13, { weapon: 'parasite' });
-  pk(world, 'ammo', 0, 4.2, -20, { weapon: 'ouroboros' });
   pk(world, 'ammo', -5, 4.2, 26, { weapon: 'hyper' });
   pk(world, 'ammo', 5, 4.2, -26, { weapon: 'whomper' });
   pk(world, 'health', -10, 0.2, -10);
