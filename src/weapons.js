@@ -857,13 +857,19 @@ export class ProjectileSystem {
       return null;
     }
 
-    // The visual head is centered at 90% of the character's height. Keep the
-    // hit zone local to that sphere so a shot grazing the upper torso does not
-    // become a headshot merely because the main body collider is generous.
+    // The generous body capsule reaches in front of the visible head, so a
+    // point-only head test would resolve a head-bound dart as a body hit first.
+    // Give the actual beige head sphere priority along the dart's travel ray.
+    // Its centre and radius mirror buildBotMesh()'s visual head exactly.
     const headCenter = ch.pos.clone().addScaledVector(up, ch.height * 0.9 * visualScale);
-    const headRadius = Math.min(scaledRadius, ch.height * 0.17 * visualScale);
-    return { headshot: p.weapon.headshotDmg != null &&
-      p.pos.distanceToSquared(headCenter) < (headRadius + projectileRadius) ** 2 };
+    const headRadius = ch.height * visualScale / 6;
+    const hitRadius = headRadius + projectileRadius;
+    const travelSq = p.vel.lengthSq();
+    const ahead = headCenter.sub(p.pos).dot(p.vel) / travelSq;
+    const closestPoint = p.pos.clone().addScaledVector(p.vel, Math.max(0, ahead));
+    const headshot = p.weapon.headshotDmg != null &&
+      closestPoint.distanceToSquared(headCenter) < hitRadius ** 2;
+    return { headshot };
   }
 
   shootableTargets() {
