@@ -188,6 +188,9 @@ export class HUD {
   awardsSummary(awards = {}) {
     const parts = [];
     const labels = {
+      headshot: 'Headshot',
+      headshot2: 'Double HS', headshot3: 'Triple HS', headshot4: 'Quad HS',
+      headshot5: 'Penta HS', headshot6: 'Hexa HS', headshot7: 'Septuple HS',
       multi2: 'Double', multi3: 'Triple', multi4: 'Quad', multi5: 'Penta', multi6: 'Hexa', multi7: 'Septuple',
       oneShot2: '1S2K', oneShot3: '1S3K', oneShot4: '1S4K', oneShot5: '1S5K', oneShot6: '1S6K', oneShot7: '1S7K',
     };
@@ -231,6 +234,23 @@ export class HUD {
     const div = document.createElement('div');
     div.innerHTML = `<span style="color:${killer.color || '#ccc'}">${killer.name}</span>
       🎯 <span style="color:${victim.color || '#ccc'}">${victim.name}</span>`;
+    this.pushFeed(div);
+  }
+
+  awardFeed(player, text, color = '#ffd23c') {
+    const div = document.createElement('div');
+    div.style.borderRightColor = color;
+    const who = document.createElement('span');
+    who.style.color = player.color || '#ccc';
+    who.textContent = player.name || 'Player';
+    const award = document.createElement('span');
+    award.style.color = color;
+    award.textContent = text;
+    div.append(who, document.createTextNode(' ★ '), award);
+    this.pushFeed(div);
+  }
+
+  pushFeed(div) {
     this.els.feed.prepend(div);
     while (this.els.feed.children.length > 5) this.els.feed.lastChild.remove();
     setTimeout(() => div.remove(), 5000);

@@ -41,6 +41,14 @@ const KILL_AWARD_LABELS = {
   6: 'HEXA KILL',
   7: 'SEPTUPLE KILL',
 };
+const HEADSHOT_AWARD_LABELS = {
+  2: 'DOUBLE HEADSHOT',
+  3: 'TRIPLE HEADSHOT',
+  4: 'QUAD HEADSHOT',
+  5: 'PENTA HEADSHOT',
+  6: 'HEXA HEADSHOT',
+  7: 'SEPTUPLE HEADSHOT',
+};
 
 const FFA_COLORS = [
   '#5cb3ff', '#ff5c5c', '#6dff6d', '#ff8ce6', '#4dffd2', '#ff9c40', '#b06dff', '#e8e8f0',
@@ -1510,8 +1518,13 @@ function applyMultiplayerSnapshot(snap) {
       hud.killfeed(killer, victim);
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
-    if (ev.type === 'award' && ev.playerId === multiplayer.slotId) {
-      hud.award(ev.title, ev.sub || '', ev.color || '#ffd23c');
+    if (ev.type === 'award') {
+      const player = G.characters.find(c => characterNetworkId(c) === ev.playerId) ||
+        (ev.playerId === multiplayer.slotId ? G.player : { name: 'Player', color: '#ccc' });
+      hud.awardFeed(player, ev.title, ev.color || '#ffd23c');
+      if (ev.playerId === multiplayer.slotId) {
+        hud.award(ev.title, ev.sub || '', ev.color || '#ffd23c');
+      }
     }
   }
   reconcileMultiplayerDrops(snap.drops || []);
@@ -2511,6 +2524,7 @@ function awardKey(prefix, count) {
 function incrementAward(ch, key, title, sub, color = '#ffd23c') {
   const awards = ensureAwards(ch);
   awards[key] = (awards[key] || 0) + 1;
+  hud.awardFeed(ch, title, color);
   if (ch.isPlayer) hud.award(title, sub, color);
   if (G.multiplayerHost) {
     queueMultiplayerEvent({
@@ -2522,6 +2536,27 @@ function incrementAward(ch, key, title, sub, color = '#ffd23c') {
       color,
     });
   }
+}
+
+function recordHeadshotAwards(attacker, target, ctx = {}) {
+  incrementAward(attacker, 'headshot', 'HEADSHOT', 'Hyperstrike precision hit', '#ff3050');
+
+  const shotGroup = ctx.shotGroup;
+  if (!shotGroup || shotGroup.owner !== attacker) return;
+  shotGroup.headshotTargets ||= new Set();
+  const previousCount = shotGroup.headshotTargets.size;
+  shotGroup.headshotTargets.add(target);
+  if (shotGroup.headshotTargets.size === previousCount) return;
+
+  const count = Math.min(MAX_KILL_AWARD, shotGroup.headshotTargets.size);
+  if (count < 2) return;
+  incrementAward(
+    attacker,
+    awardKey('headshot', count),
+    HEADSHOT_AWARD_LABELS[count] || `${count}X HEADSHOT`,
+    `${count} enemies with one dart`,
+    '#ff3050',
+  );
 }
 
 function recordKillAwards(attacker, target, ctx = {}) {
@@ -2556,6 +2591,9 @@ function recordKillAwards(attacker, target, ctx = {}) {
 function awardsLine(awards = {}) {
   const labels = [
     ['headshot', 'Headshot'],
+    ['headshot2', 'Double Headshot'], ['headshot3', 'Triple Headshot'],
+    ['headshot4', 'Quad Headshot'], ['headshot5', 'Penta Headshot'],
+    ['headshot6', 'Hexa Headshot'], ['headshot7', 'Septuple Headshot'],
     ['multi2', 'Double Kill'], ['multi3', 'Triple Kill'], ['multi4', 'Quad Kill'],
     ['multi5', 'Penta Kill'], ['multi6', 'Hexa Kill'], ['multi7', 'Septuple Kill'],
     ['oneShot2', 'One Shot, Two Kills'], ['oneShot3', 'One Shot, Three Kills'],
@@ -2579,7 +2617,7 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
   target.lastAttacker = attacker;  // getting shot reveals the shooter to bots
   target.alertTimer = 4;
   if (ctx.headshot && attacker && attacker !== target) {
-    incrementAward(attacker, 'headshot', 'HEADSHOT', 'Hyperstrike precision hit', '#ff3050');
+    recordHeadshotAwards(attacker, target, ctx);
   }
   if (G.multiplayerHost && attacker && attacker !== target) {
     queueMultiplayerEvent({
