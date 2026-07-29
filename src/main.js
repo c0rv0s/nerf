@@ -8,7 +8,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MAPS, buildAtrium, buildHallOfFame, texturesReady } from './maps.js';
 import { buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ, pointHitsWorld } from './engine.js';
 import { Player } from './player.js';
-import { Bot, BOT_NAMES, buildBotMesh } from './bots.js';
+import { Bot, BOT_NAMES, buildBotMesh, syncJetpackVisual } from './bots.js';
 import {
   ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster,
   updateWeaponWarmupVisual, nextLoadedWeaponAfter, applyProjectileBounce,
@@ -124,13 +124,29 @@ const ua = navigator.userAgent || '';
 const isSafari = /\bSafari\//.test(ua) && !/\b(Chrome|Chromium|CriOS|FxiOS|Edg|OPR)\//.test(ua);
 const searchParams = new URLSearchParams(location.search);
 const requestedQuality = searchParams.get('quality');
-const lowQuality = requestedQuality === 'low';
+const GRAPHICS_PRESETS = {
+  low: { label: 'Low', pixelRatioCap: 1, shadows: false, postprocessing: false, tier: 'low' },
+  standard: { label: 'Medium', pixelRatioCap: 1.15, shadows: true, postprocessing: true, tier: 'standard' },
+  high: { label: 'High', pixelRatioCap: 1.35, shadows: true, postprocessing: true, tier: 'high' },
+};
+const validGraphicsModes = new Set(['auto', ...Object.keys(GRAPHICS_PRESETS)]);
+// A URL parameter remains useful for automated testing, but ordinary launches
+// always start in Auto. Manual pause-menu choices intentionally last only for
+// this page session so the next launch detects the machine again.
+let graphicsMode = validGraphicsModes.has(requestedQuality) ? requestedQuality : 'auto';
+const initialGraphicsPreset = GRAPHICS_PRESETS[graphicsMode] || null;
+const TARGET_FPS = 90;
+const FPS_FLOOR = 80;
+const TARGET_FRAME_MS = 1000 / TARGET_FPS;
+const FLOOR_FRAME_MS = 1000 / FPS_FLOOR;
 const performanceProfile = {
   safari: isSafari,
-  pixelRatioCap: lowQuality ? 1 : 1.35,
-  msaaSamples: lowQuality ? 0 : 2,
-  shadows: !lowQuality,
-  postprocessing: !lowQuality,
+  pixelRatioCap: 1.35,
+  msaaSamples: 2,
+  shadows: true,
+  postprocessing: true,
+  targetFps: TARGET_FPS,
+  fpsFloor: FPS_FLOOR,
 };
 
 function setGameVolume(value, persist = true) {
@@ -168,8 +184,8 @@ const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 // Post-processing multiplies per-pixel cost — cap the internal resolution.
 // (1.35× CSS pixels + 2× MSAA looks nearly identical to 2×/4× at half the GPU load.)
-renderer.setPixelRatio(Math.min(devicePixelRatio, performanceProfile.pixelRatioCap));
-renderer.shadowMap.enabled = performanceProfile.shadows;
+renderer.setPixelRatio(Math.min(devicePixelRatio, initialGraphicsPreset?.pixelRatioCap ?? performanceProfile.pixelRatioCap));
+renderer.shadowMap.enabled = initialGraphicsPreset?.shadows ?? performanceProfile.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.02;
@@ -179,12 +195,12 @@ const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 900);
 // Post-processing: MSAA render target → bloom on emissives → tonemap/output
 const composer = new EffectComposer(renderer,
   new THREE.WebGLRenderTarget(1, 1, {
-    samples: performanceProfile.msaaSamples,
+    samples: initialGraphicsPreset?.postprocessing === false ? 0 : performanceProfile.msaaSamples,
     type: performanceProfile.postprocessing ? THREE.HalfFloatType : THREE.UnsignedByteType,
   }));
 const renderPass = new RenderPass(new THREE.Scene(), camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.58, 0.94);
-bloomPass.enabled = performanceProfile.postprocessing;
+bloomPass.enabled = initialGraphicsPreset?.postprocessing ?? performanceProfile.postprocessing;
 composer.addPass(renderPass);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -202,60 +218,131 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-// Keep the intended 1.35x render target on capable hardware. If the game is
-// below frame budget for a sustained stretch, lower only internal resolution
-// in small steps; recover it gradually once the pressure clears. This leaves
-// shadows, bloom, physics, and input behavior intact, and ignores one-off
-// hitches such as loading a map or opening a menu.
-const adaptiveRender = { scale: 1, slowT: 0, clearT: 0, cooldown: 0 };
-function applyAdaptiveRenderScale() {
-  const ratio = Math.min(devicePixelRatio, performanceProfile.pixelRatioCap * adaptiveRender.scale);
-  if (Math.abs(renderer.getPixelRatio() - ratio) < 0.005) return;
-  renderer.setPixelRatio(ratio);
-  composer.setPixelRatio?.(ratio);
-  resize();
+// Hold a 90 fps work budget on capable/high-refresh hardware, with 80 fps as
+// the hard floor. Frame cadence catches real GPU pressure on 90-144 Hz panels;
+// measured main-thread work keeps the policy meaningful on a 60 Hz display,
+// where requestAnimationFrame cannot physically report 90 fps. Quality changes
+// are deliberately gradual so a map load or a single GC hitch cannot trigger a
+// visible downgrade.
+const adaptiveRender = {
+  scale: 1,
+  detectedScale: 1,
+  slowT: 0,
+  clearT: 0,
+  cooldown: 0,
+  fastestFrameMs: Infinity,
+  sampleT: 0,
+  visualTier: initialGraphicsPreset?.tier ?? 'high',
+};
+const perfTelemetry = { frameMs: [], workMs: [], maxSamples: 360 };
+
+function presentationTier() {
+  const preset = GRAPHICS_PRESETS[graphicsMode];
+  if (preset) return preset.tier;
+  if (adaptiveRender.scale < 0.76) return 'low';
+  if (adaptiveRender.scale < 0.92) return 'standard';
+  return 'high';
 }
-function resetAdaptiveRenderScale() {
-  adaptiveRender.scale = 1;
+
+function syncWorldVisualQuality() {
+  const tier = presentationTier();
+  adaptiveRender.visualTier = tier;
+  G?.world?.setVisualQuality?.(tier);
+}
+
+function applyAdaptiveRenderScale() {
+  const preset = GRAPHICS_PRESETS[graphicsMode];
+  const ratioCap = preset?.pixelRatioCap ?? performanceProfile.pixelRatioCap * adaptiveRender.scale;
+  const ratio = Math.min(devicePixelRatio, ratioCap);
+  if (Math.abs(renderer.getPixelRatio() - ratio) >= 0.005) {
+    renderer.setPixelRatio(ratio);
+    composer.setPixelRatio?.(ratio);
+    resize();
+  }
+  syncWorldVisualQuality();
+  syncRenderQuality();
+  updateGraphicsUI();
+}
+function resetAdaptiveRenderScale({ preserveDetection = false } = {}) {
+  adaptiveRender.scale = preserveDetection ? adaptiveRender.detectedScale : 1;
+  if (!preserveDetection) adaptiveRender.detectedScale = 1;
   adaptiveRender.slowT = 0;
   adaptiveRender.clearT = 0;
   adaptiveRender.cooldown = 0;
+  adaptiveRender.fastestFrameMs = Infinity;
+  adaptiveRender.sampleT = 0;
+  perfTelemetry.frameMs.length = 0;
+  perfTelemetry.workMs.length = 0;
   applyAdaptiveRenderScale();
 }
-function updateAdaptiveRenderScale(frameMs) {
-  if (lowQuality) return;
+function recordPerformanceSample(frameMs, workMs) {
+  perfTelemetry.frameMs.push(frameMs);
+  perfTelemetry.workMs.push(workMs);
+  if (perfTelemetry.frameMs.length > perfTelemetry.maxSamples) perfTelemetry.frameMs.shift();
+  if (perfTelemetry.workMs.length > perfTelemetry.maxSamples) perfTelemetry.workMs.shift();
+}
+function updateAdaptiveRenderScale(frameMs, workMs) {
+  // Auto is a lobby-time hardware calibration, not a live dynamic-quality
+  // system. Once an arena starts, keep its detected scale and visual tier fixed
+  // for the whole match so ordinary combat spikes cannot alternate Medium/High.
+  if (graphicsMode !== 'auto' || (G && !G.atrium)) return;
   const dt = Math.min(0.1, Math.max(0, frameMs / 1000));
   adaptiveRender.cooldown = Math.max(0, adaptiveRender.cooldown - dt);
-  if (frameMs > 25) {
+  adaptiveRender.sampleT += dt;
+  if (frameMs > 1 && frameMs < adaptiveRender.fastestFrameMs) adaptiveRender.fastestFrameMs = frameMs;
+  // Once each sampling window is established, let the minimum drift upward so
+  // moving the tab between displays eventually re-detects the new refresh rate.
+  if (adaptiveRender.sampleT > 8) {
+    adaptiveRender.fastestFrameMs = Math.min(frameMs, adaptiveRender.fastestFrameMs * 1.08);
+    adaptiveRender.sampleT = 0;
+  }
+  const highRefreshCadence = adaptiveRender.fastestFrameMs < FLOOR_FRAME_MS * 1.08;
+  const cadenceOverBudget = highRefreshCadence && frameMs > FLOOR_FRAME_MS * 1.08;
+  const workOverBudget = workMs > FLOOR_FRAME_MS;
+  const cadenceClear = !highRefreshCadence || frameMs < TARGET_FRAME_MS * 1.08;
+  const workClear = workMs < TARGET_FRAME_MS * 0.78;
+  if (cadenceOverBudget || workOverBudget) {
     adaptiveRender.slowT += dt;
     adaptiveRender.clearT = 0;
-  } else if (frameMs < 18) {
+  } else if (cadenceClear && workClear) {
     adaptiveRender.clearT += dt;
     adaptiveRender.slowT = Math.max(0, adaptiveRender.slowT - dt * 0.5);
   } else {
     adaptiveRender.slowT = Math.max(0, adaptiveRender.slowT - dt * 0.25);
     adaptiveRender.clearT = 0;
   }
-  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= 2 && adaptiveRender.scale > 0.76) {
-    adaptiveRender.scale = Math.max(0.76, adaptiveRender.scale - 0.08);
+  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= 0.75 && adaptiveRender.scale > 0.68) {
+    adaptiveRender.scale = Math.max(0.68, adaptiveRender.scale - 0.08);
+    adaptiveRender.detectedScale = adaptiveRender.scale;
     adaptiveRender.slowT = 0;
-    adaptiveRender.cooldown = 1;
+    adaptiveRender.cooldown = 0.65;
     applyAdaptiveRenderScale();
-  } else if (!adaptiveRender.cooldown && adaptiveRender.clearT >= 6 && adaptiveRender.scale < 1) {
+  } else if (!adaptiveRender.cooldown && adaptiveRender.clearT >= 5 && adaptiveRender.scale < 1) {
     adaptiveRender.scale = Math.min(1, adaptiveRender.scale + 0.04);
+    adaptiveRender.detectedScale = adaptiveRender.scale;
     adaptiveRender.clearT = 0;
-    adaptiveRender.cooldown = 1;
+    adaptiveRender.cooldown = 0.8;
     applyAdaptiveRenderScale();
   }
 }
 
 function usesLightRenderPath() {
-  return lowQuality;
+  const preset = GRAPHICS_PRESETS[graphicsMode];
+  if (preset) return !preset.postprocessing;
+  return presentationTier() === 'low';
 }
 
 function syncRenderQuality() {
-  renderer.shadowMap.enabled = !usesLightRenderPath();
-  bloomPass.enabled = performanceProfile.postprocessing && !usesLightRenderPath();
+  const preset = GRAPHICS_PRESETS[graphicsMode];
+  renderer.shadowMap.enabled = preset?.shadows ?? presentationTier() !== 'low';
+  bloomPass.enabled = (preset?.postprocessing ?? presentationTier() !== 'low') && !usesLightRenderPath();
+  const samples = usesLightRenderPath() ? 0 : performanceProfile.msaaSamples;
+  for (const target of [composer.renderTarget1, composer.renderTarget2]) {
+    if (!target || target.samples === samples) continue;
+    target.samples = samples;
+    target.dispose();
+  }
+  syncWorldVisualQuality();
 }
 
 const hud = new HUD();
@@ -309,12 +396,13 @@ function syncRecursivePlayerAvatar(player) {
   let state = player._recursiveAvatarState;
   if (!state) {
     const color = colorHex(player);
-    const { group, body, head, visor } = buildBotMesh(color);
+    const { group, body, head, visor, jetpack } = buildBotMesh(color);
     group.name = 'infinite-bloom-local-player-source';
     state = {
       root: group,
       body,
       visor,
+      jetpack,
       ownedMeshes: [body, head, visor],
       color,
       weaponSource: null,
@@ -350,6 +438,7 @@ function syncRecursivePlayerAvatar(player) {
     state.gun.position.set(0.32, 1.05, 0.25);
     state.gun.rotation.set(0, Math.PI, 0);
   }
+  syncJetpackVisual(player, 0, state.jetpack);
 
   state.root.visible = player.alive !== false;
   state.root.position.copy(player.pos);
@@ -600,6 +689,7 @@ function startAtrium() {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildAtrium(scene);
+  renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   syncAtriumModeSign(world);
   world.spawnsAll = [...world.spawns.ffa];
@@ -678,6 +768,7 @@ function startHallOfFame() {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildHallOfFame(scene);
+  renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   world.spawnsAll = [...world.spawns.ffa];
   buildWaypointGraph(world);
@@ -742,7 +833,7 @@ function startHallOfFame() {
 
 function startMatch(mapDef, mode = 'ffa') {
   teardown();
-  resetAdaptiveRenderScale();
+  resetAdaptiveRenderScale({ preserveDetection: true });
   camera.fov = 75;
   camera.near = 0.1;
   camera.far = 900;
@@ -750,6 +841,7 @@ function startMatch(mapDef, mode = 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   bindWorldPresentation(world, false);
   world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
@@ -895,7 +987,7 @@ function addTeamMarker(ch) {
 
 function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   teardown();
-  resetAdaptiveRenderScale();
+  resetAdaptiveRenderScale({ preserveDetection: true });
   camera.fov = 75;
   camera.near = 0.1;
   camera.far = 900;
@@ -903,6 +995,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   bindWorldPresentation(world, true);
   world.spawnsAll = uniqueSpawnPoints([...world.spawns.blue, ...world.spawns.red, ...(world.spawns.ffa || [])]);
@@ -1140,6 +1233,7 @@ function updateRemoteHuman(ch, dt, fire) {
   ch.yaw = smoothNetworkAngle(ch.yaw || 0, input.yaw || 0, turnA);
   ch.pitch += ((input.pitch || 0) - (ch.pitch || 0)) * turnA;
   if (input.up) ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
+  if (ch.jetpack) ch.jetpack.active = !!input.jetpackActive;
   if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
     if (input.weapon !== ch.weapon) ch.cancelWeaponWarmup();
     ch.weapon = input.weapon;
@@ -1170,6 +1264,7 @@ function updateRemoteHuman(ch, dt, fire) {
   if (ch.mesh) {
     ch.syncGunModel?.();
     ch.syncWeaponWarmupVisual?.();
+    syncJetpackVisual(ch, dt);
     ch.mesh.position.copy(ch.pos);
     ch.mesh.rotation.y = ch.yaw || 0;
   }
@@ -1259,7 +1354,7 @@ function syncRemoteSlotGun(remote) {
 function ensureRemoteSlot(state) {
   let remote = G.remoteSlots.get(state.id);
   if (remote) return remote;
-  const { group } = buildBotMesh(parseInt(String(state.color || '#ffffff').replace('#', ''), 16));
+  const { group, jetpack } = buildBotMesh(parseInt(String(state.color || '#ffffff').replace('#', ''), 16));
   group.visible = false;
   G.scene.add(group);
   remote = {
@@ -1272,6 +1367,7 @@ function ensureRemoteSlot(state) {
     targetPos: new THREE.Vector3(),
     up: new THREE.Vector3(0, 1, 0),
     mesh: group,
+    jetpackVisual: jetpack,
     team: state.team || state.id,
     radius: 0.45,
     height: 1.8,
@@ -1362,6 +1458,7 @@ function applyMultiplayerSnapshot(snap) {
       remote.warmupAudioStop = null;
     }
     remote.weapon = nextWeapon;
+    remote.jetpack = state.jetpack ? { active: !!state.jetpackActive } : null;
     syncRemoteSlotGun(remote);
     remote.yaw = state.yaw || 0;
     if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
@@ -1509,6 +1606,7 @@ function updateRemoteSlots(dt) {
     else remote.pos.lerp(remote.targetPos, a);
     remote.mesh.position.copy(remote.pos);
     remote.mesh.rotation.y = remote.yaw || 0;
+    syncJetpackVisual(remote, dt);
     updateWeaponWarmupVisual(
       remote._gun,
       remote.warmupProgress,
@@ -2007,12 +2105,13 @@ function makePodiumRankSprite(rank, color) {
 }
 
 function buildPodiumAvatar(ch, place) {
-  const { group } = buildBotMesh(colorHex(ch));
+  const { group, jetpack } = buildBotMesh(colorHex(ch));
   const gun = buildBlaster(ch.weapon || 'blaster');
   gun.scale.setScalar(0.55);
   gun.position.set(0.32, 1.05, 0.25);
   gun.rotation.y = Math.PI;
   group.add(gun);
+  syncJetpackVisual(ch, 0, jetpack);
   group.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
   group.scale.setScalar(place === 0 ? 1.18 : 1.05);
   return group;
@@ -2674,25 +2773,60 @@ const musicSlider = document.getElementById('musicslider');
 const musicValue = document.getElementById('musicvalue');
 const effectsSlider = document.getElementById('effectsslider');
 const effectsValue = document.getElementById('effectsvalue');
+const graphicsButtons = [...document.querySelectorAll('[data-graphics]')];
+const graphicsDetail = document.getElementById('graphicsdetail');
 const highScoreForm = document.getElementById('highscoreform');
+
+function updateGraphicsUI() {
+  const tier = presentationTier();
+  for (const button of graphicsButtons) {
+    const active = button.dataset.graphics === graphicsMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  if (!graphicsDetail) return;
+  const tierLabel = tier === 'standard' ? 'Medium' : tier[0].toUpperCase() + tier.slice(1);
+  setText(graphicsDetail, graphicsMode === 'auto'
+    ? (G && !G.atrium
+      ? `Auto · locked ${tierLabel} for this match · detected in Atrium`
+      : `Auto · calibrating ${tierLabel} in Atrium · targeting ${TARGET_FPS} FPS`)
+    : `Locked ${GRAPHICS_PRESETS[graphicsMode].label} · automatic scaling disabled`);
+}
+
+function setGraphicsMode(mode, announce = true) {
+  if (!validGraphicsModes.has(mode)) return;
+  graphicsMode = mode;
+  // A mid-match return to Auto reuses the last Atrium result. Manual previewing
+  // must not erase that detection, and Auto must not begin calibrating against
+  // a transient firefight.
+  resetAdaptiveRenderScale({ preserveDetection: !!G && !G.atrium });
+  if (announce && G && !G.atrium) {
+    const label = mode === 'auto' ? `AUTO · ${presentationTier().toUpperCase()}` : GRAPHICS_PRESETS[mode].label.toUpperCase();
+    hud.message(`GRAPHICS: ${label}`, mode === 'low' ? '#7fd0ff' : '#ffd23c');
+  }
+}
+
 setGameVolume(gameVolume, false);
 setMusicMix(musicMix, false);
 setEffectsMix(effectsMix, false);
+updateGraphicsUI();
 updateTrackTitle();
 
 function setPauseScoreboardLayer(on) {
   const board = hud.els.board;
   const parent = on ? clickcatch : hud.els.hud;
   if (board.parentElement !== parent) parent.appendChild(board);
+  board.classList.toggle('pause-scoreboard', on);
+  if (!on) board.scrollTop = 0;
 }
 
 function requestPointerLock() {
   if (!canvas.requestPointerLock) return;
   try {
     const request = canvas.requestPointerLock({ unadjustedMovement: true });
-    request?.catch?.(() => canvas.requestPointerLock());
+    request?.catch?.(() => canvas.requestPointerLock()?.catch?.(() => {}));
   } catch {
-    canvas.requestPointerLock();
+    canvas.requestPointerLock()?.catch?.(() => {});
   }
 }
 
@@ -2719,7 +2853,7 @@ document.addEventListener('pointerlockchange', () => {
     const board = hud.els.board;
     setPauseScoreboardLayer(showPause);
     setStyle(board, 'display', showPause ? 'block' : 'none');
-    setStyle(board, 'top', showPause ? '27%' : '');    // scoreboard on top, resume mid, quit bottom
+    setStyle(board, 'top', ''); // pause layout is class-driven so its scroll region remains viewport-safe
     setStyle(board, 'zIndex', showPause ? 4 : '');     // above the pause overlay
     setStyle(board, 'background', showPause ? 'rgba(10,12,30,.96)' : ''); // solid — the tint washed it out
     if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
@@ -2738,6 +2872,9 @@ volumeControl.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeSlider.addEventListener('input', () => setGameVolume(Number(volumeSlider.value) / 100));
 musicSlider.addEventListener('input', () => setMusicMix(Number(musicSlider.value) / 100));
 effectsSlider.addEventListener('input', () => setEffectsMix(Number(effectsSlider.value) / 100));
+for (const button of graphicsButtons) {
+  button.addEventListener('click', () => setGraphicsMode(button.dataset.graphics));
+}
 highScoreForm?.addEventListener('submit', submitHighScore);
 highScoreForm?.addEventListener('pointerdown', (e) => e.stopPropagation());
 quitBtn.addEventListener('click', (e) => {
@@ -2816,8 +2953,8 @@ document.addEventListener('keydown', (e) => {
   const mapWeapons = G.world?.availableWeapons || WEAPON_ORDER;
   if (slot >= 0 && slot < mapWeapons.length) G.player.switchWeapon(mapWeapons[slot]);
   if (e.code === 'KeyG') { // glow toggle for slower machines
-    if (!performanceProfile.postprocessing) {
-      hud.message('GLOW OFF FOR SAFARI PERFORMANCE', '#7fd0ff');
+    if (usesLightRenderPath()) {
+      hud.message('GLOW IS DISABLED ON LOW GRAPHICS', '#7fd0ff');
     } else {
       bloomPass.enabled = !bloomPass.enabled;
       hud.message(bloomPass.enabled ? 'GLOW ON' : 'GLOW OFF', '#7fd0ff');
@@ -2954,6 +3091,7 @@ function tick(now) {
   const frameMs = Math.max(0, now - G.lastT);
   const dt = Math.min(0.05, frameMs / 1000);
   G.lastT = now;
+  const workStartedAt = performance.now();
   if (!G.paused) {
     G.lastStepWall = now;
     step(dt);
@@ -2962,7 +3100,11 @@ function tick(now) {
   updateUnderwaterFx(dt);
   updateFoliageFx(dt);
   renderFrame();
-  if (!G.paused && !G.over) updateAdaptiveRenderScale(frameMs);
+  const workMs = performance.now() - workStartedAt;
+  if (!G.paused && !G.over) {
+    recordPerformanceSample(frameMs, workMs);
+    updateAdaptiveRenderScale(frameMs, workMs);
+  }
   if (G.pendingHall) {
     startHallOfFame();
     return;
@@ -2994,7 +3136,7 @@ function renderFrame() {
     pickups: G.pickups?.items,
     lowQuality: usesLightRenderPath(),
   });
-  if (performanceProfile.postprocessing && !usesLightRenderPath()) composer.render();
+  if (!usesLightRenderPath()) composer.render();
   else renderer.render(renderPass.scene, camera);
 }
 
@@ -3374,6 +3516,7 @@ function prewarmEventVisuals() {
   const warmPos = camera.position.clone().addScaledVector(direction, 6);
   const warmMeteors = [];
   const warmComets = [];
+  let pickupProbes = null;
   if (G.world.meteorShower) {
     const meteor = acquireMeteorVisual();
     meteor.group.position.copy(warmPos);
@@ -3383,6 +3526,19 @@ function prewarmEventVisuals() {
     meteor.innerTail.material.opacity = 0.01;
     meteor.warning.material.opacity = 0.01;
     warmMeteors.push(meteor);
+
+    const weapons = (G.world.availableWeapons || WEAPON_ORDER)
+      .filter(id => id !== 'blaster' && WEAPONS[id]);
+    const rewardDefs = [
+      ...weapons.map(weapon => ({ kind: 'weapon', weapon })),
+      ...['health', 'shield', 'speed', 'jetpack', 'silver', 'gold'].map(kind => ({ kind })),
+    ];
+    pickupProbes = G.pickups?.createDropPrewarmGroup?.(rewardDefs) || null;
+    if (pickupProbes?.children.length) {
+      pickupProbes.position.copy(warmPos);
+      pickupProbes.scale.setScalar(0.01);
+      G.scene.add(pickupProbes);
+    }
   }
   if (G.world.cometField) {
     const count = G.world.cometField.maxActive ?? 2;
@@ -3398,6 +3554,7 @@ function prewarmEventVisuals() {
   if (warmMeteors.length || warmComets.length) renderer.compile(G.scene, camera);
   for (const meteor of warmMeteors) releaseMeteorVisual(meteor);
   for (const comet of warmComets) releaseCometVisual(comet);
+  if (pickupProbes) G.scene.remove(pickupProbes);
 }
 
 function retireComet(comet) {
@@ -3753,6 +3910,8 @@ function serializeCharacter(ch, i) {
     respawn: G.respawnTimers.get(ch) || 0,
     weapon: ch.weapon || 'blaster',
     warmup: warming ? Math.max(0, Math.min(1, 1 - ch.warmupT / weapon.warmup)) : -1,
+    jetpack: !!ch.jetpack,
+    jetpackActive: !!ch.jetpack?.active,
   };
 }
 
@@ -3846,8 +4005,47 @@ window.__bench = (frames = 60) => {
     drawCalls: calls, triangles: tris, bloom: bloomPass.enabled, safari: performanceProfile.safari,
     shadows: renderer.shadowMap.enabled, pixelRatio: renderer.getPixelRatio(),
     adaptiveRenderScale: adaptiveRender.scale,
-    postprocessing: performanceProfile.postprocessing && !usesLightRenderPath(),
+    postprocessing: !usesLightRenderPath(),
     lightRenderPath: usesLightRenderPath() };
+};
+window.__perf = () => {
+  const percentile = (values, p) => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    return +sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))].toFixed(2);
+  };
+  const averageFrameMs = perfTelemetry.frameMs.length
+    ? perfTelemetry.frameMs.reduce((sum, value) => sum + value, 0) / perfTelemetry.frameMs.length
+    : null;
+  return {
+    targetFps: TARGET_FPS,
+    hardFloorFps: FPS_FLOOR,
+    sampledFps: averageFrameMs ? +(1000 / averageFrameMs).toFixed(1) : null,
+    p95FrameMs: percentile(perfTelemetry.frameMs, 0.95),
+    p95WorkMs: percentile(perfTelemetry.workMs, 0.95),
+    samples: perfTelemetry.frameMs.length,
+    highRefreshCadence: adaptiveRender.fastestFrameMs < FLOOR_FRAME_MS * 1.08,
+    pixelRatio: renderer.getPixelRatio(),
+    adaptiveRenderScale: adaptiveRender.scale,
+    detectedAutoScale: adaptiveRender.detectedScale,
+    visualTier: adaptiveRender.visualTier,
+    graphicsMode,
+    autoQualityLocked: graphicsMode === 'auto' && !!G && !G.atrium,
+  };
+};
+window.__mapVisualIssues = () => G?.world?.visualSurfaceIssues ?? [];
+window.__mapVisualAudit = () => {
+  const boxes = G?.world?._visualBoxes ?? [];
+  return {
+    unresolved: G?.world?.visualSurfaceIssues?.length ?? 0,
+    wallFeatureOverlaps: G?.world?.wallFeatureIssues?.length ?? 0,
+    resolvedConflicts: G?.world?.visualSurfaceConflicts?.length ?? 0,
+    maxDepthLane: boxes.length ? Math.max(...boxes.map(box => box.depthLane ?? 0)) : 0,
+  };
+};
+window.__setGraphics = mode => {
+  setGraphicsMode(mode, false);
+  return window.__perf();
 };
 window.__step = (seconds) => {
   if (!G) return 'no game';

@@ -7,6 +7,7 @@ import { aiTex } from './maps.js';
 const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45, jetpack: 60 };
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const weaponPickupModels = {};
+const temporaryPickupModels = {};
 
 function weaponPickupModel(id) {
   // Geometry construction and merging is expensive enough to show up as an
@@ -22,6 +23,39 @@ function pickupUp(def) {
 
 function pickupFloatHeight(def) {
   return def.kind === 'points' ? 1.75 : 1.0;
+}
+
+function temporaryPickupKey(def) {
+  if (def.kind === 'weapon' || def.kind === 'drop') return `weapon:${def.weapon}`;
+  if (def.kind === 'ammo') return `ammo:${def.weapon}`;
+  if (def.kind === 'points') return `points:${def.amount}`;
+  if (def.kind === 'gold' || def.kind === 'silver') {
+    return `${def.kind}:${def.quietWaterMedal === true ? 'quiet' : 'bright'}`;
+  }
+  return def.kind;
+}
+
+function removePointLights(root) {
+  const lights = [];
+  root.traverse(child => { if (child.isPointLight) lights.push(child); });
+  for (const light of lights) light.removeFromParent();
+}
+
+function rememberTemporaryPickupModel(def, source = null) {
+  const key = temporaryPickupKey(def);
+  if (!temporaryPickupModels[key]) {
+    // Temporary drops are short-lived and can appear during combat. Reuse all
+    // geometry/materials, and never let a new drop change the scene light
+    // count: that would force every lit Olympus material to recompile.
+    const model = source ? source.clone(true) : makeMesh(def);
+    removePointLights(model);
+    temporaryPickupModels[key] = model;
+  }
+  return temporaryPickupModels[key];
+}
+
+function temporaryPickupMesh(def) {
+  return rememberTemporaryPickupModel(def).clone(true);
 }
 
 function placePickupMesh(mesh, def, t = 0, phase = 0) {
@@ -215,6 +249,9 @@ export class PickupManager {
     this.hooks = hooks;
     this.items = defs.map(def => {
       const mesh = makeMesh(def);
+      // Existing map pickups seed the transient cache for free. Olympus
+      // already contains every meteor reward, so impact-time work is clones.
+      rememberTemporaryPickupModel(def, mesh);
       placePickupMesh(mesh, def);
       scene.add(mesh);
       // Detach lights from the toggled group: removing a light from the render
@@ -238,10 +275,18 @@ export class PickupManager {
   // Drop a one-off pickup into the world (e.g. a dead player's weapon).
   // No respawn — despawns after 30s if nobody grabs it.
   addDrop(def) {
-    const mesh = makeMesh(def);
+    const mesh = temporaryPickupMesh(def);
     placePickupMesh(mesh, def);
     this.scene.add(mesh);
     this.items.push({ def, mesh, lights: [], active: true, temporary: true, ttl: 30, timer: 0, phase: Math.random() * 6 });
+  }
+
+  // Build the CPU-side templates and return visible shader probes for the
+  // caller's normal pre-match renderer.compile pass.
+  createDropPrewarmGroup(defs) {
+    const group = new THREE.Group();
+    for (const def of defs) group.add(temporaryPickupMesh(def));
+    return group;
   }
 
   update(dt, characters) {

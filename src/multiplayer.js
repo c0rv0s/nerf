@@ -122,6 +122,7 @@ class MultiplayerClient extends EventTarget {
       aim: { x: aim.x, y: aim.y, z: aim.z },
       firing: !!player.firing,
       weapon: player.weapon || 'blaster',
+      jetpackActive: !!player.jetpack?.active,
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
       vel: player.vel ? { x: player.vel.x, y: player.vel.y, z: player.vel.z } : { x: 0, y: 0, z: 0 },
       alive: player.alive !== false,

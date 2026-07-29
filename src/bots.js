@@ -1,11 +1,82 @@
 // NPC bots: waypoint patrol + combat (strafe, aim with error, fire).
 // On low-gravity maps they make ballistic jumps between waypoints.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from './weapons.js';
 import { aiTex } from './maps.js';
 import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
+
+const coloredPart = (geometry, color, position, rotation = null) => {
+  const geo = geometry.clone();
+  const matrix = new THREE.Matrix4().compose(
+    position,
+    new THREE.Quaternion().setFromEuler(rotation || new THREE.Euler()),
+    new THREE.Vector3(1, 1, 1),
+  );
+  geo.applyMatrix4(matrix);
+  const rgb = new THREE.Color(color);
+  const colors = new Float32Array(geo.attributes.position.count * 3);
+  for (let i = 0; i < geo.attributes.position.count; i++) rgb.toArray(colors, i * 3);
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geo;
+};
+
+// A single vertex-colored shell keeps an equipped jetpack to one idle draw
+// call per character. The second merged mesh is only visible while thrusting.
+const JETPACK_SHELL_GEOMETRY = mergeGeometries([
+  coloredPart(new THREE.BoxGeometry(0.46, 0.68, 0.2), 0x24364e, new THREE.Vector3(0, 1.02, -0.42)),
+  coloredPart(new THREE.BoxGeometry(0.12, 0.84, 0.08), 0x53dff2, new THREE.Vector3(0, 1.02, -0.545)),
+  coloredPart(new THREE.CylinderGeometry(0.13, 0.14, 0.68, 8), 0xf17b2c, new THREE.Vector3(-0.25, 1, -0.48)),
+  coloredPart(new THREE.CylinderGeometry(0.13, 0.14, 0.68, 8), 0xf17b2c, new THREE.Vector3(0.25, 1, -0.48)),
+  coloredPart(new THREE.CylinderGeometry(0.105, 0.13, 0.16, 8), 0xe5b84c, new THREE.Vector3(-0.25, 1.42, -0.48)),
+  coloredPart(new THREE.CylinderGeometry(0.105, 0.13, 0.16, 8), 0xe5b84c, new THREE.Vector3(0.25, 1.42, -0.48)),
+  coloredPart(new THREE.CylinderGeometry(0.11, 0.075, 0.19, 8), 0x536372, new THREE.Vector3(-0.25, 0.57, -0.48)),
+  coloredPart(new THREE.CylinderGeometry(0.11, 0.075, 0.19, 8), 0x536372, new THREE.Vector3(0.25, 0.57, -0.48)),
+  coloredPart(new THREE.BoxGeometry(0.16, 0.12, 0.08), 0xe5b84c, new THREE.Vector3(-0.3, 0.72, -0.56), new THREE.Euler(0, 0, 0.28)),
+  coloredPart(new THREE.BoxGeometry(0.16, 0.12, 0.08), 0xe5b84c, new THREE.Vector3(0.3, 0.72, -0.56), new THREE.Euler(0, 0, -0.28)),
+], false);
+const JETPACK_FLAME_GEOMETRY = mergeGeometries([
+  coloredPart(new THREE.ConeGeometry(0.075, 0.34, 7), 0x70efff,
+    new THREE.Vector3(-0.25, 0.32, -0.48), new THREE.Euler(0, 0, Math.PI)),
+  coloredPart(new THREE.ConeGeometry(0.075, 0.34, 7), 0x70efff,
+    new THREE.Vector3(0.25, 0.32, -0.48), new THREE.Euler(0, 0, Math.PI)),
+], false);
+const JETPACK_SHELL_MATERIAL = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.38, metalness: 0.42,
+});
+const JETPACK_FLAME_MATERIAL = new THREE.MeshBasicMaterial({ vertexColors: true });
+
+function buildJetpackVisual() {
+  const root = new THREE.Group();
+  root.name = 'equipped-jetpack';
+  root.visible = false;
+  const shell = new THREE.Mesh(JETPACK_SHELL_GEOMETRY, JETPACK_SHELL_MATERIAL);
+  shell.castShadow = true;
+  const flames = new THREE.Mesh(JETPACK_FLAME_GEOMETRY, JETPACK_FLAME_MATERIAL);
+  flames.name = 'jetpack-exhaust';
+  flames.visible = false;
+  flames.renderOrder = 2;
+  root.add(shell, flames);
+  root._flames = flames;
+  root._phase = Math.random() * Math.PI * 2;
+  return root;
+}
+
+export function syncJetpackVisual(character, dt = 0, visual = character?.jetpackVisual) {
+  if (!visual) return;
+  const equipped = !!character?.jetpack && character.alive !== false;
+  visual.visible = equipped;
+  if (!equipped) return;
+  const flames = visual._flames;
+  if (!flames) return;
+  const thrusting = !!character.jetpack.active;
+  flames.visible = thrusting;
+  if (!thrusting) return;
+  visual._phase += dt * 24;
+  flames.scale.set(1, 0.82 + Math.sin(visual._phase) * 0.14, 1);
+}
 
 export function buildBotMesh(color) {
   const g = new THREE.Group();
@@ -18,9 +89,10 @@ export function buildBotMesh(color) {
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.2),
     skin(0x203040, { emissive: color, emissiveIntensity: 0.6 }));
   visor.position.set(0, 1.66, 0.22);
+  const jetpack = buildJetpackVisual();
   for (const m of [body, head, visor]) m.castShadow = true;
-  g.add(body, head, visor);
-  return { group: g, body, head, visor };
+  g.add(body, head, visor, jetpack);
+  return { group: g, body, head, visor, jetpack };
 }
 
 export class Bot {
@@ -81,8 +153,9 @@ export class Bot {
     this._jetpackThinkT = 0;
     this._jetpackWants = false;
 
-    const { group } = buildBotMesh(color);
+    const { group, jetpack } = buildBotMesh(color);
     this.mesh = group;
+    this.jetpackVisual = jetpack;
     this._gunId = null;
     this._gun = null;
     scene.add(this.mesh);
@@ -780,6 +853,7 @@ export class Bot {
     // --- visuals ---
     this.syncGunModel();
     this.syncWeaponWarmupVisual();
+    syncJetpackVisual(this, dt);
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = this.aimYaw;
 

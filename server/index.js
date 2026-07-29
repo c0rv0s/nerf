@@ -80,6 +80,7 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.mp3': 'audio/mpeg',
@@ -480,6 +481,7 @@ function handleMessage(conn, msg) {
       aim: sanitizeUnitVec(msg.aim, slot.aim || { x: 0, y: 0, z: -1 }),
       firing: !!msg.firing,
       weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
+      jetpackActive: msg.jetpackActive === true,
       pos,
       vel: sanitizeVel(msg.vel),
       alive: slot.alive !== false,
@@ -1153,6 +1155,8 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       respawn: Math.max(0, Math.min(RESPAWN_TIME + 1, finite(p.respawn, 0))),
       weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
       warmup: weapon === 'whomper' ? Math.max(-1, Math.min(1, finite(p.warmup, -1))) : -1,
+      jetpack: p.jetpack === true,
+      jetpackActive: p.jetpack === true && p.jetpackActive === true,
     };
   }).filter(Boolean);
   for (const [id, slot] of humanSlots) {
@@ -1163,7 +1167,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       up: slot.up || { x: 0, y: 1, z: 0 }, hp: slot.hp ?? 100, alive: slot.alive !== false,
       score: slot.score || 0, kills: slot.kills || 0, deaths: slot.deaths || 0,
       awards: {}, respawn: slot.respawn || 0, weapon: 'blaster',
-      warmup: -1,
+      warmup: -1, jetpack: false, jetpackActive: false,
     });
   }
   // Missing canonical humans are restored above. Keep those before bots if a

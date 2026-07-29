@@ -452,6 +452,24 @@ export class ProjectileSystem {
     return { t, normal: (tmin > 0.03 ? nmin : nmax).clone() };
   }
 
+  raySphere(origin, dir, sphere, maxDist) {
+    // All rayWorld callers pass a normalized direction. Solve the quadratic
+    // in its reduced form and choose the exit root when a shot begins inside
+    // a sphere, matching rayBox's inside-solid behaviour.
+    const offset = origin.clone().sub(sphere.center);
+    const projected = offset.dot(dir);
+    const discriminant = projected * projected
+      - (offset.lengthSq() - sphere.radius * sphere.radius);
+    if (discriminant < 0) return null;
+    const root = Math.sqrt(discriminant);
+    const near = -projected - root;
+    const far = -projected + root;
+    const t = near > 0.03 ? near : far;
+    if (t <= 0.03 || t > maxDist) return null;
+    const point = origin.clone().addScaledVector(dir, t);
+    return { t, normal: point.sub(sphere.center).normalize() };
+  }
+
   rayShell(origin, dir, box, maxDist) {
     const normal = shellInnerNormal(box, this.world, new THREE.Vector3());
     if (!normal) return null;
@@ -474,8 +492,11 @@ export class ProjectileSystem {
   rayWorld(origin, dir, maxDist) {
     let best = null;
     for (const c of this.world.colliders || []) {
-      if (c.type !== 'box') continue;
-      const hit = c.shell ? this.rayShell(origin, dir, c, maxDist) : this.rayBox(origin, dir, c, maxDist);
+      let hit = null;
+      if (c.type === 'box') hit = c.shell
+        ? this.rayShell(origin, dir, c, maxDist)
+        : this.rayBox(origin, dir, c, maxDist);
+      else if (c.type === 'sphere') hit = this.raySphere(origin, dir, c, maxDist);
       if (hit && (!best || hit.t < best.t)) best = hit;
     }
     return best;
