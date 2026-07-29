@@ -2555,6 +2555,7 @@ function recordKillAwards(attacker, target, ctx = {}) {
 
 function awardsLine(awards = {}) {
   const labels = [
+    ['headshot', 'Headshot'],
     ['multi2', 'Double Kill'], ['multi3', 'Triple Kill'], ['multi4', 'Quad Kill'],
     ['multi5', 'Penta Kill'], ['multi6', 'Hexa Kill'], ['multi7', 'Septuple Kill'],
     ['oneShot2', 'One Shot, Two Kills'], ['oneShot3', 'One Shot, Three Kills'],
@@ -2577,6 +2578,9 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
   target.hp -= dmg;
   target.lastAttacker = attacker;  // getting shot reveals the shooter to bots
   target.alertTimer = 4;
+  if (ctx.headshot && attacker && attacker !== target) {
+    incrementAward(attacker, 'headshot', 'HEADSHOT', 'Hyperstrike precision hit', '#ff3050');
+  }
   if (G.multiplayerHost && attacker && attacker !== target) {
     queueMultiplayerEvent({
       type: 'damage',

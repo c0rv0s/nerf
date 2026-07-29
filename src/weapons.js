@@ -25,14 +25,14 @@ export const WEAPONS = {
                 texture: 'sidewinder', sound: 'disc' },
   zooka:      { name: 'BALLZOOKA',    slot: 5, dmg: 42, rof: 0.8, speed: 38,  spread: 0.005,
                 pellets: 1, ammo: 0, pickupAmmo: 6, color: 0xffe040, size: 0.35,
-                splash: 5.5, splashDmg: 32, gravity: true, trail: true, texture: 'zooka', sound: 'zooka' },
+                splash: 5.5, splashDmg: 38, gravity: true, trail: true, texture: 'zooka', sound: 'zooka' },
   whomper:    { name: 'WHOMPER',      slot: 8, dmg: 135, rof: 0.33, speed: 42, spread: 0.004,
                 pellets: 1, ammo: 0, pickupAmmo: 4, color: 0xff4fa0, size: 0.84,
                 warmup: 3, splash: 10, splashDmg: 85, flatSplash: true, splashExcludesDirect: true,
                 glowingProjectile: true, texture: 'whomper', sound: 'whomp' },
   hyper:      { name: 'HYPERSTRIKE',  slot: 6, dmg: 68, rof: 0.7, speed: 420, spread: 0.001,
                 pellets: 1, ammo: 0, pickupAmmo: 5, color: 0xff3050, size: 0.12,
-                pierce: 2, trail: true, texture: 'hyper', sound: 'hyper' },
+                pierce: 2, headshotDmg: 175, trail: true, texture: 'hyper', sound: 'hyper' },
   parasite:   { name: 'PARASITE',      slot: 7, dmg: 24, rof: 0.95, speed: 130, spread: 0.006,
                 pellets: 1, ammo: 0, pickupAmmo: 8, color: 0x00f5d4, size: 0.14,
                 bounce: 1, split: 6, childDmg: 16, childSpeed: 105, childBounce: 2, texture: 'parasite',
@@ -842,18 +842,28 @@ export class ProjectileSystem {
     return samples.some(p => this.distancePointToSegment(p, a, b) < r);
   }
 
-  projectileTouchesCharacter(ch, p) {
+  projectileHitCharacter(ch, p) {
     const up = ch.up || new THREE.Vector3(0, 1, 0);
     const visualScale = this.world.characterVisualScale?.(ch) || 1;
     const scaledRadius = (ch.radius || 0.45) * visualScale;
+    const projectileRadius = (p.projectileSize || p.weapon.size || 0.12) * 0.6;
     const foot = ch.pos.clone().addScaledVector(up, scaledRadius);
     const headHeight = Math.max(
       (ch.height - (ch.radius || 0.45)) * visualScale,
       ch.height * 0.55 * visualScale,
     );
     const head = ch.pos.clone().addScaledVector(up, headHeight);
-    return this.distancePointToSegment(p.pos, foot, head) <
-      scaledRadius + (p.projectileSize || p.weapon.size || 0.12) * 0.6 + 0.35;
+    if (this.distancePointToSegment(p.pos, foot, head) >= scaledRadius + projectileRadius + 0.35) {
+      return null;
+    }
+
+    // The visual head is centered at 90% of the character's height. Keep the
+    // hit zone local to that sphere so a shot grazing the upper torso does not
+    // become a headshot merely because the main body collider is generous.
+    const headCenter = ch.pos.clone().addScaledVector(up, ch.height * 0.9 * visualScale);
+    const headRadius = Math.min(scaledRadius, ch.height * 0.17 * visualScale);
+    return { headshot: p.weapon.headshotDmg != null &&
+      p.pos.distanceToSquared(headCenter) < (headRadius + projectileRadius) ** 2 };
   }
 
   shootableTargets() {
@@ -1044,10 +1054,15 @@ export class ProjectileSystem {
         for (const ch of characters) {
           if (!ch.alive || ch === p.owner || ch.team === p.owner.team ||
               p.pierced?.has(ch) || p.ignore?.has(ch) || this.hitLimitReached(p, ch)) continue;
-          if (this.projectileTouchesCharacter(ch, p)) {
+          const hit = this.projectileHitCharacter(ch, p);
+          if (hit) {
             if (p.limitedTarget === ch) p.limitedTargetHits.count++;
             p.directTarget = ch;
-            this.fx.onDamage(ch, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+            const baseDamage = hit.headshot ? p.weapon.headshotDmg : p.damage;
+            this.fx.onDamage(ch, baseDamage * p.owner.damageMult, p.owner, {
+              shotGroup: p.shotGroup,
+              headshot: hit.headshot,
+            });
             if (p.weapon.lightning) p.chainPrimary = ch;
             this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.6 * Math.sqrt(p.recursionScale || 1));
             if (p.weapon.split && !p.noSplit) {
