@@ -865,7 +865,8 @@ export class ProjectileSystem {
     const headRadius = ch.height * visualScale / 6;
     const hitRadius = headRadius + projectileRadius;
     const travelSq = p.vel.lengthSq();
-    const ahead = headCenter.sub(p.pos).dot(p.vel) / travelSq;
+    const toHead = headCenter.clone().sub(p.pos);
+    const ahead = travelSq > 1e-6 ? toHead.dot(p.vel) / travelSq : 0;
     const closestPoint = p.pos.clone().addScaledVector(p.vel, Math.max(0, ahead));
     const headshot = p.weapon.headshotDmg != null &&
       closestPoint.distanceToSquared(headCenter) < hitRadius ** 2;
