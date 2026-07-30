@@ -8845,12 +8845,12 @@ function buildOlympusMons(scene) {
     });
   }
 
-  // Green interior ladder-vines add readable alternate circulation between
-  // palace floors without competing visually with the red exterior creepers.
+  // Green interior ladder-vines sit just outside each landing's lip, so a
+  // climb crests onto the next floor instead of pushing into its underside.
   for (const [x, z, y0, y1, exitX, exitZ] of [
-    [-27.7, 8, 60.5, 74.45, 1, 0], [27.7, -8, 60.5, 74.45, -1, 0],
+    [-23.2, 8, 60.5, 74.45, -1, 0], [23.2, -8, 60.5, 74.45, 1, 0],
     [-22.35, -46, 60.5, 78.45, -1, 0], [22.35, -46, 60.5, 78.45, 1, 0],
-    [29.8, 20, 74.5, 90.45, 1, 0],
+    [29.8, 6.4, 74.5, 90.45, 0, 1],
   ]) addVine(scene, world, x, z, y0, y1, 1.0, exitX * 0.12, exitZ * 0.12,
     exitX, exitZ, 0.2, 1.4);
   // Two exterior climbs per wing: one beside the court-facing entrance and
@@ -8920,8 +8920,14 @@ function buildOlympusMons(scene) {
   });
   addBox(scene, world, -15, 78, -46, 18, 1, 35, 0xd8b572, { tex: 'olympus-palace' });
   addBox(scene, world, 15, 78, -46, 18, 1, 35, 0xd8b572, { tex: 'olympus-palace' });
+  // The forward pair had settled a little below the neighboring supports.
+  // Lift and shorten it symmetrically so its caps stay locked to the roof.
   for (const z of [-42, -58]) for (const x of [-9, 9]) {
-    addOlympusColumn(scene, world, x, z, 60.5, 16.8);
+    const forward = z === -58;
+    if (forward) addBox(scene, world, x, 60.61, z, 2.1, 0.22, 2.1, 0xc69132, {
+      tex: 'olympus-palace', repeat: [1, 1], metalness: 0.46, roughness: 0.32,
+    });
+    addOlympusColumn(scene, world, x, z, forward ? 60.72 : 60.5, forward ? 16.58 : 16.8);
   }
 
   // Connected roof city: armory <-> central bridge <-> north temple, plus a
@@ -8978,8 +8984,14 @@ function buildOlympusMons(scene) {
   // The processional hall now occupies the old pad route. The fast flank moves
   // to the open east arcade and lands on the Aether side balcony instead.
   addJumpPad(scene, world, 44, 74.52, 52, 31.5, -3.4, -13.4, 0x72d8ff);
+  // The front Aether pair no longer buries its stepped bases in the court
+  // floor. Preserve its roof contact while raising both mirrored columns.
   for (const x of [-29, 29]) for (const z of [26, 36]) {
-    addOlympusColumn(scene, world, x, z, 60.5, 29);
+    const front = z === 36;
+    if (front) addBox(scene, world, x, 60.7, z, 2.5, 0.4, 2.5, 0xc69132, {
+      tex: 'olympus-palace', repeat: [1, 1], metalness: 0.46, roughness: 0.32,
+    });
+    addOlympusColumn(scene, world, x, z, front ? 60.9 : 60.5, front ? 28.6 : 29);
   }
 
   // The upper hall is partially enclosed rather than another bare roof. The
@@ -9294,11 +9306,10 @@ function buildOlympusMons(scene) {
     [-44, 74.5, 20, -44, 74.5, -20], [44, 74.5, 20, 44, 74.5, -20],
     [-44, 74.5, -20, 0, 74.5, -20], [44, 74.5, -20, 0, 74.5, -20],
     [-44, 74.5, 20, -30, 74.5, 52], [44, 74.5, 20, 30, 74.5, 52],
-    // Interior green ladder-vines provide alternate floor changes alongside
-    // the architectural ramps and lifts.
-    [-28, 60.5, 8, -28, 74.5, 8], [28, 60.5, -8, 28, 74.5, -8],
+    // Interior green ladder-vines crest over the nearby roof edges.
+    [-23, 60.5, 8, -26, 74.5, 8], [23, 60.5, -8, 26, 74.5, -8],
     [-22, 60.5, -46, -22, 78.5, -46], [22, 60.5, -46, 22, 78.5, -46],
-    [30, 74.5, 20, 30, 90.5, 20],
+    [30, 74.5, 6, 30, 90.5, 10],
     // Court-facing and far-side exterior vines climb the Armory and Storm
     // Chapel walls onto their roof strips.
     [-24, 60.5, 12, -26, 74.5, 12], [-64, 60.5, -12, -61, 74.5, -12],
