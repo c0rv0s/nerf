@@ -251,6 +251,8 @@ const TEXES = {
 const AI_TEX = {};
 const AI_TEX_SOURCES = {
   'fortress-royal': './textures/fortress-royal.webp',
+  'crocodile-scales': './textures/crocodile-scales.webp',
+  'canopy-bark': './textures/canopy-bark.webp',
   'canopy-wall': './textures/canopy-wall.webp',
   'infinite-bloom-sky-eyeless': './textures/infinite-bloom-sky-eyeless.webp',
   'infinite-bloom-eye-atlas': './textures/infinite-bloom-eye-atlas.webp',
@@ -303,7 +305,7 @@ export function aiTex(name, rx = 1, ry = 1) {
 // waits on this so the first scene isn't built with placeholder canvases.
 export const texturesReady = Promise.all(
   ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'fortress-royal', 'canopy-wall',
+   'fortress-royal', 'crocodile-scales', 'canopy-bark', 'canopy-wall',
    'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
    'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
    'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
@@ -649,6 +651,113 @@ function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72) {
   return m;
 }
 
+// A wide, layered crown reads as a real treetop instead of one round boulder.
+// The low-poly lobes leave small sky gaps between spreading limbs, while the
+// foliage stays visual-only so the existing deck routes and collision remain
+// unchanged.
+function addCanopyCrown(scene, x, y, z, radius, seed = 1, autumn = false, branchBaseY = null) {
+  const rnd = seededRandom(0xca70f0 + seed * 977);
+  const foliageGeometries = [];
+  const branchGeometries = [];
+  const greens = autumn
+    ? [0x9b4825, 0xc45f24, 0xdd7b2c, 0xa83d22, 0xe09231]
+    : [0x245f31, 0x32783a, 0x3f8641, 0x2b6e38, 0x4a8f43];
+  const ringCount = radius > 14 ? 11 : 9;
+  const branchRoot = V(x, branchBaseY ?? y - radius * 0.25, z);
+
+  const colorGeometry = (geometry, color) => {
+    const c = new THREE.Color(color);
+    const colors = new Float32Array(geometry.attributes.position.count * 3);
+    for (let i = 0; i < geometry.attributes.position.count; i++) {
+      colors.set([c.r, c.g, c.b], i * 3);
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return geometry;
+  };
+  const branchBetween = (start, end, bottomRadius, topRadius) => {
+    const delta = end.clone().sub(start);
+    const geometry = new THREE.CylinderGeometry(topRadius, bottomRadius, delta.length(), 7, 2);
+    geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), delta.normalize()));
+    geometry.translate(
+      (start.x + end.x) * 0.5,
+      (start.y + end.y) * 0.5,
+      (start.z + end.z) * 0.5,
+    );
+    return geometry;
+  };
+
+  // A lifted central mass anchors the silhouette without filling the whole
+  // crown; the radial lobes do most of the spreading.
+  for (const [ox, oy, oz, sx, sy, sz, colorIndex] of [
+    [0, 2.7, 0, 0.68, 0.58, 0.62, 0],
+    [-0.28, 0.45, 0.18, 0.58, 0.44, 0.52, 2],
+    [0.3, 0.9, -0.2, 0.54, 0.48, 0.58, 1],
+  ]) {
+    const geometry = new THREE.IcosahedronGeometry(1, 1);
+    geometry.scale(radius * sx, radius * sy, radius * sz);
+    geometry.rotateY(rnd() * Math.PI);
+    geometry.rotateZ((rnd() - 0.5) * 0.26);
+    geometry.translate(x + radius * ox, y + oy, z + radius * oz);
+    foliageGeometries.push(colorGeometry(geometry, greens[colorIndex]));
+  }
+
+  for (let i = 0; i < ringCount; i++) {
+    const angle = i / ringCount * Math.PI * 2 + (rnd() - 0.5) * 0.24;
+    const reach = radius * (0.58 + rnd() * 0.18);
+    const end = V(
+      x + Math.cos(angle) * reach,
+      y - radius * (0.19 + rnd() * 0.07),
+      z + Math.sin(angle) * reach,
+    );
+    branchGeometries.push(branchBetween(
+      branchRoot,
+      end,
+      radius * 0.105,
+      radius * 0.035,
+    ));
+
+    const geometry = new THREE.IcosahedronGeometry(1, 1);
+    const lobeRadius = radius * (0.34 + rnd() * 0.12);
+    geometry.scale(
+      lobeRadius * (1.28 + rnd() * 0.35),
+      lobeRadius * (0.82 + rnd() * 0.23),
+      lobeRadius * (1.02 + rnd() * 0.38),
+    );
+    geometry.rotateY(angle + (rnd() - 0.5) * 0.7);
+    geometry.rotateZ((rnd() - 0.5) * 0.3);
+    geometry.translate(
+      end.x,
+      y + radius * ((rnd() - 0.42) * 0.32),
+      end.z,
+    );
+    foliageGeometries.push(colorGeometry(geometry, greens[(seed + i) % greens.length]));
+  }
+
+  const foliage = new THREE.Mesh(
+    mergeGeometries(foliageGeometries, false),
+    new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: 0.96,
+      metalness: 0,
+      flatShading: true,
+    }),
+  );
+  foliage.castShadow = foliage.receiveShadow = true;
+  scene.add(foliage);
+
+  const branches = new THREE.Mesh(
+    mergeGeometries(branchGeometries, false),
+    mat(0xffffff, { tex: 'canopy-bark', repeat: [2, 3], roughness: 0.98, metalness: 0 }),
+  );
+  branches.castShadow = branches.receiveShadow = true;
+  scene.add(branches);
+
+  for (const geometry of foliageGeometries) geometry.dispose();
+  for (const geometry of branchGeometries) geometry.dispose();
+  return { foliage, branches };
+}
+
 // Animated water: two overlapping planes with counter-scrolling wave normal
 // maps, glassy roughness for sun glints, env reflections for the sky sheen.
 let _waterNormal = null;
@@ -984,8 +1093,12 @@ function addCanalAlligator(scene, world) {
   const gator = new THREE.Group();
   gator.name = 'fortress-canal-alligator';
 
-  const hide = mat(0x496522, { roughness: 0.92, flatShading: true });
-  const belly = mat(0x91a64a, { roughness: 0.95, flatShading: true });
+  const hide = mat(0x496522, {
+    tex: 'crocodile-scales', repeat: [2.2, 1.35], roughness: 0.92, flatShading: true,
+  });
+  const belly = mat(0x91a64a, {
+    tex: 'crocodile-scales', repeat: [2.6, 1.65], roughness: 0.95, flatShading: true,
+  });
   const tooth = new THREE.MeshBasicMaterial({ color: 0xf3edc8, toneMapped: false });
   const eye = new THREE.MeshBasicMaterial({ color: 0xffd83d, toneMapped: false });
   const mouth = new THREE.MeshBasicMaterial({ color: 0x4f1618, toneMapped: false });
@@ -3354,19 +3467,19 @@ function buildCanopy(scene) {
   // Trunks: NE/NW/SE solid; the SW tree is HOLLOW — slip in the ground door,
   // ride the hidden pad shaft to an attic, and step out onto the 20-deck.
   for (const [tx, tz] of [[45, -45], [-45, 45], [45, 45]]) {
-    addBox(scene, world, tx, 15, tz, 8, 30, 8, 0x6b4a2e, { tex: 'crate', repeat: [2, 8] });
+    addBox(scene, world, tx, 15, tz, 8, 30, 8, 0xffffff, { tex: 'canopy-bark', repeat: [2, 8] });
   }
-  const TR = 0x6b4a2e;
-  addBox(scene, world, -45, 26.5, -45, 8, 7, 8, TR, { tex: 'crate' });         // solid crown section
-  addBox(scene, world, -48.4, 11.5, -45, 1.2, 23, 8, TR, { tex: 'crate' });    // shaft walls
-  addBox(scene, world, -41.6, 11.5, -45, 1.2, 23, 8, TR, { tex: 'crate' });
-  addBox(scene, world, -45, 11.5, -48.4, 5.6, 23, 1.2, TR, { tex: 'crate' });
-  addBox(scene, world, -45, 9.75, -41.6, 5.6, 13.5, 1.2, TR, { tex: 'crate' }); // south wall (doors above/below)
-  addBox(scene, world, -47.1, 1.5, -41.6, 1.4, 3, 1.2, TR, { tex: 'crate' });
-  addBox(scene, world, -42.9, 1.5, -41.6, 1.4, 3, 1.2, TR, { tex: 'crate' });
-  addBox(scene, world, -45, 18.25, -41.6, 5.6, 3.5, 1.2, TR, { tex: 'crate' });
-  addBox(scene, world, -46.9, 21.5, -41.6, 1.8, 3, 1.2, TR, { tex: 'crate' });
-  addBox(scene, world, -43.1, 21.5, -41.6, 1.8, 3, 1.2, TR, { tex: 'crate' });
+  const TR = 0xffffff;
+  addBox(scene, world, -45, 26.5, -45, 8, 7, 8, TR, { tex: 'canopy-bark', repeat: [2, 2] }); // solid crown section
+  addBox(scene, world, -48.4, 11.5, -45, 1.2, 23, 8, TR, { tex: 'canopy-bark', repeat: [2, 6] }); // shaft walls
+  addBox(scene, world, -41.6, 11.5, -45, 1.2, 23, 8, TR, { tex: 'canopy-bark', repeat: [2, 6] });
+  addBox(scene, world, -45, 11.5, -48.4, 5.6, 23, 1.2, TR, { tex: 'canopy-bark', repeat: [2, 6] });
+  addBox(scene, world, -45, 9.75, -41.6, 5.6, 13.5, 1.2, TR, { tex: 'canopy-bark', repeat: [2, 4] }); // south wall (doors above/below)
+  addBox(scene, world, -47.1, 1.5, -41.6, 1.4, 3, 1.2, TR, { tex: 'canopy-bark' });
+  addBox(scene, world, -42.9, 1.5, -41.6, 1.4, 3, 1.2, TR, { tex: 'canopy-bark' });
+  addBox(scene, world, -45, 18.25, -41.6, 5.6, 3.5, 1.2, TR, { tex: 'canopy-bark' });
+  addBox(scene, world, -46.9, 21.5, -41.6, 1.8, 3, 1.2, TR, { tex: 'canopy-bark' });
+  addBox(scene, world, -43.1, 21.5, -41.6, 1.8, 3, 1.2, TR, { tex: 'canopy-bark' });
   addBox(scene, world, -45, 9.7, -47.5, 5, 0.6, 1.6, 0x8a6a40, { tex: 'crate' });   // mid ledge
   addBox(scene, world, -45, 19.7, -44.45, 5.6, 0.6, 2.9, 0x8a6a40, { tex: 'crate' }); // attic (open shaft column at back)
   addJumpPad(scene, world, -45, 0, -43.5, 26, 0, -4.2, 0xffd23c);  // floor → mid ledge (clears its lip)
@@ -3378,18 +3491,18 @@ function buildCanopy(scene) {
   // center tree: hollow base room (door south, stairs up through the deck)
   // walls stop at 7.9 — tops tucked inside the deck slab (7..8); flush tops
   // at exactly 8 z-fight with the deck surface wherever they underlap it
-  addBox(scene, world, -7.25, 3.95, 0, 1.5, 7.9, 16, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, 7.25, 3.95, 0, 1.5, 7.9, 16, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, 0, 3.95, -7.25, 13, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, -4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
-  addBox(scene, world, 4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0x5e3f26, { tex: 'crate' });
+  addBox(scene, world, -7.25, 3.95, 0, 1.5, 7.9, 16, 0xffffff, { tex: 'canopy-bark', repeat: [3, 2] });
+  addBox(scene, world, 7.25, 3.95, 0, 1.5, 7.9, 16, 0xffffff, { tex: 'canopy-bark', repeat: [3, 2] });
+  addBox(scene, world, 0, 3.95, -7.25, 13, 7.9, 1.5, 0xffffff, { tex: 'canopy-bark', repeat: [3, 2] });
+  addBox(scene, world, -4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0xffffff, { tex: 'canopy-bark', repeat: [2, 2] });
+  addBox(scene, world, 4.75, 3.95, 7.25, 5.5, 7.9, 1.5, 0xffffff, { tex: 'canopy-bark', repeat: [2, 2] });
   addRamp(scene, world, { axis: 'z', minX: -6, maxX: -3, minZ: -5, maxZ: 5, h0: 4, h1: 0, color: 0x8a6a40 });
   addBox(scene, world, -3, 3.7, -5.75, 6, 0.6, 1.5, 0x8a6a40, { tex: 'crate' }); // landing abuts the flight-1 top (overlap shoves climbers off)
   addRamp(scene, world, { axis: 'x', minX: 0, maxX: 8, minZ: -6.5, maxZ: -3.5, h0: 4, h1: 8, color: 0x8a6a40 });
   const roomLight = new THREE.PointLight(0xffb060, 25, 18);
   roomLight.position.set(0, 5, 0);
   scene.add(roomLight);
-  addBox(scene, world, 0, 18.5, 0, 5, 21, 5, 0x5e3f26, { tex: 'crate', repeat: [2, 6] });
+  addBox(scene, world, 0, 18.5, 0, 5, 21, 5, 0xffffff, { tex: 'canopy-bark', repeat: [2, 6] });
 
   // hedge lanes — break up the open lawn into corridors, plus a small maze
   // pocket in the SE quadrant (the pulsar sits inside it)
@@ -3427,12 +3540,12 @@ function buildCanopy(scene) {
   addRamp(scene, world, { axis: 'x', minX: 12.5, maxX: 20.7, minZ: 13, maxZ: 16.5, h0: 0, h1: 4.3, color: HUT });
 
   // FALLEN LOG (SW lawn): crawl-through tunnel, walkable on top via stumps
-  const LOG = 0x5e3f26;
-  addBox(scene, world, -27, 1.4, -25.6, 14, 2.8, 0.5, LOG, { tex: 'crate' });
-  addBox(scene, world, -27, 1.4, -22.4, 14, 2.8, 0.5, LOG, { tex: 'crate' });
-  addBox(scene, world, -27, 3, -24, 14, 0.6, 3.7, LOG, { tex: 'crate', repeat: [4, 1] }); // top 3.3
-  addBox(scene, world, -37, 0.8, -20, 3, 1.6, 3, 0x6b4a2e, { tex: 'crate' });  // stump steps up
-  addBox(scene, world, -33, 1.3, -19.5, 3, 2.6, 3, 0x6b4a2e, { tex: 'crate' });
+  const LOG = 0xffffff;
+  addBox(scene, world, -27, 1.4, -25.6, 14, 2.8, 0.5, LOG, { tex: 'canopy-bark', repeat: [4, 1] });
+  addBox(scene, world, -27, 1.4, -22.4, 14, 2.8, 0.5, LOG, { tex: 'canopy-bark', repeat: [4, 1] });
+  addBox(scene, world, -27, 3, -24, 14, 0.6, 3.7, LOG, { tex: 'canopy-bark', repeat: [4, 1] }); // top 3.3
+  addBox(scene, world, -37, 0.8, -20, 3, 1.6, 3, 0xffffff, { tex: 'canopy-bark' }); // stump steps up
+  addBox(scene, world, -33, 1.3, -19.5, 3, 2.6, 3, 0xffffff, { tex: 'canopy-bark' });
 
   // Corner branch decks (tops at 10 and 20, trunk pierces through).
   // The SW tree's decks are donuts — its trunk is a hollow shaft inside.
@@ -3492,7 +3605,8 @@ function buildCanopy(scene) {
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -43.5, maxZ: -10, h0: 10, h1: 8, color: 0x8a6a40 });
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 10, maxZ: 43.5, h0: 8, h1: 10, color: 0x8a6a40 });
 
-  // Pads: ground → corner decks, center tier chain up to the crown
+  // Pads: ground → corner decks, plus a direct center-tree launch to the
+  // concealed gold fort. The upper-tier pads remain as alternate routes.
   addJumpPad(scene, world, -30, 0, -30, 24, -11.5, -11.5, 0x9dff70);
   addJumpPad(scene, world, 30, 0, -30, 24, 11.5, -11.5, 0x9dff70);
   addJumpPad(scene, world, -30, 0, 30, 24, -11.5, 11.5, 0x9dff70);
@@ -3500,17 +3614,31 @@ function buildCanopy(scene) {
   // Opposite corner from the center-tree vines and outside the upper deck's
   // footprint. The gentle diagonal enters that footprint only once high
   // enough to clear its underside.
-  addJumpPad(scene, world, -8, 8, 8, 22, 3, -1.05, 0xffd23c);  // 8 → 16
+  addJumpPad(scene, world, -8, 8, 8, 38.5, 5.2, -2.2, 0xffd23c); // 8 → hidden gold fort
   addJumpPad(scene, world, 7, 16, 0, 22, -8, 0, 0xffd23c);    // 16 → 24 (offset west)
   addJumpPad(scene, world, -6, 24, 0, 20, 8.3, 0, 0xffd23c);  // 24 → crown (offset east)
 
-  // Canopy blobs + bushes (visual only)
+  // Broad, layered treetops with visible spreading limbs. Their foliage zones
+  // deliberately retain the old radii so this visual upgrade does not expand
+  // the movement slowdown or camera-leaf overlay into the bridge routes.
   const deco = { colliders: [], ramps: [] };
-  const autumn = addAsteroid(scene, deco, 45, 33, 45, 13, 0xd8742a); // one tree turns first
-  autumn.material.map = null;
+  addCanopyCrown(scene, 45, 29.5, 45, 13, 1, true, 30); // one tree turns first
   (world.foliageZones ||= []).push({ x: 45, y: 33, z: 45, r: 12.5 });
-  for (const [x, y, z, r] of [[-45, 33, -45, 13], [45, 33, -45, 13], [-45, 33, 45, 13], [0, 39, 0, 16],
-                              [-20, 1, -60, 3], [60, 1, 20, 3], [-60, 1, 10, 2.5], [25, 1, 60, 3]]) {
+  for (const [x, z, seed] of [
+    [-45, -45, 2], [45, -45, 3], [-45, 45, 4],
+  ]) {
+    addCanopyCrown(scene, x, 29.5, z, 13, seed, false, 30);
+    world.foliageZones.push({ x, y: 33, z, r: 13 * 0.95 });
+  }
+  // The center crown sits around the gold platform like a hidden tree fort.
+  // Its limbs begin at the existing trunk top (y=29), eliminating the visual
+  // gap while leaving the jump-pad landing and platform collision untouched.
+  addCanopyCrown(scene, 0, 34.5, 0, 16, 5, false, 29);
+  world.foliageZones.push({ x: 0, y: 39, z: 0, r: 16 * 0.95 });
+  // Smaller ground bushes keep their compact silhouette.
+  for (const [x, y, z, r] of [
+    [-20, 1, -60, 3], [60, 1, 20, 3], [-60, 1, 10, 2.5], [25, 1, 60, 3],
+  ]) {
     const blob = addAsteroid(scene, deco, x, y, z, r, 0x3f7a33);
     blob.material.map = null;
     world.foliageZones.push({ x, y, z, r: r * 0.95 });
@@ -3631,7 +3759,7 @@ function buildCanopy(scene) {
     [-45, 0, -45, -45, 10, -47.4, true],  // SW tree shaft pads
     [-45, 10, -47.4, -45, 20, -44.5, true],
     [0, -2.6, 64, 0, -3.5, 55], [0, -3.5, 55, 0, 0, 39], // connector branch and exit
-    [-8, 8, 8, -5, 16, 4, true],      // pad chain up the center tree
+    [-8, 8, 8, 4, 30, 0, true],       // direct pad to the hidden gold fort
     [7, 16, 0, -3, 24, 3, true],
     [-6, 24, 0, 4, 30, 0, true],
     [4, 30, 0, 0, 8, 7, true],        // step off the crown to descend
