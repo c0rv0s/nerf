@@ -237,6 +237,15 @@ export class HUD {
     this.pushFeed(div);
   }
 
+  chompFeed(victim) {
+    const div = document.createElement('div');
+    const who = document.createElement('span');
+    who.style.color = victim.color || '#ccc';
+    who.textContent = victim.name || 'Player';
+    div.append(who, document.createTextNode(' got chomped'));
+    this.pushFeed(div);
+  }
+
   awardFeed(player, text, color = '#ffd23c') {
     const div = document.createElement('div');
     div.style.borderRightColor = color;

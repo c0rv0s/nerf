@@ -929,8 +929,8 @@ function startMatch(mapDef, mode = 'ffa') {
   world.onGatorChomp = () => sfx('chomp', world.gator?.group?.position);
   world.onGatorBite = (ch) => {
     if (!ch?.alive) return;
-    applyDamage(ch, 50, GATOR, { environmental: true, silentImpact: true });
-    if (ch.isPlayer) hud.message('GATOR BITE -50', '#b8e35b');
+    applyDamage(ch, 35, GATOR, { environmental: true, silentImpact: true });
+    if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
 
@@ -1054,8 +1054,8 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     // snapshot/events, preventing every client from applying the same bite.
     if (!ch?.alive) return;
     if (!G?.multiplayerHost) return;
-    applyDamage(ch, 50, GATOR, { environmental: true, silentImpact: true });
-    if (ch.isPlayer) hud.message('GATOR BITE -50', '#b8e35b');
+    applyDamage(ch, 35, GATOR, { environmental: true, silentImpact: true });
+    if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
   world.getPickups = () => pickups.items;
 
@@ -1544,7 +1544,8 @@ function applyMultiplayerSnapshot(snap) {
             ev.killerId === 'comet' ? COMET : { name: 'The Void', color: '#8899aa' });
       const victim = G.characters.find(c => c.id === ev.victimId) ||
         (ev.victimId === multiplayer.slotId ? G.player : { name: 'Player', color: '#ccc' });
-      hud.killfeed(killer, victim);
+      if (ev.killerId === 'gator') hud.chompFeed(victim);
+      else hud.killfeed(killer, victim);
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
     if (ev.type === 'award') {
@@ -2739,7 +2740,8 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
       // the killer always races for it; idle bystanders contest close drops
       if (c === attacker || (!c.target && c.pos.distanceTo(target.pos) < 18)) c.noticeDrop(target.pos);
     }
-    hud.killfeed(attacker, target);
+    if (attacker === GATOR) hud.chompFeed(target);
+    else hud.killfeed(attacker, target);
     G.fxPool.spawnPuff(new THREE.Vector3(target.pos.x, target.pos.y + 1, target.pos.z),
       target.team === 'blue' ? 0x5cb3ff : 0xff5c5c, 2);
 
