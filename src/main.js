@@ -930,6 +930,7 @@ function startMatch(mapDef, mode = 'ffa') {
   world.onGatorBite = (ch) => {
     if (!ch?.alive) return;
     applyDamage(ch, 35, GATOR, { environmental: true, silentImpact: true });
+    sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
@@ -1055,6 +1056,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     if (!ch?.alive) return;
     if (!G?.multiplayerHost) return;
     applyDamage(ch, 35, GATOR, { environmental: true, silentImpact: true });
+    sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
   world.getPickups = () => pickups.items;
@@ -1536,6 +1538,10 @@ function applyMultiplayerSnapshot(snap) {
         hud.hitmarker();
         if (target) spawnDmgMarker(target, ev.amount || 0);
       }
+    }
+    if (ev.type === 'damage' && ev.attackerId === 'gator' &&
+      ev.targetId === multiplayer.slotId) {
+      sfx('gatorhit');
     }
     if (ev.type === 'kill') {
       const killer = G.characters.find(c => c.team === ev.killerId || c.id === ev.killerId) ||
@@ -2241,6 +2247,13 @@ function podiumSurfaceYAt(x, z) {
 }
 
 function podiumAnchor() {
+  const preferred = G.world.podiumSpot;
+  if (preferred) {
+    const y = podiumSurfaceYAt(preferred.x, preferred.z);
+    if (y !== null && y > G.world.killY + 2) {
+      return new THREE.Vector3(preferred.x, y + 0.08, preferred.z);
+    }
+  }
   const center = new THREE.Vector3();
   const candidates = [
     center,

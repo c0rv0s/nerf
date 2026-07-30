@@ -1090,6 +1090,9 @@ function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style 
 
 function addCanalAlligator(scene, world) {
   const BITE_DURATION = 0.7;
+  const PROVOKED_CHASE_DURATION = 4.5;
+  const AMBIENT_CHASE_DURATION = 3.25;
+  const DISENGAGE_DURATION = 3;
   const gator = new THREE.Group();
   gator.name = 'fortress-canal-alligator';
 
@@ -1156,11 +1159,27 @@ function addCanalAlligator(scene, world) {
     snapT: 0,
     biteArmed: false,
     chompPlayed: false,
+    biteTarget: null,
     chaseTarget: null,
     chaseT: 0,
     provokedTarget: null,
     lungeT: 0,
     lungeCooldown: 0,
+  };
+  const disengageFrom = (target, cooldown = 0) => {
+    if (!target) return;
+    if (cooldown > 0) {
+      state.biteCooldowns.set(
+        target,
+        Math.max(state.biteCooldowns.get(target) || 0, cooldown),
+      );
+    }
+    if (state.chaseTarget === target) {
+      state.chaseTarget = null;
+      state.chaseT = 0;
+      state.lungeT = 0;
+    }
+    if (state.provokedTarget === target) state.provokedTarget = null;
   };
   // The body is a moving solid surface. Deliberately stop it before the head so
   // the rideable area is the back, not the snapping mouth.
@@ -1227,14 +1246,18 @@ function addCanalAlligator(scene, world) {
       state.biteCooldowns.set(attacker, 0);
       state.provokedTarget = attacker;
       state.chaseTarget = attacker;
-      state.chaseT = Infinity;
+      state.chaseT = PROVOKED_CHASE_DURATION;
       state.snapT = 0;
       state.biteArmed = false;
+      state.biteTarget = null;
       state.lungeT = 0.75;
       state.lungeCooldown = 0;
     },
   };
   world.gator = { group: gator, state, shootTarget };
+  const canalWater = (world.waterZones || []).find(zone =>
+    gator.position.x >= zone.minX && gator.position.x <= zone.maxX &&
+    gator.position.z >= zone.minZ && gator.position.z <= zone.maxZ);
   world.anim.push((dt, t, characters = []) => {
     // Tick existing immunity before detection so a newly bitten character gets
     // the complete three-second ignore window.
@@ -1250,9 +1273,17 @@ function addCanalAlligator(scene, world) {
       const local = localToGator(ch);
       riders.push({ ch, ...local, y: ch.pos.y - gator.position.y });
     }
-    const inCanalWater = ch => ch?.alive &&
-      !isOnGatorBack(ch) && ch.pos.y < -2 &&
-      Math.abs(ch.pos.z) < 6.85 && Math.abs(ch.pos.x) < 55;
+    // Sight and hearing aggro only exist inside the registered canal water
+    // volume. Characters on either bank, a bridge, or the gator's back are
+    // ignored unless they explicitly provoke it by shooting.
+    const inCanalWater = ch => {
+      if (!ch?.alive || !canalWater || isOnGatorBack(ch)) return false;
+      const midY = ch.pos.y + (ch.height ?? 1.8) * 0.5;
+      return ch.pos.x >= canalWater.minX && ch.pos.x <= canalWater.maxX &&
+        ch.pos.z >= canalWater.minZ && ch.pos.z <= canalWater.maxZ &&
+        midY >= (canalWater.bottomY ?? canalWater.surfaceY - 4) - 0.4 &&
+        ch.pos.y < canalWater.surfaceY + 0.35;
+    };
     let nearbyTarget = null;
     let nearbyDist = Infinity;
     for (const ch of characters) {
@@ -1271,16 +1302,20 @@ function addCanalAlligator(scene, world) {
       const detected = d < 10 && (inFront || moving);
       if (d < nearbyDist && detected) { nearbyTarget = ch; nearbyDist = d; }
     }
-    if (state.provokedTarget?.alive) {
-      state.chaseTarget = state.provokedTarget;
-      state.chaseT = Infinity;
-    } else if (nearbyTarget) {
+    if (state.chaseTarget) {
+      state.chaseT = Math.max(0, state.chaseT - dt);
+      if (!state.chaseTarget.alive) {
+        disengageFrom(state.chaseTarget);
+      } else if (state.chaseT <= 0 && !state.biteArmed) {
+        // Let a bite already in progress finish, but do not pursue forever.
+        disengageFrom(state.chaseTarget, DISENGAGE_DURATION);
+      }
+    }
+    if (!state.chaseTarget && nearbyTarget &&
+      (state.biteCooldowns.get(nearbyTarget) || 0) <= 0) {
       state.provokedTarget = null;
       state.chaseTarget = nearbyTarget;
-      state.chaseT = 3.25;
-    } else {
-      state.chaseT = Math.max(0, state.chaseT - dt);
-      if (!state.chaseTarget?.alive || state.chaseT <= 0) state.chaseTarget = null;
+      state.chaseT = AMBIENT_CHASE_DURATION;
     }
 
     let target = state.chaseTarget;
@@ -1288,9 +1323,8 @@ function addCanalAlligator(scene, world) {
     if (target) {
       const provoked = state.provokedTarget === target;
       if ((!provoked && !inCanalWater(target)) || (state.biteCooldowns.get(target) || 0) > 0) {
-        if (provoked) state.provokedTarget = null;
-        state.chaseTarget = target = null;
-        state.chaseT = 0;
+        disengageFrom(target);
+        target = null;
       }
     }
     if (target) {
@@ -1298,8 +1332,8 @@ function addCanalAlligator(scene, world) {
       // The gator gives up after a short pursuit or if the target gets well
       // beyond the canal encounter instead of chasing forever across the map.
       if (targetDist > 18 && state.provokedTarget !== target) {
-        state.chaseTarget = target = null;
-        state.chaseT = 0;
+        disengageFrom(target, DISENGAGE_DURATION);
+        target = null;
       }
     }
 
@@ -1324,6 +1358,7 @@ function addCanalAlligator(scene, world) {
         state.snapT = BITE_DURATION;
         state.biteArmed = true;
         state.chompPlayed = false;
+        state.biteTarget = target;
       }
     } else state.lungeT = 0;
 
@@ -1367,14 +1402,20 @@ function addCanalAlligator(scene, world) {
         // they have a real chance to escape before pursuit can resume.
         state.biteCooldowns.set(ch, 3);
         world.onGatorBite?.(ch);
-        state.chaseTarget = null;
-        if (state.provokedTarget === ch) state.provokedTarget = null;
-        state.chaseT = 0;
-        state.lungeT = 0;
+        disengageFrom(state.chaseTarget || ch, DISENGAGE_DURATION);
         state.biteArmed = false;
+        state.biteTarget = null;
         break;
       }
-      if (biteProgress >= 0.94) state.biteArmed = false;
+      if (biteProgress >= 0.94 && state.biteArmed) {
+        // One complete closing stroke counts as a fair attack opportunity.
+        // Whether it lands or misses, the gator breaks off instead of chaining
+        // bite attempts forever.
+        const attemptedTarget = state.biteTarget;
+        state.biteArmed = false;
+        state.biteTarget = null;
+        disengageFrom(attemptedTarget, DISENGAGE_DURATION);
+      }
     }
     tailPivot.rotation.y = Math.sin(t * 5.5) * 0.18;
   });
@@ -1408,8 +1449,12 @@ function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exit
   const bottomY = Math.min(y0, y1);
   const topY = Math.max(y0, y1);
   const leanLen = Math.hypot(leanX, leanZ);
-  const hookX = zone.exitX ?? (leanLen > 0.001 ? leanX / leanLen : 1);
-  const hookZ = zone.exitZ ?? (leanLen > 0.001 ? leanZ / leanLen : 0);
+  // The visible sheet belongs on the exposed face selected by leanX/leanZ.
+  // exitX/exitZ points the climber back onto the landing and is often the
+  // exact opposite direction; using it for visuals tucked vines underneath
+  // roof overhangs even though their climb volume was correctly outside.
+  const hookX = leanLen > 0.001 ? leanX / leanLen : (zone.exitX ?? 1);
+  const hookZ = leanLen > 0.001 ? leanZ / leanLen : (zone.exitZ ?? 0);
   const visualTopY = topY - Math.min(visualTopPad, h * 0.18);
   const visualBottomY = bottomY + Math.min(0.04, h * 0.02);
 
@@ -2635,7 +2680,12 @@ function addFortressPresentation(scene, world) {
 
 /* ============ MAP 2 — FORTRESS FALLS (150×90: trench, keep, towers) ============ */
 function buildFortress(scene) {
-  const world = newWorld({ killY: -20, waypointLinkDist: 22, waypointLinkDy: 4.6 });
+  const world = newWorld({
+    killY: -20,
+    waypointLinkDist: 22,
+    waypointLinkDy: 4.6,
+    waypointLinkClearance: 0.35,
+  });
   const fortress = {
     courtyard: 0xd2c39b,
     canalBed: 0x275e74,
@@ -2733,12 +2783,13 @@ function buildFortress(scene) {
   addRamp(scene, world, { axis: 'z', minX: -41.7, maxX: -38.3, minZ: -4.5, maxZ: -4, h0: 11, h1: 11, color: fortress.royalMid, tex: 'fortress-deck' });
   addRamp(scene, world, { axis: 'z', minX: 38.3, maxX: 41.7, minZ: 4.5, maxZ: 9, h0: 11, h1: 6.8, color: fortress.royalMid, tex: 'fortress-deck' });
   addRamp(scene, world, { axis: 'z', minX: 38.3, maxX: 41.7, minZ: 4, maxZ: 4.5, h0: 11, h1: 11, color: fortress.royalMid, tex: 'fortress-deck' });
-  // Mount the bridge-house vines on the outer faces of their 2.2m support
-  // columns. Using the column centers left the visible sheets floating/clipped.
-  addVine(scene, world, -46.3, -10.2, 0.2, 6.9, 0.85, -0.24, 0);
-  addVine(scene, world, -33.7, -10.2, 0.2, 6.9, 0.85, 0.24, 0);
-  addVine(scene, world, 33.7, 10.2, 0.2, 6.9, 0.85, -0.24, 0);
-  addVine(scene, world, 46.3, 10.2, 0.2, 6.9, 0.85, 0.24, 0);
+  // Hang the bridge-house vines from the outer faces of the purple deck, not
+  // the inset cyan columns. addVine offsets each visible sheet another 0.14m
+  // outward, while the climb volume at the deck edge clears the overhang.
+  addVine(scene, world, -46.75, -10.2, 0.2, 6.9, 0.85, -0.24, 0);
+  addVine(scene, world, -33.25, -10.2, 0.2, 6.9, 0.85, 0.24, 0);
+  addVine(scene, world, 33.25, 10.2, 0.2, 6.9, 0.85, -0.24, 0);
+  addVine(scene, world, 46.75, 10.2, 0.2, 6.9, 0.85, 0.24, 0);
   addVine(scene, world, -44.25, 4, 6.9, 11.1, 0.75, -0.2, 0);
   addVine(scene, world, 44.25, -4, 6.9, 11.1, 0.75, 0.2, 0);
   // Banners and targets on the perimeter walls.
@@ -2969,7 +3020,7 @@ function buildFortress(scene) {
   pk(world, 'weapon', 0, 8.2, 30, { weapon: 'parasite' });    // former Hyperstrike position
   pk(world, 'ammo', -4, 0.2, 26, { weapon: 'sidewinder' });
   pk(world, 'ammo', -48, 5.4, 43.5, { weapon: 'whomper' });
-  pk(world, 'ammo', 8, 8.2, 30, { weapon: 'parasite' });
+  pk(world, 'ammo', 4, 8.2, 30, { weapon: 'parasite' }); // beside the gun, clear of the inset wall
   pk(world, 'ammo', 64, 8, 35, { weapon: 'hyper' });
   pk(world, 'ammo', -64, 8, -35, { weapon: 'pulsar' });
   pk(world, 'ammo', 34, -3.8, 0, { weapon: 'zooka' });
@@ -3001,7 +3052,7 @@ function buildFortress(scene) {
   // Waypoints
   const wps = [
     // south field
-    [-72, 0, -26], [-50, 0, -26], [-30, 0, -30], [-10, 0, -26], [10, 0, -26], [30, 0, -30], [50, 0, -26], [72, 0, -26],
+    [-72, 0, -26], [-48, 0, -18], [-30, 0, -30], [-10, 0, -26], [10, 0, -26], [30, 0, -30], [50, 0, -26], [72, 0, -26],
     [-60, 0, -12], [-40, 0, -12], [-20, 0, -12], [0, 0, -12], [20, 0, -12], [40, 0, -12], [60, 0, -12],
     // north field
     [-72, 0, 26], [-50, 0, 26], [-30, 0, 24], [30, 0, 24], [50, 0, 26], [72, 0, 26],
@@ -3011,8 +3062,8 @@ function buildFortress(scene) {
     [-58, 0, -30.5], [-52.5, 0, -30.5], [-46.5, 0, -30.5],
     // bridges
     [0, 0, 0], [-40, 0, 0], [40, 0, 0],
-    [-40, 3.4, 18], [-40, 6.8, 5], [-40, 8.9, -5.5], [-40, 11, 0],
-    [40, 3.4, -18], [40, 6.8, -5], [40, 8.9, 5.5], [40, 11, 0],
+    [-40, 3.65, 18], [-40, 6.8, 12], [-40, 6.8, 5], [-40, 6.8, -9], [-40, 8.9, -6.75], [-40, 11, -4.5], [-40, 11, 0],
+    [40, 3.65, -18], [40, 6.8, -12], [40, 6.8, -5], [40, 6.8, 9], [40, 8.9, 6.75], [40, 11, 4.5], [40, 11, 0],
     // trench
     [-71, -0.5, 0], [-61, -2.5, 0], [-50, -4, 0], [-28, -4, 0], [-12, -4, 0],
     [0, -4, 0], [12, -4, 0], [28, -4, 0], [50, -4, 0], [61, -2.5, 0], [71, -0.5, 0],
@@ -3023,14 +3074,14 @@ function buildFortress(scene) {
     [0, 0, 11], [0, 0, 26], [0, 0, 35], [0, 0, 39.5],
     [0, 5, 41.75], [0, 6.4, 40.375], [0, 7.8, 39],
     [0, 7.8, 16], [-5, 7.8, 26], [0, 7.8, 36], [9, 7.8, 32],
-    [9.75, 7.8, 18], [9.75, 10.625, 22], [9.75, 13.45, 26], [9.75, 16.275, 30], [9.75, 19.1, 34.75],
-    [-9.75, 19.1, 17.25], [-9.75, 16.275, 22], [-9.75, 13.45, 26], [-9.75, 10.625, 30], [-9.75, 7.8, 34],
+    [9.75, 7.8, 18], [9.75, 10.625, 22], [9.75, 13.45, 26], [9.75, 16.275, 30], [9.75, 19.1, 34],
+    [-9.75, 19.1, 18], [-9.75, 16.275, 22], [-9.75, 13.45, 26], [-9.75, 10.625, 30], [-9.75, 7.8, 34],
     [-6, 19.1, 18], [0, 19.1, 26], [6, 19.1, 34],
     [0, 19.1, 12], [0, 19.1, 8], [0, 19.1, 3], [0, 19.1, 0],
     [22, 3.9, 27], [34, 0, 27],
     // towers
-    [64, 7.6, 38], [52, 3.8, 38], [44, 0, 38],
-    [-64, 7.6, -38], [-52, 3.8, -38], [-44, 0, -38],
+    [64, 7.6, 38], [58.5, 7.6, 38], [52, 3.8, 38], [44, 0, 38],
+    [-64, 7.6, -38], [-58.5, 7.6, -38], [-52, 3.8, -38], [-44, 0, -38],
     // lane doors
     [-36, 0, 22], [36, 0, 22], [-36, 0, -22], [36, 0, -22],
     [-13.5, 0, 22], [13.5, 0, 22], [0, 0, -22],
@@ -3049,7 +3100,7 @@ function buildFortress(scene) {
     // north-south catwalk (west lane hugs x −1 beside the perch ramp)
     [0, 7.8, 8], [-1, 7.8, -6], [-1, 7.8, -20], [-1, 7.8, -33], [0, 6.4, -40],
     // sniper perch ramp + deck
-    [1, 10.2, -24.5], [0, 12.6, -15.5],
+    [1, 10.2, -24.5], [1, 12.6, -19], [0, 12.6, -15.5],
     // east-west catwalk to the NE tower
     [16, 7.75, 32], [30, 7.75, 32], [44, 7.75, 32], [57, 7.75, 33],
   ];
@@ -3342,7 +3393,15 @@ function buildAsteroids(scene) {
    Five colossal trees with branch decks at 10/20, a tiered center tree
    (8/16/24/crown 30 with the gold), edge bridges, ramps and pad chains up. */
 function buildCanopy(scene) {
-  const world = newWorld({ killY: -20, waypointLinkDist: 24, waypointLinkDy: 4.6 });
+  const world = newWorld({
+    killY: -20,
+    waypointLinkDist: 24,
+    waypointLinkDy: 4.6,
+    // Keep the victory presentation below the treetops on the open west side
+    // of the dirt road. The generic highest-surface choice lands inside the
+    // center crown now that its canopy wraps around the gold platform.
+    podiumSpot: V(-15, 0, -40),
+  });
   scene.background = new THREE.Color(0x8fcbe6);
   scene.fog = new THREE.Fog(0x47684e, 120, 330);
   baseLighting(scene, 0xa8d8a0, 0x1c3020, [60, 120, -40], 130);
@@ -3593,7 +3652,7 @@ function buildCanopy(scene) {
   addVine(scene, world, -52.28, 45, 0.2, 19.1, 0.9, -0.18, 0, 1, 0);    // NW trunk side
   addVine(scene, world, 45, 52.28, 0.2, 19.1, 0.9, 0, 0.18, 0, -1);     // SE trunk side
   addVine(scene, world, -2.8, -7.28, 0.2, 15.1, 0.85, 0, -0.16, 0, 1);  // center tiers north face
-  addVine(scene, world, 31.34, 16, 0.2, 4.2, 0.75, 0.16, 0, -1, 0);     // ranger hut east wall
+  addVine(scene, world, 31.38, 16, 0.2, 4.2, 0.75, 0.16, 0, -1, 0);     // ranger hut roof east edge
   addVine(scene, world, -11, 61.18, 0.2, 3.8, 0.8, 0, 0.16, 0, -1);     // north hedge lane
   addVine(scene, world, 61.18, -3, 0.2, 3.8, 0.8, 0.16, 0, -1, 0);      // east hedge lane
 

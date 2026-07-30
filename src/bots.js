@@ -2,11 +2,13 @@
 // On low-gravity maps they make ballistic jumps between waypoints.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { moveCharacter, moveCharacterUp, cardinal, hasLOS, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ } from './engine.js';
+import { moveCharacter, moveCharacterUp, cardinal, hasLOS, hasRouteClearance, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from './weapons.js';
 import { aiTex } from './maps.js';
 import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
+
+const _combatRouteProbe = new THREE.Vector3();
 
 const coloredPart = (geometry, color, position, rotation = null) => {
   const geo = geometry.clone();
@@ -156,6 +158,7 @@ export class Bot {
     this._waterRecoveryPath = false;
     this._jetpackThinkT = 0;
     this._jetpackWants = false;
+    this._combatRouteT = 0;
 
     const { group, jetpack } = buildBotMesh(color);
     this.mesh = group;
@@ -256,6 +259,7 @@ export class Bot {
     this._waterRecoveryPath = false;
     this._jetpackThinkT = 0;
     this._jetpackWants = false;
+    this._combatRouteT = 0;
     this._drownT = 0;
     this._drownDamageT = 0;
     this.up.set(0, 1, 0);
@@ -276,9 +280,12 @@ export class Bot {
       [w.pos.distanceTo(this.pos) + (Math.abs(w.pos.y - this.pos.y) > 2.6 ? 60 : 0), i])
       .sort((a, b) => a[0] - b[0]);
     const eye = this.eye();
-    for (let k = 0; k < Math.min(8, ranked.length); k++) {
+    for (let k = 0; k < Math.min(20, ranked.length); k++) {
       const w = wps[ranked[k][1]].pos;
-      if (hasLOS(eye, new THREE.Vector3(w.x, w.y + 1.5, w.z), this.world)) return ranked[k][1];
+      const visible = hasLOS(eye, new THREE.Vector3(w.x, w.y + 1.5, w.z), this.world);
+      const clear = !this.world.waypointLinkClearance ||
+        hasRouteClearance(this.pos, w, this.world, this.world.waypointLinkClearance);
+      if (visible && clear) return ranked[k][1];
     }
     return ranked[0][1];
   }
@@ -440,6 +447,13 @@ export class Bot {
     if (!opts.avoidWater) return findPath(this.world, fromIdx, toIdx);
     const dryPath = this._findDryPath(fromIdx, toIdx);
     return dryPath || findPath(this.world, fromIdx, toIdx);
+  }
+
+  _routeTowardPosition(pos) {
+    const from = this.reachableNearest();
+    const to = nearestWaypoint(this.world, pos);
+    this.path = this._findPath(from, to, { avoidWater: true }) || [from];
+    this.pathIdx = 0;
   }
 
   _findDryPath(fromIdx, toIdx) {
@@ -643,6 +657,7 @@ export class Bot {
     this.alertTimer -= dt;
     this.lootLock -= dt;
     this.avoidT -= dt;
+    this._combatRouteT = Math.max(0, this._combatRouteT - dt);
     if (this.avoidT <= 0) this.avoid = null;
 
     // Stuck detection: no progress while wanting to move → hop (clears ledge
@@ -655,13 +670,17 @@ export class Bot {
       if (wantsMove && this.pos.distanceTo(this._lastPos) < 0.6) this.stuckT += 1.5;
       else this.stuckT = 0;
       this._lastPos.copy(this.pos);
-      if (this.stuckT >= 4.5) {
+      if (this.stuckT >= 3) {
         if (this.shopping) { this.avoid = this.shopping; this.avoidT = 12; }
         this.shopping = null;
         this.lootLock = 0;
-        const from = this.reachableNearest();
-        this.path = this._findPath(from, this._randomRoamWaypoint(from), { avoidWater: true }) || null;
-        this.pathIdx = 0;
+        if (this.target?.alive) this._routeTowardPosition(this.target.pos);
+        else {
+          const from = this.reachableNearest();
+          this.path = this._findPath(from, this._randomRoamWaypoint(from), { avoidWater: true }) || null;
+          this.pathIdx = 0;
+        }
+        this._combatRouteT = 2.5;
         this.stuckT = 0;
       } else if (this.stuckT >= 1.5 && this.grounded) {
         this.vel.y = this.world.jumpVel;
@@ -726,7 +745,7 @@ export class Bot {
       this.facing = this.target
         ? Math.atan2(this.target.pos.x - this.pos.x, this.target.pos.z - this.pos.z)
         : Math.atan2(moveX, moveZ);
-    } else if (this.target && !lowGrav) {
+    } else if (this.target && !lowGrav && this._combatRouteT <= 0) {
       // combat: run around — pick a fresh maneuver (an angle relative to the
       // target direction) every second or so, with the odd dodge-hop
       const to = new THREE.Vector3().subVectors(this.target.pos, this.pos);
@@ -755,6 +774,27 @@ export class Bot {
         if (fd > 0.3 && fd < 9 && Math.abs(shop.def.pos.y - this.pos.y) < 2) {
           moveX = (shop.def.pos.x - this.pos.x) / fd;
           moveZ = (shop.def.pos.z - this.pos.z) / fd;
+        }
+      }
+      // Seeing an opponent does not mean the chosen strafe lane is walkable.
+      // If the capsule-sized probe hits cover, immediately fall back to the
+      // waypoint route around it and keep that recovery active long enough to
+      // clear the wall instead of retrying the same blocked strafe next frame.
+      _combatRouteProbe.set(
+        this.pos.x + moveX * 1.6,
+        this.pos.y,
+        this.pos.z + moveZ * 1.6,
+      );
+      if (!hasRouteClearance(this.pos, _combatRouteProbe, this.world, 0.32)) {
+        this._routeTowardPosition(this.target.pos);
+        this._combatRouteT = 2.25;
+        const routeIdx = this.path?.[this.pathIdx];
+        const routeTarget = routeIdx == null ? null : this.world.waypoints[routeIdx]?.pos;
+        if (routeTarget) {
+          const dx = routeTarget.x - this.pos.x;
+          const dz = routeTarget.z - this.pos.z;
+          const routeDist = Math.hypot(dx, dz);
+          if (routeDist > 0.1) { moveX = dx / routeDist; moveZ = dz / routeDist; }
         }
       }
     } else if (wpTarget) {

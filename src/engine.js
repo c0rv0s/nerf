@@ -509,6 +509,26 @@ export function hasLOS(a, b, world) {
   return true;
 }
 
+const _routeSample = new THREE.Vector3();
+// A head-height LOS ray is enough for aiming, but not for navigation: it can
+// pass over a low wall or skim a doorway corner that a character capsule will
+// run straight into. Sample three slightly inset capsule spheres along a route
+// so maps with dense geometry can opt into bot-sized waypoint clearance.
+export function hasRouteClearance(a, b, world, radius = 0.35) {
+  const dist = a.distanceTo(b);
+  const steps = Math.ceil(dist / 0.75);
+  for (let i = 1; i < steps; i++) {
+    _routeSample.lerpVectors(a, b, i / steps);
+    for (const y of [0.55, 0.95, 1.35]) {
+      _routeSample.y += y;
+      const blocked = pointHitsWorld(_routeSample, radius, world, true);
+      _routeSample.y -= y;
+      if (blocked) return false;
+    }
+  }
+  return true;
+}
+
 // Auto-link waypoints into a graph, then provide BFS paths.
 export function buildWaypointGraph(world) {
   const wps = world.waypoints;
@@ -523,6 +543,8 @@ export function buildWaypointGraph(world) {
       if (Math.abs(a.y - b.y) > maxDy) continue;
       eye.copy(a).y += 1.2; eye2.copy(b).y += 1.2;
       if (!hasLOS(eye, eye2, world)) continue;
+      if (world.waypointLinkClearance &&
+          !hasRouteClearance(a, b, world, world.waypointLinkClearance)) continue;
       wps[i].links.push(j); wps[j].links.push(i);
     }
   }

@@ -194,7 +194,10 @@ const SFX = {
   hit:      () => { sample('impact', { vol: 0.095, rate: 1.35 });
                     blip({ freq: 1400, end: 1000, dur: 0.05, vol: 0.07, type: 'triangle' }); },
   hurt:     () => blip({ freq: 200, end: 90, dur: 0.18, vol: 0.2, type: 'sawtooth' }),
-  chomp:    () => sample('chomp', { vol: 1.5, rate: 1 }),
+  chomp:    () => sample('chomp', { vol: 1.275, rate: 1 }),
+  gatorhit: () => { sample('impact', { vol: 0.13, rate: 0.72 });
+                    noiseBurst({ dur: 0.11, vol: 0.09, low: 70, high: 1600 });
+                    blip({ freq: 120, end: 55, dur: 0.16, vol: 0.14, type: 'sawtooth' }); },
   jump:     () => blip({ freq: 300, end: 500, dur: 0.1, vol: 0.06, type: 'triangle' }),
   boing:    () => blip({ freq: 180, end: 700, dur: 0.25, vol: 0.16, type: 'triangle' }),
   shieldup: () => { blip({ freq: 500, end: 900, dur: 0.14, vol: 0.13, type: 'sine' });
