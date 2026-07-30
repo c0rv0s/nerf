@@ -182,7 +182,7 @@ const SFX = {
                     blip({ freq: 1100, end: 1600, dur: 0.12, vol: 0.07, type: 'triangle' }); },
   footstep: () => { noiseBurst({ dur: 0.075, vol: 0.045 + Math.random() * 0.018, low: 80, high: 900 });
                     blip({ freq: 105 + Math.random() * 24, end: 58, dur: 0.09, vol: 0.045, type: 'sine' }); },
-  splashstep: () => sample('splashstep', { vol: 0.25, rate: 1, alternate: true }),
+  splashstep: () => sample('splashstep', { vol: 0.2, rate: 1, alternate: true }),
   land:     () => { noiseBurst({ dur: 0.16, vol: 0.1, low: 55, high: 1200 });
                     blip({ freq: 92, end: 38, dur: 0.18, vol: 0.11, type: 'sine' }); },
   equip:    () => { blip({ freq: 720, end: 480, dur: 0.045, vol: 0.045, type: 'square' });
