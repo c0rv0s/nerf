@@ -980,6 +980,7 @@ function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style 
 }
 
 function addCanalAlligator(scene, world) {
+  const BITE_DURATION = 0.7;
   const gator = new THREE.Group();
   gator.name = 'fortress-canal-alligator';
 
@@ -987,6 +988,7 @@ function addCanalAlligator(scene, world) {
   const belly = mat(0x91a64a, { roughness: 0.95, flatShading: true });
   const tooth = new THREE.MeshBasicMaterial({ color: 0xf3edc8, toneMapped: false });
   const eye = new THREE.MeshBasicMaterial({ color: 0xffd83d, toneMapped: false });
+  const mouth = new THREE.MeshBasicMaterial({ color: 0x4f1618, toneMapped: false });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.72, 1.2), hide);
   body.scale.z = 0.82;
@@ -994,13 +996,20 @@ function addCanalAlligator(scene, world) {
   back.position.set(-0.25, 0.43, 0);
   const head = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.62, 1.05), hide);
   head.position.set(2.05, 0.02, 0);
+  // Both jaws pivot at the back of the mouth. Moving the upper jaw as well as
+  // the lower one keeps the attack readable above the canal waterline.
+  const upperJawPivot = new THREE.Group();
+  upperJawPivot.position.set(2.5, 0.04, 0);
   const upperJaw = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.25, 0.88), hide);
-  upperJaw.position.set(3.18, 0.04, 0);
+  upperJaw.position.x = 0.68;
+  upperJawPivot.add(upperJaw);
   const lowerJawPivot = new THREE.Group();
   lowerJawPivot.position.set(2.5, -0.11, 0);
   const lowerJaw = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.18, 0.82), belly);
   lowerJaw.position.x = 0.66;
-  lowerJawPivot.add(lowerJaw);
+  const mouthInterior = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.035, 0.7), mouth);
+  mouthInterior.position.set(0.68, 0.105, 0);
+  lowerJawPivot.add(lowerJaw, mouthInterior);
 
   // Keep the tail mesh offset behind a joint at the back of the body. Animating
   // the joint (rather than the mesh itself) makes the tail swing from its base.
@@ -1010,7 +1019,7 @@ function addCanalAlligator(scene, world) {
   tail.rotation.z = Math.PI / 2;
   tail.position.set(-1.55, 0, 0);
   tailPivot.add(tail);
-  gator.add(body, back, head, upperJaw, lowerJawPivot, tailPivot);
+  gator.add(body, back, head, upperJawPivot, lowerJawPivot, tailPivot);
 
   for (const z of [-0.38, 0.38]) {
     const e = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 4), eye);
@@ -1018,9 +1027,9 @@ function addCanalAlligator(scene, world) {
     gator.add(e);
     for (const x of [2.78, 3.12, 3.46]) {
       const fang = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.18, 5), tooth);
-      fang.position.set(x, -0.11, z * 0.88);
+      fang.position.set(x - upperJawPivot.position.x, -0.15, z * 0.88);
       fang.rotation.z = Math.PI;
-      gator.add(fang);
+      upperJawPivot.add(fang);
     }
   }
 
@@ -1033,8 +1042,10 @@ function addCanalAlligator(scene, world) {
     biteCooldowns: new WeakMap(),
     snapT: 0,
     biteArmed: false,
+    chompPlayed: false,
     chaseTarget: null,
     chaseT: 0,
+    provokedTarget: null,
     lungeT: 0,
     lungeCooldown: 0,
   };
@@ -1093,8 +1104,31 @@ function addCanalAlligator(scene, world) {
     bodyCollider.max.set(cx + ex, gator.position.y + 0.55, cz + ez);
   };
   updateBodyCollider();
-  world.gator = { group: gator, state };
+  const shootTarget = {
+    kind: 'canal-gator',
+    pos: gator.position,
+    radius: 3.1,
+    receivesSplash: true,
+    onHit(attacker) {
+      if (!attacker?.alive) return;
+      state.biteCooldowns.set(attacker, 0);
+      state.provokedTarget = attacker;
+      state.chaseTarget = attacker;
+      state.chaseT = Infinity;
+      state.snapT = 0;
+      state.biteArmed = false;
+      state.lungeT = 0.75;
+      state.lungeCooldown = 0;
+    },
+  };
+  world.gator = { group: gator, state, shootTarget };
   world.anim.push((dt, t, characters = []) => {
+    // Tick existing immunity before detection so a newly bitten character gets
+    // the complete three-second ignore window.
+    for (const ch of characters) {
+      const cooldown = state.biteCooldowns.get(ch);
+      if (cooldown > 0) state.biteCooldowns.set(ch, Math.max(0, cooldown - dt));
+    }
     // Capture riders relative to the old pose so turning carries them as well
     // as straight-line motion.
     const riders = [];
@@ -1116,9 +1150,19 @@ function addCanalAlligator(scene, world) {
       const dx = ch.pos.x - gator.position.x;
       const dz = ch.pos.z - gator.position.z;
       const d = Math.hypot(dx, dz);
-      if (d < nearbyDist && d < 8) { nearbyTarget = ch; nearbyDist = d; }
+      // Sight works across the forward half-plane whether the target moves or
+      // not. Hearing covers every direction, but only moving characters make
+      // enough noise to be detected.
+      const inFront = d > 0 && (dx * state.heading.x + dz * state.heading.z) / d >= 0;
+      const moving = Math.hypot(ch.vel?.x || 0, ch.vel?.z || 0) > 0.35;
+      const detected = d < 10 && (inFront || moving);
+      if (d < nearbyDist && detected) { nearbyTarget = ch; nearbyDist = d; }
     }
-    if (nearbyTarget) {
+    if (state.provokedTarget?.alive) {
+      state.chaseTarget = state.provokedTarget;
+      state.chaseT = Infinity;
+    } else if (nearbyTarget) {
+      state.provokedTarget = null;
       state.chaseTarget = nearbyTarget;
       state.chaseT = 3.25;
     } else {
@@ -1129,7 +1173,9 @@ function addCanalAlligator(scene, world) {
     let target = state.chaseTarget;
     let targetDist = Infinity;
     if (target) {
-      if (!inCanalWater(target) || (state.biteCooldowns.get(target) || 0) > 0) {
+      const provoked = state.provokedTarget === target;
+      if ((!provoked && !inCanalWater(target)) || (state.biteCooldowns.get(target) || 0) > 0) {
+        if (provoked) state.provokedTarget = null;
         state.chaseTarget = target = null;
         state.chaseT = 0;
       }
@@ -1138,7 +1184,10 @@ function addCanalAlligator(scene, world) {
       targetDist = Math.hypot(target.pos.x - gator.position.x, target.pos.z - gator.position.z);
       // The gator gives up after a short pursuit or if the target gets well
       // beyond the canal encounter instead of chasing forever across the map.
-      if (targetDist > 18) { state.chaseTarget = target = null; state.chaseT = 0; }
+      if (targetDist > 18 && state.provokedTarget !== target) {
+        state.chaseTarget = target = null;
+        state.chaseT = 0;
+      }
     }
 
     const desired = V(state.patrolDir, 0, Math.sin(t * 0.55) * 0.36);
@@ -1146,16 +1195,22 @@ function addCanalAlligator(scene, world) {
     state.lungeCooldown = Math.max(0, state.lungeCooldown - dt);
     if (target) {
       desired.set(target.pos.x - gator.position.x, 0, target.pos.z - gator.position.z).normalize();
-      if (targetDist < 4.5 && state.lungeCooldown <= 0) {
-        state.lungeT = 0.46;
+      // Distances are measured from the gator's centre; its mouth projects
+      // about 3.5m forward. Begin the burst and open the jaws at ~3m from the
+      // mouth so the full wind-up remains visible on the final approach.
+      if (targetDist < 6.5 && state.lungeCooldown <= 0) {
+        state.lungeT = 0.75;
         state.lungeCooldown = 1.8;
       }
       state.lungeT = Math.max(0, state.lungeT - dt);
-      speed = state.lungeT > 0 ? 12.5 : (targetDist < 5.5 ? 6.2 : 4);
+      speed = state.provokedTarget === target || state.lungeT > 0
+        ? 12.5
+        : (targetDist < 5.5 ? 6.2 : 4);
       const cooldown = state.biteCooldowns.get(target) || 0;
-      if (targetDist < 4.5 && cooldown <= 0 && state.snapT <= 0) {
-        state.snapT = 0.42;
+      if (targetDist < 6.5 && cooldown <= 0 && state.snapT <= 0) {
+        state.snapT = BITE_DURATION;
         state.biteArmed = true;
+        state.chompPlayed = false;
       }
     } else state.lungeT = 0;
 
@@ -1178,17 +1233,29 @@ function addCanalAlligator(scene, world) {
     updateBodyCollider();
 
     state.snapT = Math.max(0, state.snapT - dt);
-    const biteProgress = state.snapT > 0 ? 1 - state.snapT / 0.42 : 1;
-    const jawOpen = state.snapT > 0 ? Math.sin(biteProgress * Math.PI) : 0;
-    lowerJawPivot.rotation.z = -0.48 * jawOpen;
+    const biteProgress = state.snapT > 0 ? 1 - state.snapT / BITE_DURATION : 1;
+    // Open quickly, then close immediately while the gator carries full lunge
+    // speed through the target. There is no pause or escape-speed dip.
+    const jawOpen = state.snapT <= 0 ? 0 : biteProgress < 0.35
+      ? biteProgress / 0.35
+      : Math.max(0, 1 - (biteProgress - 0.35) / 0.65);
+    upperJawPivot.rotation.z = 0.48 * jawOpen;
+    lowerJawPivot.rotation.z = -0.82 * jawOpen;
+    if (state.biteArmed && biteProgress >= 0.35 && !state.chompPlayed) {
+      state.chompPlayed = true;
+      world.onGatorChomp?.();
+    }
     // The second half of the animation is the closing stroke. Check the actual
     // mouth against every character so proximity alone can never cause damage.
-    if (state.biteArmed && biteProgress >= 0.5) {
+    if (state.biteArmed && biteProgress >= 0.35) {
       for (const ch of characters) {
         if ((state.biteCooldowns.get(ch) || 0) > 0 || !mouthHits(ch)) continue;
-        state.biteCooldowns.set(ch, 2.75);
+        // After landing a bite, ignore this victim for a full three seconds so
+        // they have a real chance to escape before pursuit can resume.
+        state.biteCooldowns.set(ch, 3);
         world.onGatorBite?.(ch);
         state.chaseTarget = null;
+        if (state.provokedTarget === ch) state.provokedTarget = null;
         state.chaseT = 0;
         state.lungeT = 0;
         state.biteArmed = false;
@@ -1197,10 +1264,6 @@ function addCanalAlligator(scene, world) {
       if (biteProgress >= 0.94) state.biteArmed = false;
     }
     tailPivot.rotation.y = Math.sin(t * 5.5) * 0.18;
-    for (const ch of characters) {
-      const cooldown = state.biteCooldowns.get(ch);
-      if (cooldown > 0) state.biteCooldowns.set(ch, Math.max(0, cooldown - dt));
-    }
   });
 }
 

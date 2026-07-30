@@ -926,10 +926,10 @@ function startMatch(mapDef, mode = 'ffa') {
     applyDamage(ch, 50, LIGHTNING, { environmental: true });
     if (ch.isPlayer) hud.message('LIGHTNING STRIKE', '#dff7ff');
   };
+  world.onGatorChomp = () => sfx('chomp', world.gator?.group?.position);
   world.onGatorBite = (ch) => {
     if (!ch?.alive) return;
-    sfx('chomp', world.gator?.group?.position);
-    applyDamage(ch, 50, GATOR, { environmental: true });
+    applyDamage(ch, 50, GATOR, { environmental: true, silentImpact: true });
     if (ch.isPlayer) hud.message('GATOR BITE -50', '#b8e35b');
   };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
@@ -1039,18 +1039,22 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     onDamage: (target, dmg, attacker, ctx) => applyPredictedMultiplayerDamage(target, dmg, attacker, ctx),
     targets: () => shootableWorldTargets(),
     onTargetDamage: (target, dmg, attacker, ctx) => {
-      if (G?.multiplayerHost) damageWorldTarget(target, dmg, attacker, ctx);
+      // The gator has no health authority to reconcile; react immediately on
+      // the shooter's client. Destructible world targets remain host-owned.
+      if (target?.kind === 'canal-gator' || G?.multiplayerHost) {
+        damageWorldTarget(target, dmg, attacker, ctx);
+      }
     },
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  world.onGatorChomp = () => sfx('chomp', world.gator?.group?.position);
   world.onGatorBite = (ch) => {
     // The host owns environmental damage and distributes the resulting health
     // snapshot/events, preventing every client from applying the same bite.
     if (!ch?.alive) return;
-    sfx('chomp', world.gator?.group?.position);
     if (!G?.multiplayerHost) return;
-    applyDamage(ch, 50, GATOR, { environmental: true });
+    applyDamage(ch, 50, GATOR, { environmental: true, silentImpact: true });
     if (ch.isPlayer) hud.message('GATOR BITE -50', '#b8e35b');
   };
   world.getPickups = () => pickups.items;
@@ -2719,7 +2723,10 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
     });
   }
   if (attacker.isPlayer) { hud.hitmarker(); sfx('hit'); }
-  if (target.isPlayer) { hud.damageFlash(); sfx('hurt'); }
+  if (target.isPlayer) {
+    hud.damageFlash();
+    if (!ctx.silentImpact) sfx('hurt');
+  }
 
   if (target.hp <= 0) {
     target.jetpack = null;
@@ -3835,12 +3842,19 @@ function cometTouchesCharacter(comet, ch) {
 function shootableWorldTargets() {
   const comets = G?.comets || [];
   const scoreTargets = G?.world?.scoreTargets || [];
-  if (!comets.length) return scoreTargets;
-  if (!scoreTargets.length) return comets;
-  return [...comets, ...scoreTargets];
+  const gator = G?.world?.gator?.shootTarget;
+  return [...comets, ...scoreTargets, ...(gator ? [gator] : [])];
 }
 
 function damageWorldTarget(target, damage, attacker) {
+  if (target?.kind === 'canal-gator') {
+    target.onHit?.(attacker);
+    if (attacker?.isPlayer) {
+      hud.hitmarker();
+      sfx('hit');
+    }
+    return;
+  }
   if (target?.kind === 'score-poster') {
     hitScorePoster(target, attacker);
     return;

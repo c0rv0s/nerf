@@ -8,6 +8,7 @@ let jetpackAmbience = null;
 let _sourceAt = null;
 const noiseBuffers = new Map();
 const sampleBuffers = new Map();
+const sampleSequence = new Map();
 let samplesWarmed = false;
 const SAMPLE_GROUPS = {
   small: Array.from({ length: 5 }, (_, i) => `laserSmall_${String(i).padStart(3, '0')}.ogg`),
@@ -15,6 +16,8 @@ const SAMPLE_GROUPS = {
   large: Array.from({ length: 5 }, (_, i) => `laserLarge_${String(i).padStart(3, '0')}.ogg`),
   impact: Array.from({ length: 5 }, (_, i) => `impactMetal_${String(i).padStart(3, '0')}.ogg`),
   explosion: Array.from({ length: 5 }, (_, i) => `explosionCrunch_${String(i).padStart(3, '0')}.ogg`),
+  chomp: ['gator-chomp.mp3'],
+  splashstep: ['water-step-1.ogg', 'water-step-2.ogg'],
 };
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -133,12 +136,14 @@ function noiseBurst({ dur = 0.08, vol = 0.1, low = 180, high = 3200, delay = 0 }
   } catch { /* audio blocked — fine */ }
 }
 
-function sample(group, { vol = 0.12, rate = 1, delay = 0 } = {}) {
+function sample(group, { vol = 0.12, rate = 1, delay = 0, alternate = false } = {}) {
   try {
     const a = ac();
     const files = SAMPLE_GROUPS[group];
     if (!files?.length) return;
-    const file = files[Math.floor(Math.random() * files.length)];
+    const index = alternate ? (sampleSequence.get(group) || 0) : Math.floor(Math.random() * files.length);
+    const file = files[index % files.length];
+    if (alternate) sampleSequence.set(group, index + 1);
     const buffer = sampleBuffers.get(file);
     if (!buffer) return;
     const source = a.createBufferSource();
@@ -177,6 +182,7 @@ const SFX = {
                     blip({ freq: 1100, end: 1600, dur: 0.12, vol: 0.07, type: 'triangle' }); },
   footstep: () => { noiseBurst({ dur: 0.075, vol: 0.045 + Math.random() * 0.018, low: 80, high: 900 });
                     blip({ freq: 105 + Math.random() * 24, end: 58, dur: 0.09, vol: 0.045, type: 'sine' }); },
+  splashstep: () => sample('splashstep', { vol: 0.25, rate: 1, alternate: true }),
   land:     () => { noiseBurst({ dur: 0.16, vol: 0.1, low: 55, high: 1200 });
                     blip({ freq: 92, end: 38, dur: 0.18, vol: 0.11, type: 'sine' }); },
   equip:    () => { blip({ freq: 720, end: 480, dur: 0.045, vol: 0.045, type: 'square' });
@@ -188,10 +194,7 @@ const SFX = {
   hit:      () => { sample('impact', { vol: 0.095, rate: 1.35 });
                     blip({ freq: 1400, end: 1000, dur: 0.05, vol: 0.07, type: 'triangle' }); },
   hurt:     () => blip({ freq: 200, end: 90, dur: 0.18, vol: 0.2, type: 'sawtooth' }),
-  chomp:    () => { sample('impact', { vol: 0.18, rate: 0.62 });
-                    noiseBurst({ dur: 0.09, vol: 0.16, low: 70, high: 1050 });
-                    blip({ freq: 145, end: 48, dur: 0.16, vol: 0.2, type: 'square' });
-                    noiseBurst({ dur: 0.055, vol: 0.1, low: 120, high: 1800, delay: 0.075 }); },
+  chomp:    () => sample('chomp', { vol: 1.5, rate: 1 }),
   jump:     () => blip({ freq: 300, end: 500, dur: 0.1, vol: 0.06, type: 'triangle' }),
   boing:    () => blip({ freq: 180, end: 700, dur: 0.25, vol: 0.16, type: 'triangle' }),
   shieldup: () => { blip({ freq: 500, end: 900, dur: 0.14, vol: 0.13, type: 'sine' });

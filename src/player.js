@@ -274,7 +274,14 @@ export class Player {
       warming ? 1 - this.warmupT / w.warmup : -1,
       now * 0.001,
     );
-    const moving = this.grounded ? (this._speedRatio || 0) : 0;
+    // Every map registers swimmable areas in waterZones. Splash footsteps are
+    // reserved for wading: feet grounded, with the player's head above water.
+    // Swimming or walking along a fully submerged riverbed stays silent.
+    const water = this._environmentState().water;
+    const inWater = !!water;
+    const underwater = inWater && this.pos.y + this.eyeHeight < water.surfaceY - 0.1;
+    const wading = inWater && this.grounded && !underwater;
+    const moving = (this.grounded || inWater) ? (this._speedRatio || 0) : 0;
     const bobY = Math.sin(now * 0.012) * moving * 0.012;
     const bobX = Math.cos(now * 0.006) * moving * 0.008;
     this.viewmodel.position.set(
@@ -297,14 +304,16 @@ export class Player {
     this.muzzleFlash.material.rotation = now * 0.018;
 
     if (this.grounded && !wasGrounded && fallSpeed < -4.5) sfx('land');
-    if (this.grounded && moving > 0.16) {
+    const canStep = this.grounded && (!inWater || wading);
+    if (canStep && moving > 0.16) {
       const moveScale = this.world.characterMoveScale?.(this) || 1;
       this.stepDistance += this.world.playerSpeed * moveScale * moving * dt;
-      if (this.stepDistance >= 3.25) {
-        this.stepDistance %= 3.25;
-        sfx('footstep');
+      const stepLength = wading ? 2.7 : 3.25;
+      if (this.stepDistance >= stepLength) {
+        this.stepDistance %= stepLength;
+        sfx(wading ? 'splashstep' : 'footstep');
       }
-    } else if (!this.grounded) {
+    } else if (!canStep) {
       this.stepDistance = Math.min(this.stepDistance, 2.2);
     }
 
