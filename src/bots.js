@@ -104,6 +104,10 @@ export class Bot {
 
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
+    // Multiplayer host-controlled humans reuse Bot instances and apply the
+    // remote client's orientation on every input packet. Keep `up` available
+    // on ordinary maps too, not only after entering an Escher map.
+    this.up = new THREE.Vector3(0, 1, 0);
     this.radius = 0.45;
     this.height = 1.8;
 
@@ -254,10 +258,9 @@ export class Bot {
     this._jetpackWants = false;
     this._drownT = 0;
     this._drownDamageT = 0;
+    this.up.set(0, 1, 0);
     // PRISM RUN: orient to whatever surface we spawned on
     if (this.world.escher) {
-      this.up = this.up || new THREE.Vector3(0, 1, 0);
-      this.up.set(0, 1, 0);
       const nf = this._nearSurfAt(this.pos);
       if (nf) this.up.copy(nf);
     }

@@ -1240,7 +1240,10 @@ function updateRemoteHuman(ch, dt, fire) {
   const turnA = 1 - Math.exp(-24 * dt);
   ch.yaw = smoothNetworkAngle(ch.yaw || 0, input.yaw || 0, turnA);
   ch.pitch += ((input.pitch || 0) - (ch.pitch || 0)) * turnA;
-  if (input.up) ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
+  if (input.up) {
+    ch.up ||= new THREE.Vector3(0, 1, 0);
+    ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
+  }
   if (ch.jetpack) ch.jetpack.active = !!input.jetpackActive;
   if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
     if (input.weapon !== ch.weapon) ch.cancelWeaponWarmup();
