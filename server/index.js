@@ -1203,6 +1203,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     ? snapshot.events.slice(0, 32).map(ev => sanitizeEvent(ev, allowedEventIds)).filter(Boolean)
     : [];
   const drops = Array.isArray(snapshot.drops) ? snapshot.drops.slice(0, 32).map(d => sanitizeDrop(d, lobby)).filter(Boolean) : [];
+  const targetCooldowns = sanitizeTargetCooldowns(snapshot.targetCooldowns);
   return {
     tick: Date.now(),
     authorityEpoch: lobby.authorityEpoch,
@@ -1216,6 +1217,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     players: sanitizedPlayers,
     events,
     drops,
+    targetCooldowns,
   };
 }
 
@@ -1229,6 +1231,23 @@ function sanitizeAwards(awards) {
   for (const [key, value] of Object.entries(awards).slice(0, 24)) {
     if (!/^[a-zA-Z0-9_-]{1,32}$/.test(key)) continue;
     out[key] = clampInt(value, 0, 999);
+  }
+  return out;
+}
+
+function sanitizeTargetCooldowns(states) {
+  if (!Array.isArray(states)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const state of states.slice(0, 16)) {
+    if (!state || typeof state !== 'object') continue;
+    const id = String(state.id || '');
+    if (!/^target-poster-\d{1,2}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      cooldown: Math.max(0, Math.min(30, finite(state.cooldown, 0))),
+    });
   }
   return out;
 }

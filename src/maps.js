@@ -37,6 +37,7 @@ const depthBiasFor = (collide, lane) => {
 function newWorld(opts) {
   return Object.assign({
     colliders: [], ramps: [], waypoints: [], pickups: [], jumpPads: [],
+    scoreTargets: [],
     manualLinks: [], anim: [], _geoGroups: {}, _surfaceGeometries: [], _visualBoxes: [],
     _wallFeatures: [], visualSurfaceConflicts: [], visualSurfaceIssues: [], wallFeatureIssues: [],
     spawns: { blue: [], red: [], ffa: [] },
@@ -54,11 +55,24 @@ const texCache = {};
 function canvasTex(key, draw) {
   if (texCache[key]) return texCache[key];
   const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  draw(c.getContext('2d'));
+  // These textures are projected across the large floors, ramps, and walls in
+  // Blast Complex and Fortress Falls. At the old 128px resolution they became
+  // visibly soft up close, and without anisotropic filtering they blurred even
+  // more aggressively at the shallow viewing angles used for walkable ground.
+  // Keep the procedural artwork's 128-unit coordinate system while rasterizing
+  // it at 4x resolution so every existing drawing remains visually identical.
+  const scale = 4;
+  c.width = c.height = 128 * scale;
+  const g = c.getContext('2d');
+  g.scale(scale, scale);
+  draw(g);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.anisotropy = 16;
   texCache[key] = t;
   return t;
 }
@@ -305,9 +319,10 @@ export const texturesReady = Promise.all(
           // mirrored repeat hides any seams in not-quite-tileable AI images
           t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping;
           t.colorSpace = THREE.SRGBColorSpace;
-          t.anisotropy = 8;
+          t.anisotropy = 16;
           const n = makeNormalMap(t.image);
           n.wrapS = n.wrapT = THREE.MirroredRepeatWrapping;
+          n.anisotropy = 16;
           AI_TEX[name] = { map: t, normal: n };
           done();
         }, undefined, () => done());
@@ -328,6 +343,47 @@ function addDecal(scene, name, x, y, z, w, yaw = 0, h = w) {
   m.position.set(x, y, z);
   m.rotation.y = yaw;
   scene.add(m);
+  return m;
+}
+
+// Bullseye posters are thin rectangular targets rather than spherical props.
+// Their material dims while cooling down so players can tell when that exact
+// poster is ready to score again.
+function addScoreTarget(scene, world, x, y, z, w, yaw = 0, h = w) {
+  const mesh = addDecal(scene, 'target', x, y, z, w, yaw, h);
+  if (!mesh) return null;
+  const normal = V(0, 0, 1).applyAxisAngle(V(0, 1, 0), yaw).normalize();
+  const right = V(1, 0, 0).applyAxisAngle(V(0, 1, 0), yaw).normalize();
+  const target = {
+    id: `target-poster-${world.scoreTargets.length}`,
+    kind: 'score-poster',
+    shape: 'plane',
+    pos: V(x, y, z),
+    normal,
+    right,
+    up: V(0, 1, 0),
+    halfWidth: w / 2,
+    halfHeight: h / 2,
+    points: 250,
+    cooldownDuration: 30,
+    cooldown: 0,
+    active: true,
+    receivesSplash: false,
+    mesh,
+    setCooldown(seconds) {
+      this.cooldown = Math.max(0, Math.min(this.cooldownDuration, Number(seconds) || 0));
+      this.active = this.cooldown <= 0;
+      const brightness = this.active ? 1
+        : this.cooldown > 3 ? 0.28 : 0.28 + 0.72 * (1 - this.cooldown / 3);
+      this.mesh.material.color.setRGB(brightness, brightness, brightness);
+    },
+  };
+  world.scoreTargets.push(target);
+  world.anim.push((dt) => {
+    if (target.cooldown <= 0) return;
+    target.setCooldown(target.cooldown - dt);
+  });
+  return mesh;
 }
 
 function mat(color, opts = {}) {
@@ -856,9 +912,9 @@ function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exit
   // Keep the sheet visibly on the outside face while the invisible climb zone
   // remains round and forgiving.
   leaf.position.set(
-    x - hookX * 0.14,
+    x + hookX * 0.14,
     visualTopY - stripH / 2,
-    z - hookZ * 0.14,
+    z + hookZ * 0.14,
   );
   leaf.castShadow = leaf.receiveShadow = true;
   scene.add(leaf);
@@ -1480,13 +1536,13 @@ function buildArena(scene) {
   // wall art — keep clear vertical separation from the y≈7 glow stripes.
   addDecal(scene, 'poster1', -50, 13.5, -56.9, 9, 0);
   registerWallFeature(world, 'north', 'Rumble poster', -50, 13.5, 9, 9);
-  addDecal(scene, 'target', 50, 13.5, -56.9, 9, 0);
+  addScoreTarget(scene, world, 50, 13.5, -56.9, 9, 0);
   registerWallFeature(world, 'north', 'target poster', 50, 13.5, 9, 9);
   addDecal(scene, 'hazard', 0, 12.2, 56.9, 12, Math.PI, 6);
   registerWallFeature(world, 'south', 'hazard poster', 0, 12.2, 12, 6);
   addDecal(scene, 'poster1', -76.9, 13.5, 30, 9, Math.PI / 2);
   registerWallFeature(world, 'west', 'Rumble poster', 30, 13.5, 9, 9);
-  addDecal(scene, 'target', 76.9, 13.5, -30, 9, -Math.PI / 2);
+  addScoreTarget(scene, world, 76.9, 13.5, -30, 9, -Math.PI / 2);
   registerWallFeature(world, 'east', 'target poster', -30, 13.5, 9, 9);
   // ground variety: an arcade-carpet lounge in the west wing
   addBox(scene, world, -55, 0.031, -30, 34, 0.06, 40, arenaColor.magenta, { tex: 'arcade', repeat: [7, 8], roughness: 0.96 });
@@ -1908,59 +1964,10 @@ function addFortressPresentation(scene, world) {
     floorPlane(40, 0.012, 0, 0.44, 15.8),
   ], 0.94);
 
-  // Wall labels occupy dedicated bays, clear of the four legacy posters.
-  addArenaSign(essential, 'FORTRESS FALLS', 0, 7.1, 44.94, 24, 5.8, Math.PI, '#ffd34d');
-  registerWallFeature(world, 'north', 'FORTRESS FALLS sign', 0, 7.1, 24, 5.8);
-  addArenaSign(essential, 'LOWER CANAL', 0, 6.4, -44.94, 19, 4.7, 0, '#43dcff');
-  registerWallFeature(world, 'south', 'LOWER CANAL sign', 0, 6.4, 19, 4.7);
-  addArenaSign(essential, 'CROWN KEEP', 0, 5.6, 13.93, 9.2, 2.3, Math.PI, '#ffd34d');
-
   registerWallFeature(world, 'south', 'target poster', -30, 6.5, 7, 7);
   registerWallFeature(world, 'north', 'Rumble poster', 30, 6.5, 7, 7);
   registerWallFeature(world, 'east', 'hazard poster', 20, 5.5, 8, 8);
   registerWallFeature(world, 'west', 'Rumble poster', -20, 5.5, 8, 8);
-
-  // Twin asymmetric cascades finally make "Falls" part of the map's identity.
-  // They spill from the side bridge houses into the canal in two draw calls.
-  const cascadeNormal = waterNormalTex().clone();
-  cascadeNormal.needsUpdate = true;
-  cascadeNormal.repeat.set(1.5, 4.5);
-  const cascadeGeometries = [];
-  for (const [x, z] of [[-40, 7.03], [40, -7.03]]) {
-    const geometry = new THREE.PlaneGeometry(5.2, 8.0);
-    geometry.translate(x, 0.85, z);
-    cascadeGeometries.push(geometry);
-    world.waterfallZones ||= [];
-    world.waterfallZones.push({
-      minX: x - 2.8, maxX: x + 2.8,
-      minZ: z - 1.25, maxZ: z + 1.25,
-      minY: -3.4, maxY: 5.2,
-    });
-  }
-  const cascades = new THREE.Mesh(
-    mergeGeometries(cascadeGeometries, false),
-    new THREE.MeshStandardMaterial({
-      color: 0x49cfff,
-      transparent: true,
-      opacity: 0.72,
-      roughness: 0.1,
-      metalness: 0.02,
-      normalMap: cascadeNormal,
-      normalScale: new THREE.Vector2(0.55, 1.45),
-      emissive: 0x075e8c,
-      emissiveIntensity: 0.32,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    }),
-  );
-  essential.add(cascades);
-  for (const geometry of cascadeGeometries) geometry.dispose();
-
-  const foamGeometries = [
-    floorPlane(-40, -3.08, 5.9, 6.2, 2.2),
-    floorPlane(40, -3.08, -5.9, 6.2, 2.2),
-  ];
-  const foam = surfaceBatch(standard, 0xd9fbff, foamGeometries, 0.5);
 
   // Repeated shield crests break up the long blank lane walls. Instancing
   // keeps the whole set to one draw call; they remain flush wall decoration.
@@ -2012,14 +2019,7 @@ function addFortressPresentation(scene, world) {
   registerWallFeature(world, 'north', 'west royal banner', -67, 6.1, 3.2, 5.8);
   registerWallFeature(world, 'south', 'east royal banner', 67, 6.1, 3.2, 5.8);
 
-  // The sluice sign marks a deliberately cramped close-range route. It is
-  // mounted beyond the wall face rather than sharing its depth plane.
-  addArenaSign(essential, 'SLUICE 99', -52.5, 2.55, -27.46, 8.2, 2.0, 0, '#43dcff');
-  registerWallFeature(world, 'sluice-north', 'SLUICE 99 sign', -52.5, 2.55, 8.2, 2.0);
-
   world.anim.push((dt, t) => {
-    cascadeNormal.offset.set(Math.sin(t * 0.9) * 0.025, t * 1.35);
-    foam.material.opacity = 0.45 + Math.sin(t * 5.4) * 0.08;
     for (let i = 0; i < banners.length; i++) {
       banners[i].rotation.z = Math.sin(t * 1.6 + i * 2.1) * 0.035;
     }
@@ -2094,8 +2094,6 @@ function buildFortress(scene) {
   // Bridges: grand center bridge + two side bridges
   // decks sit 2cm below bank level — flush tops z-fight where they overlap
   addBox(scene, world, 0, -0.42, 0, 9, 0.8, 20, fortress.bridge, { tex: 'fortress-deck' });
-  addBox(scene, world, -4.2, 0.7, 0, 0.6, 1.4, 20, fortress.gold, { emissive: fortress.gold, emissiveIntensity: 0.35 });
-  addBox(scene, world, 4.2, 0.7, 0, 0.6, 1.4, 20, fortress.gold, { emissive: fortress.gold, emissiveIntensity: 0.35 });
   addBox(scene, world, -40, -0.42, 0, 6, 0.8, 18, fortress.royalDark, { tex: 'fortress-deck', repeat: [1, 3] });
   addBox(scene, world, 40, -0.42, 0, 6, 0.8, 18, fortress.royalDark, { tex: 'fortress-deck', repeat: [1, 3] });
   // Castle bridge houses over the side crossings, replacing the old floating
@@ -2134,22 +2132,19 @@ function buildFortress(scene) {
   addRamp(scene, world, { axis: 'z', minX: -41.7, maxX: -38.3, minZ: -4.5, maxZ: -4, h0: 11, h1: 11, color: fortress.royalMid, tex: 'fortress-deck' });
   addRamp(scene, world, { axis: 'z', minX: 38.3, maxX: 41.7, minZ: 4.5, maxZ: 9, h0: 11, h1: 6.8, color: fortress.royalMid, tex: 'fortress-deck' });
   addRamp(scene, world, { axis: 'z', minX: 38.3, maxX: 41.7, minZ: 4, maxZ: 4.5, h0: 11, h1: 11, color: fortress.royalMid, tex: 'fortress-deck' });
-  addVine(scene, world, -45.2, -10.2, 0.2, 6.9, 0.85, -0.24, 0);
-  addVine(scene, world, -34.8, -10.2, 0.2, 6.9, 0.85, 0.24, 0);
-  addVine(scene, world, 34.8, 10.2, 0.2, 6.9, 0.85, -0.24, 0);
-  addVine(scene, world, 45.2, 10.2, 0.2, 6.9, 0.85, 0.24, 0);
-  addVine(scene, world, -44.25, 4.8, 6.9, 11.1, 0.75, -0.2, 0);
-  addVine(scene, world, 44.25, -4.8, 6.9, 11.1, 0.75, 0.2, 0);
-  // Gatehouse towers flanking the center bridge (decor + cover)
-  addBox(scene, world, -9, 5, 0, 6, 10, 6, fortress.hotOrange, { tex: 'fortress-stone' });
-  addBox(scene, world, 9, 5, 0, 6, 10, 6, fortress.hotOrange, { tex: 'fortress-stone' });
-  addBox(scene, world, 0, 10.8, 0, 24, 1.6, 6, fortress.royal, { tex: 'fortress-deck' });   // arch overhead
-  // banners on the perimeter + a target on the west gatehouse tower
-  addDecal(scene, 'target', -30, 6.5, -44.9, 7, 0);
+  // Mount the bridge-house vines on the outer faces of their 2.2m support
+  // columns. Using the column centers left the visible sheets floating/clipped.
+  addVine(scene, world, -46.3, -10.2, 0.2, 6.9, 0.85, -0.24, 0);
+  addVine(scene, world, -33.7, -10.2, 0.2, 6.9, 0.85, 0.24, 0);
+  addVine(scene, world, 33.7, 10.2, 0.2, 6.9, 0.85, -0.24, 0);
+  addVine(scene, world, 46.3, 10.2, 0.2, 6.9, 0.85, 0.24, 0);
+  addVine(scene, world, -44.25, 4, 6.9, 11.1, 0.75, -0.2, 0);
+  addVine(scene, world, 44.25, -4, 6.9, 11.1, 0.75, 0.2, 0);
+  // Banners and targets on the perimeter walls.
+  addScoreTarget(scene, world, -30, 6.5, -44.9, 7, 0);
   addDecal(scene, 'poster2', 30, 6.5, 44.9, 7, Math.PI);
   addDecal(scene, 'hazard', 76.9, 5.5, 20, 8, -Math.PI / 2);
   addDecal(scene, 'poster2', -76.9, 5.5, -20, 8, Math.PI / 2);
-  addDecal(scene, 'target', -9, 6, -3.06, 4, Math.PI);
   addVine(scene, world, -55, -43.5, 0.2, 5.1, 0.95, 0, -0.25);
   addVine(scene, world, 53, 43.5, 0.2, 5.1, 0.9, 0, 0.25);
   addVine(scene, world, -34, -43.5, 0.2, 5.1, 0.85, 0, -0.25);
@@ -2204,11 +2199,11 @@ function buildFortress(scene) {
   addBox(scene, world, 8.2, 8.55, 13.45, 6.6, 1.5, 0.9, fortress.gold, { tex: 'fortress-stone' });
   for (const x of [-11.55, 11.55]) {
     if (x > 0) {
-      // The east side is the roof-ramp entrance. Its opening spans z=23..31,
-      // clearing the full six-metre ramp plus a metre for the player capsule
-      // on either side instead of leaving parapet ends in front of the path.
+      // The east side serves both the roof ramp and the east-west sky catwalk.
+      // Keep the opening clear through z=34.5 so the full four-metre catwalk
+      // meets the roof instead of running into the north parapet segment.
       addBox(scene, world, x, 8.55, 19.25, 0.9, 1.5, 7.5, fortress.gold, { tex: 'fortress-stone' });
-      addBox(scene, world, x, 8.55, 34.25, 0.9, 1.5, 6.5, fortress.gold, { tex: 'fortress-stone' });
+      addBox(scene, world, x, 8.55, 36, 0.9, 1.5, 3, fortress.gold, { tex: 'fortress-stone' });
     } else {
       addBox(scene, world, x, 8.55, 20, 0.9, 1.5, 9, fortress.gold, { tex: 'fortress-stone' });
       addBox(scene, world, x, 8.55, 33, 0.9, 1.5, 9, fortress.gold, { tex: 'fortress-stone' });
@@ -2225,7 +2220,9 @@ function buildFortress(scene) {
 
   // Climbable corner towers (NE + SW), decor towers (NW + SE)
   addBox(scene, world, 64, 3.5, 38, 9, 7, 9, fortress.cyanStone, { tex: 'fortress-stone' });
-  addBox(scene, world, 64, 7.3, 38, 10, 0.6, 10, fortress.royal, { tex: 'fortress-deck' });
+  // Extend the cap south through z=30 so the entire four-metre sky catwalk
+  // lands on the tower platform rather than touching it at one narrow corner.
+  addBox(scene, world, 64, 7.3, 36.5, 10, 0.6, 13, fortress.royal, { tex: 'fortress-deck' });
   addVine(scene, world, 59.5, 38, 0.2, 7.7, 0.85, -0.25, 0);
   addRamp(scene, world, { axis: 'x', minX: 46, maxX: 58.5, minZ: 35, maxZ: 41, h0: 0, h1: 7.6, color: fortress.royalMid, tex: 'fortress-deck' });
   addRamp(scene, world, { axis: 'x', minX: 58.5, maxX: 59, minZ: 35, maxZ: 41, h0: 7.6, h1: 7.6, color: fortress.royalMid, tex: 'fortress-deck' });
@@ -2812,10 +2809,10 @@ function buildCanopy(scene) {
   wp(world, -44, 0, -60); wp(world, -35, 12, -60);
   world.manualLinks.push([-44, 0, -60, -35, 12, -60, true]);
   // tournament banners on the hedges + the big tree
-  addDecal(scene, 'target', -20, 8, -79.94, 10, 0);
+  addScoreTarget(scene, world, -20, 8, -79.94, 10, 0);
   addDecal(scene, 'poster4', 20, 9, 79.94, 10, Math.PI);
   addDecal(scene, 'hazard', -79.94, 8, 20, 10, Math.PI / 2);
-  addDecal(scene, 'target', 0, 12, -2.56, 4, Math.PI);
+  addScoreTarget(scene, world, 0, 12, -2.56, 4, Math.PI);
   for (const [x, z, w, d] of [[0, -83, 172, 6], [0, 83, 172, 6], [-83, 0, 6, 172], [83, 0, 6, 172]]) {
     addBox(scene, world, x, 14, z, w, 40, d, 0xf4fbf2, { tex: 'canopy-wall', repeat: [10, 3] });
   }
@@ -3509,12 +3506,12 @@ function buildCity(scene) {
   world.manualLinks.push([-49, 0, 20, -40, 10, 20, true]);
   // billboards — it's a city, sell something
   addDecal(scene, 'poster5', -40, 14, -63.94, 14, 0);
-  addDecal(scene, 'target', 40, 14, -63.94, 12, 0);
+  addScoreTarget(scene, world, 40, 14, -63.94, 12, 0);
   addDecal(scene, 'hazard', 0, 12, 63.94, 16, Math.PI);
   addDecal(scene, 'poster5', 84.94, 12, 20, 12, -Math.PI / 2);
   // The Galleria's south face is reserved for its large route label above.
   // Keep this poster on the west face so neither landmark obscures the other.
-  addDecal(scene, 'target', -25.96, 20, 44, 8, Math.PI / 2);
+  addScoreTarget(scene, world, -25.96, 20, 44, 8, Math.PI / 2);
   addDecal(scene, 'hazard', -12, 15, -27.56, 9, Math.PI);
 
   // street clutter (cars/kiosks)

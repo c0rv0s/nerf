@@ -833,6 +833,36 @@ export class ProjectileSystem {
     return point.distanceTo(a.clone().addScaledVector(ab, t));
   }
 
+  segmentTouchesTarget(target, a, b, pad = 0) {
+    if (target.shape !== 'plane') {
+      return this.distancePointToSegment(target.pos, a, b) < (target.radius || 1) + pad;
+    }
+    const startX = a.x - target.pos.x;
+    const startY = a.y - target.pos.y;
+    const startZ = a.z - target.pos.z;
+    const endX = b.x - target.pos.x;
+    const endY = b.y - target.pos.y;
+    const endZ = b.z - target.pos.z;
+    const startDistance = startX * target.normal.x + startY * target.normal.y + startZ * target.normal.z;
+    const endDistance = endX * target.normal.x + endY * target.normal.y + endZ * target.normal.z;
+    const distanceDelta = startDistance - endDistance;
+    let t;
+    if (Math.abs(distanceDelta) > 1e-6) {
+      t = Math.max(0, Math.min(1, startDistance / distanceDelta));
+    } else {
+      t = Math.abs(startDistance) <= Math.abs(endDistance) ? 0 : 1;
+    }
+    const offsetX = startX + (endX - startX) * t;
+    const offsetY = startY + (endY - startY) * t;
+    const offsetZ = startZ + (endZ - startZ) * t;
+    const normalOffset = offsetX * target.normal.x + offsetY * target.normal.y + offsetZ * target.normal.z;
+    if (Math.abs(normalOffset) > pad + 0.03) return false;
+    const rightOffset = offsetX * target.right.x + offsetY * target.right.y + offsetZ * target.right.z;
+    const upOffset = offsetX * target.up.x + offsetY * target.up.y + offsetZ * target.up.z;
+    return Math.abs(rightOffset) <= target.halfWidth + pad &&
+      Math.abs(upOffset) <= target.halfHeight + pad;
+  }
+
   characterTouchesSegment(ch, a, b, pad = 0.25) {
     const up = ch.up || new THREE.Vector3(0, 1, 0);
     const visualScale = this.world.characterVisualScale?.(ch) || 1;
@@ -878,9 +908,9 @@ export class ProjectileSystem {
       target && target.active !== false && target.destroyed !== true && target.pos);
   }
 
-  projectileTouchesTarget(target, p) {
-    const radius = (target.radius || 1) + (p.projectileSize || p.weapon.size || 0.12) * 0.6;
-    return p.pos.distanceToSquared(target.pos) < radius * radius;
+  projectileTouchesTarget(target, p, previous = p.pos) {
+    const projectileRadius = (p.projectileSize || p.weapon.size || 0.12) * 0.6;
+    return this.segmentTouchesTarget(target, previous, p.pos, projectileRadius);
   }
 
   hitLimitReached(p, ch) {
@@ -971,10 +1001,9 @@ export class ProjectileSystem {
         }
         for (const target of this.shootableTargets()) {
           if ((b.hitCooldowns.get(target) || 0) > 0) continue;
-          const radius = (target.radius || 1) + 0.18;
           const hitSegment = b.segments
             .filter(seg => seg.group.visible &&
-              this.distancePointToSegment(target.pos, seg.activeStart, seg.activeEnd) < radius)
+              this.segmentTouchesTarget(target, seg.activeStart, seg.activeEnd, 0.18))
             .sort((a, c) => (c.damage ?? b.weapon.dmg) - (a.damage ?? b.weapon.dmg))[0];
           if (hitSegment) {
             this.fx.onTargetDamage?.(
@@ -1083,13 +1112,13 @@ export class ProjectileSystem {
             break;
           }
         }
-        // Map-specific shootable hazards (currently Asteroid Belt comets) use
-        // the same sub-stepped collision path as characters, so Hyperstrike
-        // and other fast rounds cannot tunnel through them between frames.
+        // Map-specific shootables (comets and score posters) use the same
+        // sub-stepped collision path as characters, so Hyperstrike and other
+        // fast rounds cannot tunnel through them between frames.
         if (!dead) {
           for (const target of this.shootableTargets()) {
             if (p.pierced?.has(target) || p.ignore?.has(target)) continue;
-            if (!this.projectileTouchesTarget(target, p)) continue;
+            if (!this.projectileTouchesTarget(target, p, prev)) continue;
             this.fx.onTargetDamage?.(
               target, p.damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
             this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.72 * Math.sqrt(p.recursionScale || 1));
@@ -1145,6 +1174,7 @@ export class ProjectileSystem {
       }
     }
     for (const target of this.shootableTargets()) {
+      if (target.receivesSplash === false) continue;
       const d = target.pos.distanceTo(p.pos);
       if (d >= p.weapon.splash + (target.radius || 1)) continue;
       const dmg = p.weapon.flatSplash

@@ -906,8 +906,8 @@ function startMatch(mapDef, mode = 'ffa') {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
     onDamage: (target, dmg, attacker, ctx) => applyDamage(target, dmg, attacker, ctx),
-    targets: () => G?.comets || [],
-    onTargetDamage: (target, dmg, attacker, ctx) => damageComet(target, dmg, attacker, ctx),
+    targets: () => shootableWorldTargets(),
+    onTargetDamage: (target, dmg, attacker, ctx) => damageWorldTarget(target, dmg, attacker, ctx),
   });
 
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
@@ -1030,9 +1030,9 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
     onDamage: (target, dmg, attacker, ctx) => applyPredictedMultiplayerDamage(target, dmg, attacker, ctx),
-    targets: () => G?.comets || [],
+    targets: () => shootableWorldTargets(),
     onTargetDamage: (target, dmg, attacker, ctx) => {
-      if (G?.multiplayerHost) damageComet(target, dmg, attacker, ctx);
+      if (G?.multiplayerHost) damageWorldTarget(target, dmg, attacker, ctx);
     },
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
@@ -1414,6 +1414,7 @@ function applyMultiplayerSnapshot(snap) {
   if (!G?.multiplayer) return;
   G.mode = snap.mode || G.mode || 'ffa';
   if (snap.scores) G.scores = { blue: snap.scores.blue || 0, red: snap.scores.red || 0 };
+  applyScoreTargetCooldowns(snap.targetCooldowns);
   G.timeLeft = Math.max(0, (snap.phaseEndsAt - Date.now()) / 1000);
   const seen = new Set();
   for (const state of snap.players || []) {
@@ -3815,6 +3816,37 @@ function cometTouchesCharacter(comet, ch) {
   return distancePointToSegment3(comet.pos, foot, head) < comet.radius + radius;
 }
 
+function shootableWorldTargets() {
+  const comets = G?.comets || [];
+  const scoreTargets = G?.world?.scoreTargets || [];
+  if (!comets.length) return scoreTargets;
+  if (!scoreTargets.length) return comets;
+  return [...comets, ...scoreTargets];
+}
+
+function damageWorldTarget(target, damage, attacker) {
+  if (target?.kind === 'score-poster') {
+    hitScorePoster(target, attacker);
+    return;
+  }
+  damageComet(target, damage, attacker);
+}
+
+function hitScorePoster(target, attacker) {
+  if (!G || !target?.active || !attacker || G.over || G.atrium) return;
+  target.setCooldown?.(target.cooldownDuration || 30);
+  const points = Math.max(0, Math.round(target.points || 250));
+  attacker.score = Math.max(0, Number(attacker.score) || 0) + points;
+  if (G.mode === 'tdm' && Object.hasOwn(G.scores, attacker.team)) {
+    G.scores[attacker.team] += points;
+  }
+  if (attacker.isPlayer) {
+    hud.hitmarker();
+    sfx('coin');
+    hud.message(`BULLSEYE! +${points} PTS`, '#ffd23c');
+  }
+}
+
 function damageComet(comet, damage, attacker) {
   if (!comet?.authoritative || comet.destroyed || damage <= 0) return;
   comet.health -= damage;
@@ -4054,6 +4086,20 @@ function serializeDrops() {
     }));
 }
 
+function serializeScoreTargetCooldowns() {
+  return (G?.world?.scoreTargets || [])
+    .filter(target => target.cooldown > 0)
+    .map(target => ({ id: target.id, cooldown: target.cooldown }));
+}
+
+function applyScoreTargetCooldowns(states) {
+  if (!Array.isArray(states)) return;
+  const cooldownById = new Map(states.map(state => [state.id, state.cooldown]));
+  for (const target of G?.world?.scoreTargets || []) {
+    target.setCooldown?.(cooldownById.get(target.id) || 0);
+  }
+}
+
 function sendHostSnapshot(dt) {
   if (!G?.multiplayerHost || multiplayer.phase !== 'playing') return;
   G.mpSnapshotT = (G.mpSnapshotT || 0) - dt;
@@ -4066,6 +4112,7 @@ function sendHostSnapshot(dt) {
     ranked: players.slice().sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths),
     events: G.mpEvents?.splice(0, 32) || [],
     drops: serializeDrops(),
+    targetCooldowns: serializeScoreTargetCooldowns(),
   });
 }
 

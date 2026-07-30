@@ -207,6 +207,11 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
           pos: { x: 1, y: 0.1, z: 0 },
         },
       ],
+      targetCooldowns: [
+        { id: 'target-poster-0', cooldown: 29.25 },
+        { id: 'target-poster-0', cooldown: 5 },
+        { id: 'not-a-target', cooldown: 30 },
+      ],
     },
   });
   const shiftedSnapshot = await guest.waitFor(message =>
@@ -229,6 +234,9 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   })), [
     { id: 'integration:points:1', kind: 'points', weapon: undefined, amount: 250 },
     { id: 'integration:drop:2', kind: 'drop', weapon: 'scatter', amount: 7 },
+  ]);
+  assert.deepEqual(shiftedSnapshot.targetCooldowns, [
+    { id: 'target-poster-0', cooldown: 29.25 },
   ]);
 
   guest.send({
