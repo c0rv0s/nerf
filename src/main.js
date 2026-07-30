@@ -1433,6 +1433,7 @@ function applyMultiplayerSnapshot(snap) {
       G.player.kills = state.kills || 0;
       G.player.deaths = state.deaths || 0;
       G.player.awards = state.awards || G.player.awards || {};
+      applyMultiplayerLoadout(state);
       if (state.hp < G.player.hp) hud.damageFlash();
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
@@ -1528,6 +1529,40 @@ function applyMultiplayerSnapshot(snap) {
     }
   }
   reconcileMultiplayerDrops(snap.drops || []);
+}
+
+function applyMultiplayerLoadout(state) {
+  if (!G?.player || !Array.isArray(state.weapons)) return;
+  const previouslyOwned = { ...(G.player.weapons || {}) };
+  G.player.weapons ||= { blaster: true };
+  G.player.ammo ||= { blaster: Infinity };
+  G.player.weapons.blaster = true;
+  G.player.ammo.blaster = Infinity;
+
+  const newlyOwned = [];
+  for (const id of state.weapons) {
+    if (!WEAPONS[id]) continue;
+    if (!G.player.weapons[id]) newlyOwned.push(id);
+    G.player.weapons[id] = true;
+    if (id !== 'blaster' && Number.isFinite(state.ammo?.[id])) {
+      G.player.ammo[id] = Math.max(0, state.ammo[id]);
+    }
+  }
+
+  const authoritativeWeapon = WEAPONS[state.weapon] && G.player.weapons[state.weapon]
+    ? state.weapon
+    : 'blaster';
+  const currentHasAmmo = G.player.weapon === 'blaster' || G.player.ammo[G.player.weapon] > 0;
+  if (authoritativeWeapon !== 'blaster' &&
+      (G.player.weapon === 'blaster' || !G.player.weapons[G.player.weapon] || !currentHasAmmo)) {
+    G.player.switchWeapon(authoritativeWeapon);
+  }
+
+  const acquired = newlyOwned.find(id => !previouslyOwned[id] && id !== 'blaster');
+  if (acquired) {
+    sfx('pickup');
+    hud.message(`${WEAPONS[acquired].name}!`, '#7fd0ff');
+  }
 }
 
 function applyPredictedMultiplayerDamage(target, dmg, attacker, ctx = {}) {
@@ -2744,6 +2779,9 @@ function onPickup(ch, def) {
         sfx('pickup');
         announce(def.kind === 'ammo' ? `${w.name} AMMO` : `${w.name}!`, '#7fd0ff');
         if (def.kind !== 'ammo' && ch.weapon === 'blaster') ch.switchWeapon(def.weapon);
+      } else if (ch.remoteHuman && def.kind !== 'ammo' && ch.weapon === 'blaster') {
+        ch.weapon = def.weapon;
+        ch.cancelWeaponWarmup?.();
       }
       return true;
     }
@@ -3933,6 +3971,10 @@ function step(dt) {
 function serializeCharacter(ch, i) {
   const weapon = WEAPONS[ch.weapon] || WEAPONS.blaster;
   const warming = ch.warmupWeapon === ch.weapon && !!weapon.warmup;
+  const weapons = WEAPON_ORDER.filter(id => ch.weapons?.[id]);
+  const ammo = Object.fromEntries(weapons
+    .filter(id => id !== 'blaster')
+    .map(id => [id, Math.max(0, Math.floor(Number(ch.ammo?.[id]) || 0))]));
   return {
     id: ch.id || (ch.isPlayer ? multiplayer.slotId : `bot-${i}`),
     name: ch.isPlayer ? (multiplayer.name || ch.name || 'YOU') : ch.name,
@@ -3951,6 +3993,8 @@ function serializeCharacter(ch, i) {
     awards: { ...(ch.awards || {}) },
     respawn: G.respawnTimers.get(ch) || 0,
     weapon: ch.weapon || 'blaster',
+    weapons,
+    ammo,
     warmup: warming ? Math.max(0, Math.min(1, 1 - ch.warmupT / weapon.warmup)) : -1,
     jetpack: !!ch.jetpack,
     jetpackActive: !!ch.jetpack?.active,

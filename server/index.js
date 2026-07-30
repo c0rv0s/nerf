@@ -39,7 +39,7 @@ const SNAPSHOT_HZ = 20;
 const RESPAWN_TIME = 3;
 const STALE_CONNECTION_MS = 3 * 60 * 1000;
 const EMPTY_LOBBY_GRACE_MS = 60 * 1000;
-const HOST_SNAPSHOT_TIMEOUT_MS = 5000;
+const HOST_SNAPSHOT_TIMEOUT_MS = Math.max(100, Number(process.env.HOST_SNAPSHOT_TIMEOUT_MS) || 5000);
 const RECONNECT_GRACE_MS = 12 * 1000;
 const MAX_INPUTS_PER_SECOND = 75;
 const MAX_SNAPSHOTS_PER_SECOND = 30;
@@ -509,6 +509,7 @@ function handleMessage(conn, msg) {
     if (snap) {
       lobby.lastHostSnapshotAt = Date.now();
       lobby.lastHostSnapshotSeq = snapshotSeq;
+      lobby.staleHostIds?.delete(conn.id);
       mergeHostSnapshot(lobby, snap);
       broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
     }
@@ -604,10 +605,13 @@ function plausibleInputPosition(slot, pos, now, map) {
   if (!slot.lastInputPos || !slot.lastInputAt) return true;
   const dt = Math.max(1 / 120, Math.min(0.25, (now - slot.lastInputAt) / 1000));
   const maxDistance = INPUT_POSITION_SLOP + INPUT_MAX_METERS_PER_SECOND * dt;
-  const dx = pos.x - slot.lastInputPos.x;
-  const dy = pos.y - slot.lastInputPos.y;
-  const dz = pos.z - slot.lastInputPos.z;
-  if (dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance) return true;
+  if (distance3(pos, slot.lastInputPos) <= maxDistance) return true;
+  // The host owns spawn/respawn placement. A newly joined guest can therefore
+  // receive a host snapshot at a different valid spawn than the server picked
+  // when reserving its slot. Accept movement from either the last guest input
+  // or the latest host-authoritative position so that handoff cannot strand
+  // the guest at an obsolete spawn.
+  if (slot.pos && distance3(pos, slot.pos) <= maxDistance) return true;
   return map?.id === 'bloom' && plausibleBloomRecursiveJump(slot.lastInputPos, pos, maxDistance);
 }
 
@@ -667,6 +671,7 @@ function createLobby() {
     lastHostSnapshotAt: Date.now(),
     authorityEpoch: 1,
     lastHostSnapshotSeq: -1,
+    staleHostIds: new Set(),
     slots: [],
     hostConnId: null,
     tickHandle: null,
@@ -1020,6 +1025,7 @@ function setPhase(lobby, phase) {
     lobby.lastHostSnapshotAt = now;
     lobby.authorityEpoch++;
     lobby.lastHostSnapshotSeq = -1;
+    lobby.staleHostIds.clear();
     const usedSpawns = new Set();
     for (let i = 0; i < lobby.slots.length; i++) {
       const s = lobby.slots[i];
@@ -1097,8 +1103,9 @@ function tickLobby(lobby) {
 function promoteHostIfStale(lobby, now = Date.now()) {
   if (lobby.humanCount() <= 1) return;
   if (now - (lobby.lastHostSnapshotAt || 0) <= HOST_SNAPSHOT_TIMEOUT_MS) return;
+  lobby.staleHostIds.add(lobby.hostConnId);
   const candidates = [...connections.values()]
-    .filter(c => c.lobbyId === lobby.id && c.id !== lobby.hostConnId)
+    .filter(c => c.lobbyId === lobby.id && c.id !== lobby.hostConnId && !lobby.staleHostIds.has(c.id))
     .map(conn => {
       const slot = lobby.slots.find(s => s.connId === conn.id);
       return { conn, activity: Math.max(slot?.lastInputAt || 0, conn.lastSeen || 0) };
@@ -1106,6 +1113,9 @@ function promoteHostIfStale(lobby, now = Date.now()) {
     .sort((a, b) => b.activity - a.activity);
   const next = candidates[0]?.conn;
   if (!next) {
+    // Every connected client has already failed to publish host snapshots.
+    // Keep the current authority instead of ping-ponging it every timeout,
+    // which would restart every rendered client and the match music forever.
     lobby.lastHostSnapshotAt = now;
     return;
   }
@@ -1136,6 +1146,9 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     const canonical = humanSlots.get(id);
     const pos = sanitizePos(p.pos, lobby.map) || { x: 0, y: 0, z: 0 };
     const weapon = String(p.weapon || 'blaster').slice(0, 24);
+    const selectedWeapon = WEAPON_IDS.has(weapon) ? weapon : 'blaster';
+    const weapons = sanitizeWeapons(p.weapons, selectedWeapon);
+    const ammo = sanitizeAmmo(p.ammo, weapons);
     return {
       id,
       name: canonical?.name || cleanName(p.name || id),
@@ -1153,7 +1166,9 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       deaths: clampInt(p.deaths, 0, 999),
       awards: sanitizeAwards(p.awards),
       respawn: Math.max(0, Math.min(RESPAWN_TIME + 1, finite(p.respawn, 0))),
-      weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
+      weapon: selectedWeapon,
+      weapons,
+      ammo,
       warmup: weapon === 'whomper' ? Math.max(-1, Math.min(1, finite(p.warmup, -1))) : -1,
       jetpack: p.jetpack === true,
       jetpackActive: p.jetpack === true && p.jetpackActive === true,
@@ -1167,6 +1182,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       up: slot.up || { x: 0, y: 1, z: 0 }, hp: slot.hp ?? 100, alive: slot.alive !== false,
       score: slot.score || 0, kills: slot.kills || 0, deaths: slot.deaths || 0,
       awards: {}, respawn: slot.respawn || 0, weapon: 'blaster',
+      weapons: ['blaster'], ammo: {},
       warmup: -1, jetpack: false, jetpackActive: false,
     });
   }
@@ -1217,6 +1233,34 @@ function sanitizeAwards(awards) {
   return out;
 }
 
+function sanitizeWeapons(value, selectedWeapon = 'blaster') {
+  const owned = new Set(['blaster']);
+  if (Array.isArray(value)) {
+    for (const id of value) {
+      const weapon = String(id || '');
+      if (WEAPON_IDS.has(weapon)) owned.add(weapon);
+    }
+  } else if (value && typeof value === 'object') {
+    for (const [id, enabled] of Object.entries(value)) {
+      if (enabled && WEAPON_IDS.has(id)) owned.add(id);
+    }
+  }
+  // Backwards compatibility for a host that predates explicit inventory
+  // snapshots but is already holding a non-default weapon.
+  if (WEAPON_IDS.has(selectedWeapon)) owned.add(selectedWeapon);
+  return [...owned].slice(0, WEAPON_IDS.size);
+}
+
+function sanitizeAmmo(value, weapons) {
+  if (!value || typeof value !== 'object') return {};
+  const ammo = {};
+  for (const weapon of weapons) {
+    if (weapon === 'blaster') continue;
+    ammo[weapon] = clampInt(value[weapon], 0, 9999);
+  }
+  return ammo;
+}
+
 function sanitizeDrop(drop, lobby) {
   if (!drop || typeof drop !== 'object') return null;
   const kind = String(drop.kind || '');
@@ -1255,10 +1299,9 @@ function mergeHostSnapshot(lobby, snap) {
     slot.score = p.score;
     slot.kills = p.kills;
     slot.deaths = p.deaths;
-    if (slot.alive !== false && (!slot.lastInputPos || distance3(slot.lastInputPos, p.pos) > 18)) {
-      slot.lastInputPos = p.pos;
-      slot.lastInputAt = Date.now();
-    }
+    slot.weapon = p.weapon;
+    slot.weapons = p.weapons;
+    slot.ammo = p.ammo;
   }
   lobby.latestRanked = snap.ranked || ranked(lobby);
   lobby.latestScores = snap.scores || lobby.latestScores;
