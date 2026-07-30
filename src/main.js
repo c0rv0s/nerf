@@ -30,6 +30,8 @@ const REMOTE_SLOT_SNAP_DIST = 20;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
 const REMOTE_HUMAN_MAX_PREDICT = 0.18;
 const REMOTE_HUMAN_SMOOTH = 20;
+const MP_PREDICTED_DAMAGE_TTL_MS = 2000;
+const DAMAGE_MARKER_LIFETIME = 1.15;
 const previousCharacterPos = new THREE.Vector3();
 const MULTI_KILL_WINDOW = 2.75;
 const MAX_KILL_AWARD = 7;
@@ -1508,9 +1510,11 @@ function applyMultiplayerSnapshot(snap) {
     if (ev.type === 'comet-spawn') spawnCometVisual(ev, false);
     if (ev.type === 'comet-impact') receiveCometImpact(ev);
     if (ev.type === 'damage' && ev.attackerId === multiplayer.slotId) {
-      hud.hitmarker();
       const target = G.characters.find(c => c.id === ev.targetId);
-      if (target) spawnDmgMarker(target, ev.amount || 0);
+      if (!consumePredictedMultiplayerDamage(ev.targetId, ev.amount || 0)) {
+        hud.hitmarker();
+        if (target) spawnDmgMarker(target, ev.amount || 0);
+      }
     }
     if (ev.type === 'kill') {
       const killer = G.characters.find(c => c.team === ev.killerId || c.id === ev.killerId) ||
@@ -1570,6 +1574,36 @@ function applyMultiplayerLoadout(state) {
 
 function applyPredictedMultiplayerDamage(target, dmg, attacker, ctx = {}) {
   if (!G?.multiplayer || attacker !== G.player || !target || target === G.player) return;
+  const targetId = characterNetworkId(target);
+  if (!targetId || !Number.isFinite(dmg) || dmg <= 0) return;
+  const now = performance.now();
+  G.mpPredictedDamage ||= [];
+  G.mpPredictedDamage = G.mpPredictedDamage
+    .filter(hit => now - hit.at <= MP_PREDICTED_DAMAGE_TTL_MS);
+  G.mpPredictedDamage.push({ targetId, amount: dmg, at: now });
+  hud.hitmarker();
+  sfx('hit');
+  spawnDmgMarker(target, dmg);
+}
+
+function consumePredictedMultiplayerDamage(targetId, amount) {
+  if (!G?.mpPredictedDamage?.length) return false;
+  const now = performance.now();
+  G.mpPredictedDamage = G.mpPredictedDamage
+    .filter(hit => now - hit.at <= MP_PREDICTED_DAMAGE_TTL_MS);
+  let match = -1;
+  let smallestDifference = Infinity;
+  for (let i = 0; i < G.mpPredictedDamage.length; i++) {
+    const hit = G.mpPredictedDamage[i];
+    if (hit.targetId !== targetId) continue;
+    const difference = Math.abs(hit.amount - amount);
+    if (difference >= smallestDifference) continue;
+    match = i;
+    smallestDifference = difference;
+  }
+  if (match < 0) return false;
+  G.mpPredictedDamage.splice(match, 1);
+  return true;
 }
 
 function dropSnapshotId(drop) {
@@ -2494,8 +2528,10 @@ function spawnDmgMarker(target, amount) {
   const rise = target.up?.clone?.() || new THREE.Vector3(0, 1, 0);
   if (rise.lengthSq() < 1e-6) rise.set(0, 1, 0);
   else rise.normalize();
-  sprite.scale.set(1.7 * visualScale, 1.7 * visualScale, 1);
+  sprite.scale.set(2 * visualScale, 2 * visualScale, 1);
   sprite.position.copy(target.pos).addScaledVector(rise, 2.5 * visualScale);
+  sprite.renderOrder = 1000;
+  sprite.frustumCulled = false;
   G.scene.add(sprite);
   const m = {
     target, amount, age: 0, sprite, tex, canvas: c,
@@ -2535,8 +2571,8 @@ function updateDmgMarkers(dt) {
     const m = dmgMarkers[i];
     m.age += dt;
     m.sprite.position.addScaledVector(m.rise, dt * 1.1);
-    m.sprite.material.opacity = Math.min(1, 2.5 * (1 - m.age / 0.9));
-    if (m.age > 0.9) {
+    m.sprite.material.opacity = Math.min(1, 2.5 * (1 - m.age / DAMAGE_MARKER_LIFETIME));
+    if (m.age > DAMAGE_MARKER_LIFETIME) {
       disposeDmgMarker(m, G.scene);
       dmgMarkers.splice(i, 1);
     }
