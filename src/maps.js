@@ -704,6 +704,151 @@ function addWater(scene, world, x, y, z, w, d, depth = 4, opts = {}) {
   if (n) world.anim.push((dt, t) => n.offset.set(t * 0.018, t * 0.03));
 }
 
+function addMinnowSchool(scene, world, x, z, travel = 13, phase = 0) {
+  const school = new THREE.Group();
+  const fishMaterial = mat(0x9fd7c5, {
+    roughness: 0.5, metalness: 0.12, flatShading: true,
+  });
+  const tailMaterial = new THREE.MeshStandardMaterial({
+    color: 0x74b7a6, roughness: 0.55, metalness: 0.08,
+    flatShading: true, side: THREE.DoubleSide,
+  });
+  const tailGeometry = new THREE.BufferGeometry();
+  tailGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, -0.02,
+    0, -0.24, -0.42,
+    0, 0.24, -0.42,
+  ], 3));
+  tailGeometry.computeVertexNormals();
+  const fish = [];
+  for (let i = 0; i < 9; i++) {
+    const minnow = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 5), fishMaterial);
+    body.scale.set(0.78, 0.58, 1.75);
+    body.position.z = 0.08;
+    const tailPivot = new THREE.Group();
+    tailPivot.position.z = -0.24;
+    const tail = new THREE.Mesh(tailGeometry, tailMaterial);
+    tailPivot.add(tail);
+    minnow.add(body, tailPivot);
+    minnow.position.set(
+      ((i * 1.73) % 3.2) - 1.6,
+      -0.16 - (i % 3) * 0.11,
+      ((i * 2.31) % 4.8) - 2.4,
+    );
+    minnow.scale.setScalar((0.82 + (i % 4) * 0.08) / 3);
+    school.add(minnow);
+    const heading = phase + i * 0.68;
+    fish.push({
+      mesh: minnow,
+      tailPivot,
+      seed: i * 0.91,
+      vx: Math.sin(heading) * 0.7,
+      vz: Math.cos(heading) * 0.7,
+      fear: 0,
+    });
+  }
+  school.position.set(x, -1.12, z);
+  scene.add(school);
+
+  world.anim.push((dt, t, characters = []) => {
+    dt = Math.min(dt, 0.05);
+    let threat = null;
+    let threatDistance = Infinity;
+    for (const ch of characters) {
+      if (!ch?.alive || ch.pos.y > 0.2 || Math.abs(ch.pos.x - x) > 4.2) continue;
+      const distance = Math.hypot(ch.pos.x - x, ch.pos.z - z);
+      if (distance < threatDistance && distance < travel + 7) {
+        threat = ch;
+        threatDistance = distance;
+      }
+    }
+
+    for (const f of fish) {
+      let centerX = 0;
+      let centerZ = 0;
+      let alignX = 0;
+      let alignZ = 0;
+      let separateX = 0;
+      let separateZ = 0;
+      let neighbors = 0;
+      for (const other of fish) {
+        if (other === f) continue;
+        const dx = other.mesh.position.x - f.mesh.position.x;
+        const dz = other.mesh.position.z - f.mesh.position.z;
+        const distanceSq = dx * dx + dz * dz;
+        if (distanceSq > 16) continue;
+        centerX += other.mesh.position.x;
+        centerZ += other.mesh.position.z;
+        alignX += other.vx;
+        alignZ += other.vz;
+        neighbors++;
+        if (distanceSq < 0.7 && distanceSq > 0.0001) {
+          separateX -= dx / distanceSq;
+          separateZ -= dz / distanceSq;
+        }
+      }
+
+      let ax = Math.sin(t * 0.72 + f.seed) * 0.18;
+      let az = Math.cos(t * 0.57 + f.seed * 1.3) * 0.18;
+      if (neighbors) {
+        ax += (centerX / neighbors - f.mesh.position.x) * 0.32;
+        az += (centerZ / neighbors - f.mesh.position.z) * 0.32;
+        ax += (alignX / neighbors - f.vx) * 0.48 + separateX * 0.85;
+        az += (alignZ / neighbors - f.vz) * 0.48 + separateZ * 0.85;
+      }
+
+      // Turn back before touching the narrow river walls or the end of the
+      // school's stretch of channel.
+      const channelHalfWidth = 3.15;
+      if (Math.abs(f.mesh.position.x + f.vx * 0.8) > channelHalfWidth - 0.55) {
+        ax += -Math.sign(f.mesh.position.x + f.vx * 0.8) * 5.5;
+      }
+      if (Math.abs(f.mesh.position.z + f.vz * 0.8) > travel - 0.7) {
+        az += -Math.sign(f.mesh.position.z + f.vz * 0.8) * 5.5;
+      }
+
+      if (threat) {
+        const dx = x + f.mesh.position.x - threat.pos.x;
+        const dz = z + f.mesh.position.z - threat.pos.z;
+        const distance = Math.hypot(dx, dz);
+        if (distance < 6) {
+          const force = (6 - distance) / 6;
+          ax += dx / Math.max(distance, 0.1) * (8 + force * 12);
+          az += dz / Math.max(distance, 0.1) * (8 + force * 12);
+          f.fear = 1;
+        }
+      }
+      f.fear = Math.max(0, f.fear - dt * 0.7);
+      f.vx += ax * dt;
+      f.vz += az * dt;
+      const speed = Math.hypot(f.vx, f.vz) || 1;
+      const maxSpeed = 1.15 + f.fear * 4.8;
+      const minSpeed = 0.42;
+      const clampedSpeed = THREE.MathUtils.clamp(speed, minSpeed, maxSpeed);
+      f.vx = f.vx / speed * clampedSpeed;
+      f.vz = f.vz / speed * clampedSpeed;
+      f.mesh.position.x += f.vx * dt;
+      f.mesh.position.z += f.vz * dt;
+      // Panic steering can be strong, so finish with a strict containment
+      // step. Fish turn back into the water instead of clipping through the
+      // solid river banks or the ends of their assigned channel stretch.
+      if (Math.abs(f.mesh.position.x) > channelHalfWidth) {
+        f.mesh.position.x = Math.sign(f.mesh.position.x) * channelHalfWidth;
+        f.vx = -Math.sign(f.mesh.position.x) * Math.max(0.5, Math.abs(f.vx));
+      }
+      if (Math.abs(f.mesh.position.z) > travel) {
+        f.mesh.position.z = Math.sign(f.mesh.position.z) * travel;
+        f.vz = -Math.sign(f.mesh.position.z) * Math.max(0.5, Math.abs(f.vz));
+      }
+      f.mesh.position.y = -0.16 - (Math.round(f.seed / 0.91) % 3) * 0.11
+        + Math.sin(t * 1.8 + f.seed) * 0.025;
+      f.mesh.rotation.y = Math.atan2(f.vx, f.vz);
+      f.tailPivot.rotation.y = Math.sin(t * (5 + f.fear * 15) + f.seed) * (0.12 + f.fear * 0.34);
+    }
+  });
+}
+
 // Fit water from the actual inner faces of a basin instead of hand-tuning a
 // slightly undersized plane. The small overlap is hidden beneath the solid rim
 // or channel wall, eliminating edge cracks without exposing water beyond it.
@@ -724,17 +869,30 @@ function addFittedWater(scene, world, {
 }
 
 function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style = {}) {
+  const flowsAlongX = style.axis === 'x';
+  const worldPosition = (across, y, outward) => flowsAlongX
+    ? new THREE.Vector3(x + outward, y, z + across)
+    : new THREE.Vector3(x + across, y, z + outward);
   world.waterfallZones ||= [];
   world.waterfallZones.push({
-    minX: x - w / 2, maxX: x + w / 2,
-    minZ: z - 1.35, maxZ: z + 1.35,
+    minX: flowsAlongX ? x - 1.35 : x - w / 2,
+    maxX: flowsAlongX ? x + 1.35 : x + w / 2,
+    minZ: flowsAlongX ? z - w / 2 : z - 1.35,
+    maxZ: flowsAlongX ? z + w / 2 : z + 1.35,
     minY: bottomY - 0.4, maxY: topY + 0.4,
   });
 
-  addBox(scene, world, x, topY + 0.3, z + flowZ * 0.5, w + 1.4, 0.6, 1.2,
-    style.lipColor ?? 0x4a7a52, { tex: style.lipTex ?? 'rock', repeat: [2, 1] });
+  if (!style.skipLip) {
+    addBox(
+      scene, world,
+      x + (flowsAlongX ? flowZ * 0.5 : 0), topY + 0.3,
+      z + (flowsAlongX ? 0 : flowZ * 0.5),
+      flowsAlongX ? 1.2 : w + 1.4, 0.6, flowsAlongX ? w + 1.4 : 1.2,
+      style.lipColor ?? 0x4a7a52, { tex: style.lipTex ?? 'rock', repeat: [2, 1] },
+    );
+  }
   const streams = [];
-  for (const [dx, dz, ww, opacity, phase] of [
+  for (const [across, outward, ww, opacity, phase] of [
     [0, 0, w, 0.7, 0],
     [-w * 0.18, flowZ * 0.2, w * 0.34, 0.46, 1.7],
     [w * 0.2, flowZ * 0.36, w * 0.28, 0.38, 3.1],
@@ -749,7 +907,8 @@ function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style 
         emissive: 0x0b5f86, emissiveIntensity: 0.36, depthWrite: false,
         side: THREE.DoubleSide,
       }));
-    m.position.set(x + dx, (bottomY + topY) / 2, z + dz);
+    if (flowsAlongX) m.rotation.y = Math.PI / 2;
+    m.position.copy(worldPosition(across, (bottomY + topY) / 2, outward));
     scene.add(m);
     streams.push({ n, m, phase });
   }
@@ -760,33 +919,287 @@ function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style 
     }
   });
 
-  const foam = new THREE.Mesh(new THREE.PlaneGeometry(w + 2.2, 2.4),
-    new THREE.MeshBasicMaterial({ color: 0xd8fbff, transparent: true, opacity: 0.52, depthWrite: false, side: THREE.DoubleSide }));
-  foam.rotation.x = -Math.PI / 2;
-  foam.position.set(x, bottomY + 0.06, z + flowZ * 0.9);
-  scene.add(foam);
-  const spray = [];
-  for (let i = 0; i < 14; i++) {
-    const p = new THREE.Mesh(new THREE.SphereGeometry(0.05 + Math.random() * 0.05, 6, 4),
-      new THREE.MeshBasicMaterial({ color: 0xd8fbff, transparent: true, opacity: 0.7, depthWrite: false }));
+  const impactRings = [];
+  for (let i = 0; i < 4; i++) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.24, 0.34, 14),
+      new THREE.MeshBasicMaterial({
+        color: 0xf2feff, transparent: true, opacity: 0.5,
+        depthWrite: false, side: THREE.DoubleSide,
+      }));
+    ring.rotation.x = -Math.PI / 2;
+    scene.add(ring);
+    impactRings.push({
+      ring,
+      across: (Math.random() - 0.5) * w * 0.82,
+      outward: (Math.random() - 0.5) * 0.75 + flowZ * 0.35,
+      phase: i / 4,
+    });
+  }
+
+  const bubbles = [];
+  for (let i = 0; i < Math.max(20, Math.ceil(w * 2.4)); i++) {
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.055 + Math.random() * 0.09, 7, 5),
+      new THREE.MeshBasicMaterial({
+        color: i % 4 === 0 ? 0xffffff : 0xd8fbff,
+        transparent: true, opacity: 0.82, depthWrite: false,
+      }));
     scene.add(p);
-    spray.push({
+    const outwardZ = (Math.random() < 0.5 ? -1 : 1) * (0.45 + Math.random() * 1.35);
+    bubbles.push({
       p,
-      ox: (Math.random() - 0.5) * (w + 1),
-      oz: flowZ * (0.35 + Math.random() * 1.25),
-      phase: Math.random() * 2.5,
-      dur: 0.42 + Math.random() * 0.24,
+      across: (Math.random() - 0.5) * w * 0.92,
+      acrossSpeed: (Math.random() - 0.5) * 1.15,
+      outwardSpeed: flowZ === 0 ? outwardZ : flowZ * (0.55 + Math.random() * 1.15) + outwardZ * 0.25,
+      phase: Math.random(),
+      dur: 0.72 + Math.random() * 0.62,
+      bounce: 1.75 + Math.random() * 1.25,
     });
   }
   world.anim.push((dt, t) => {
-    foam.scale.x = 1 + Math.sin(t * 5.5 + x) * 0.04;
-    foam.scale.y = 1 + Math.sin(t * 6.8 + z) * 0.08;
-    foam.material.opacity = 0.46 + Math.sin(t * 9.5 + z) * 0.12;
-    for (const s of spray) {
-      const k = ((t + s.phase) % s.dur) / s.dur;
-      s.p.position.set(x + s.ox * (1 + k * 0.25), bottomY + 0.1 + Math.sin(k * Math.PI) * 0.72, z + s.oz + flowZ * k * 0.9);
-      s.p.material.opacity = 0.7 * (1 - k);
-      s.p.scale.setScalar(1 + k * 1.8);
+    for (const r of impactRings) {
+      const k = (t * 0.72 + r.phase) % 1;
+      r.ring.position.copy(worldPosition(r.across, bottomY + 0.075, r.outward));
+      r.ring.rotation.z = flowsAlongX ? Math.PI / 2 : 0;
+      r.ring.scale.set(0.7 + k * 4.3, 0.42 + k * 1.9, 1);
+      r.ring.material.opacity = 0.48 * (1 - k) * (1 - k);
+    }
+    for (const b of bubbles) {
+      const k = ((t / b.dur) + b.phase) % 1;
+      // Repeated absolute-sine arcs create two or three visibly damped bounces.
+      const hop = Math.abs(Math.sin(k * Math.PI * b.bounce)) * (1 - k) * 0.72;
+      b.p.position.copy(worldPosition(
+        b.across + b.acrossSpeed * k,
+        bottomY + 0.1 + hop,
+        flowZ * 0.35 + b.outwardSpeed * k,
+      ));
+      b.p.material.opacity = Math.min(1, k * 8) * 0.82 * (1 - k);
+      const squash = hop < 0.08 ? 0.72 : 1;
+      b.p.scale.set(1 + k * 0.65, squash * (1 + k * 0.35), 1 + k * 0.65);
+    }
+  });
+}
+
+function addCanalAlligator(scene, world) {
+  const gator = new THREE.Group();
+  gator.name = 'fortress-canal-alligator';
+
+  const hide = mat(0x496522, { roughness: 0.92, flatShading: true });
+  const belly = mat(0x91a64a, { roughness: 0.95, flatShading: true });
+  const tooth = new THREE.MeshBasicMaterial({ color: 0xf3edc8, toneMapped: false });
+  const eye = new THREE.MeshBasicMaterial({ color: 0xffd83d, toneMapped: false });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.72, 1.2), hide);
+  body.scale.z = 0.82;
+  const back = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.22, 0.78), belly);
+  back.position.set(-0.25, 0.43, 0);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.62, 1.05), hide);
+  head.position.set(2.05, 0.02, 0);
+  const upperJaw = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.25, 0.88), hide);
+  upperJaw.position.set(3.18, 0.04, 0);
+  const lowerJawPivot = new THREE.Group();
+  lowerJawPivot.position.set(2.5, -0.11, 0);
+  const lowerJaw = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.18, 0.82), belly);
+  lowerJaw.position.x = 0.66;
+  lowerJawPivot.add(lowerJaw);
+
+  // Keep the tail mesh offset behind a joint at the back of the body. Animating
+  // the joint (rather than the mesh itself) makes the tail swing from its base.
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-1.82, -0.02, 0);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.55, 3.1, 6), hide);
+  tail.rotation.z = Math.PI / 2;
+  tail.position.set(-1.55, 0, 0);
+  tailPivot.add(tail);
+  gator.add(body, back, head, upperJaw, lowerJawPivot, tailPivot);
+
+  for (const z of [-0.38, 0.38]) {
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 4), eye);
+    e.position.set(2.48, 0.38, z);
+    gator.add(e);
+    for (const x of [2.78, 3.12, 3.46]) {
+      const fang = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.18, 5), tooth);
+      fang.position.set(x, -0.11, z * 0.88);
+      fang.rotation.z = Math.PI;
+      gator.add(fang);
+    }
+  }
+
+  gator.position.set(-28, -2.92, 2.2);
+  scene.add(gator);
+
+  const state = {
+    heading: V(1, 0, 0),
+    patrolDir: 1,
+    biteCooldowns: new WeakMap(),
+    snapT: 0,
+    biteArmed: false,
+    chaseTarget: null,
+    chaseT: 0,
+    lungeT: 0,
+    lungeCooldown: 0,
+  };
+  // The body is a moving solid surface. Deliberately stop it before the head so
+  // the rideable area is the back, not the snapping mouth.
+  const bodyCollider = {
+    type: 'box',
+    dynamic: true,
+    min: V(),
+    max: V(),
+  };
+  world.colliders.push(bodyCollider);
+  const localToGator = ch => {
+    const dx = ch.pos.x - gator.position.x;
+    const dz = ch.pos.z - gator.position.z;
+    return {
+      x: dx * state.heading.x + dz * state.heading.z,
+      z: -dx * state.heading.z + dz * state.heading.x,
+    };
+  };
+  const isOnGatorBack = ch => {
+    if (!ch?.alive) return false;
+    const local = localToGator(ch);
+    const relativeY = ch.pos.y - gator.position.y;
+    return local.x > -1.78 && local.x < 1.36 && Math.abs(local.z) < 0.72 &&
+      relativeY > 0.38 && relativeY < 2.15;
+  };
+  // Capsule-vs-oriented-mouth test. Damage is permitted only while the jaws
+  // are closing and this volume actually intersects a character capsule.
+  const mouthHits = ch => {
+    if (!ch?.alive) return false;
+    const local = localToGator(ch);
+    const radius = ch.radius ?? 0.45;
+    const height = ch.height ?? 1.8;
+    const minX = 2.48, maxX = 3.88;
+    const minY = -0.2, maxY = 0.3;
+    const minZ = -0.52, maxZ = 0.52;
+    for (const sy of [radius, height * 0.5, height - radius]) {
+      const localY = ch.pos.y + sy - gator.position.y;
+      const dx = local.x - THREE.MathUtils.clamp(local.x, minX, maxX);
+      const dy = localY - THREE.MathUtils.clamp(localY, minY, maxY);
+      const dz = local.z - THREE.MathUtils.clamp(local.z, minZ, maxZ);
+      if (dx * dx + dy * dy + dz * dz <= radius * radius) return true;
+    }
+    return false;
+  };
+  const updateBodyCollider = () => {
+    const halfLength = 1.72;
+    const halfWidth = 0.58;
+    const centerOffset = -0.16;
+    const cx = gator.position.x + state.heading.x * centerOffset;
+    const cz = gator.position.z + state.heading.z * centerOffset;
+    const ex = Math.abs(state.heading.x) * halfLength + Math.abs(state.heading.z) * halfWidth;
+    const ez = Math.abs(state.heading.z) * halfLength + Math.abs(state.heading.x) * halfWidth;
+    bodyCollider.min.set(cx - ex, gator.position.y - 0.38, cz - ez);
+    bodyCollider.max.set(cx + ex, gator.position.y + 0.55, cz + ez);
+  };
+  updateBodyCollider();
+  world.gator = { group: gator, state };
+  world.anim.push((dt, t, characters = []) => {
+    // Capture riders relative to the old pose so turning carries them as well
+    // as straight-line motion.
+    const riders = [];
+    for (const ch of characters) {
+      if (!isOnGatorBack(ch)) continue;
+      const local = localToGator(ch);
+      riders.push({ ch, ...local, y: ch.pos.y - gator.position.y });
+    }
+    const inCanalWater = ch => ch?.alive &&
+      !isOnGatorBack(ch) && ch.pos.y < -2 &&
+      Math.abs(ch.pos.z) < 6.85 && Math.abs(ch.pos.x) < 55;
+    let nearbyTarget = null;
+    let nearbyDist = Infinity;
+    for (const ch of characters) {
+      if (!inCanalWater(ch)) continue;
+      // A bitten character gets a real escape window: the gator will not
+      // reacquire them until this cooldown expires.
+      if ((state.biteCooldowns.get(ch) || 0) > 0) continue;
+      const dx = ch.pos.x - gator.position.x;
+      const dz = ch.pos.z - gator.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < nearbyDist && d < 8) { nearbyTarget = ch; nearbyDist = d; }
+    }
+    if (nearbyTarget) {
+      state.chaseTarget = nearbyTarget;
+      state.chaseT = 3.25;
+    } else {
+      state.chaseT = Math.max(0, state.chaseT - dt);
+      if (!state.chaseTarget?.alive || state.chaseT <= 0) state.chaseTarget = null;
+    }
+
+    let target = state.chaseTarget;
+    let targetDist = Infinity;
+    if (target) {
+      if (!inCanalWater(target) || (state.biteCooldowns.get(target) || 0) > 0) {
+        state.chaseTarget = target = null;
+        state.chaseT = 0;
+      }
+    }
+    if (target) {
+      targetDist = Math.hypot(target.pos.x - gator.position.x, target.pos.z - gator.position.z);
+      // The gator gives up after a short pursuit or if the target gets well
+      // beyond the canal encounter instead of chasing forever across the map.
+      if (targetDist > 18) { state.chaseTarget = target = null; state.chaseT = 0; }
+    }
+
+    const desired = V(state.patrolDir, 0, Math.sin(t * 0.55) * 0.36);
+    let speed = 2.9;
+    state.lungeCooldown = Math.max(0, state.lungeCooldown - dt);
+    if (target) {
+      desired.set(target.pos.x - gator.position.x, 0, target.pos.z - gator.position.z).normalize();
+      if (targetDist < 4.5 && state.lungeCooldown <= 0) {
+        state.lungeT = 0.46;
+        state.lungeCooldown = 1.8;
+      }
+      state.lungeT = Math.max(0, state.lungeT - dt);
+      speed = state.lungeT > 0 ? 12.5 : (targetDist < 5.5 ? 6.2 : 4);
+      const cooldown = state.biteCooldowns.get(target) || 0;
+      if (targetDist < 4.5 && cooldown <= 0 && state.snapT <= 0) {
+        state.snapT = 0.42;
+        state.biteArmed = true;
+      }
+    } else state.lungeT = 0;
+
+    state.heading.lerp(desired, Math.min(1, dt * (state.lungeT > 0 ? 8 : 2.8))).normalize();
+    gator.position.addScaledVector(state.heading, speed * dt);
+    // The end ramps begin at |x|=55. Keeping the body center inside 51 leaves
+    // room for the long snout and tail, so no part of the gator clips through.
+    if (gator.position.x > 50.5) state.patrolDir = -1;
+    else if (gator.position.x < -50.5) state.patrolDir = 1;
+    gator.position.x = THREE.MathUtils.clamp(gator.position.x, -51, 51);
+    gator.position.z = THREE.MathUtils.clamp(gator.position.z, -5.15, 5.15);
+    gator.rotation.y = Math.atan2(-state.heading.z, state.heading.x);
+    gator.position.y = -2.92 + Math.sin(t * 3.2) * 0.05;
+
+    for (const rider of riders) {
+      rider.ch.pos.x = gator.position.x + state.heading.x * rider.x - state.heading.z * rider.z;
+      rider.ch.pos.z = gator.position.z + state.heading.z * rider.x + state.heading.x * rider.z;
+      rider.ch.pos.y = gator.position.y + rider.y;
+    }
+    updateBodyCollider();
+
+    state.snapT = Math.max(0, state.snapT - dt);
+    const biteProgress = state.snapT > 0 ? 1 - state.snapT / 0.42 : 1;
+    const jawOpen = state.snapT > 0 ? Math.sin(biteProgress * Math.PI) : 0;
+    lowerJawPivot.rotation.z = -0.48 * jawOpen;
+    // The second half of the animation is the closing stroke. Check the actual
+    // mouth against every character so proximity alone can never cause damage.
+    if (state.biteArmed && biteProgress >= 0.5) {
+      for (const ch of characters) {
+        if ((state.biteCooldowns.get(ch) || 0) > 0 || !mouthHits(ch)) continue;
+        state.biteCooldowns.set(ch, 2.75);
+        world.onGatorBite?.(ch);
+        state.chaseTarget = null;
+        state.chaseT = 0;
+        state.lungeT = 0;
+        state.biteArmed = false;
+        break;
+      }
+      if (biteProgress >= 0.94) state.biteArmed = false;
+    }
+    tailPivot.rotation.y = Math.sin(t * 5.5) * 0.18;
+    for (const ch of characters) {
+      const cooldown = state.biteCooldowns.get(ch);
+      if (cooldown > 0) state.biteCooldowns.set(ch, Math.max(0, cooldown - dt));
     }
   });
 }
@@ -1969,6 +2382,17 @@ function addFortressPresentation(scene, world) {
   registerWallFeature(world, 'east', 'hazard poster', 20, 5.5, 8, 8);
   registerWallFeature(world, 'west', 'Rumble poster', -20, 5.5, 8, 8);
 
+  // Paired falls leave the east and west edges of the high center platform,
+  // framing its north-south bridge approach without covering the walkway. Use
+  // the same complete stream, scalloped foam, ripple, and bubble treatment as
+  // Canopy and Olympus; only the fall plane's axis differs here.
+  for (const [x, outward] of [[-4.54, -1], [4.54, 1]]) {
+    addWaterfall(scene, world, x, 0, 5.2, 22.1, -3.1, 19, outward, {
+      axis: 'x',
+      skipLip: true,
+    });
+  }
+
   // Repeated shield crests break up the long blank lane walls. Instancing
   // keeps the whole set to one draw call; they remain flush wall decoration.
   const crestGeo = new THREE.RingGeometry(0.52, 0.72, 20);
@@ -2090,6 +2514,7 @@ function buildFortress(scene) {
   addFittedWater(scene, world, {
     minX: -73, maxX: 73, minZ: -7.1, maxZ: 7.1, y: -3.15,
   });
+  addCanalAlligator(scene, world);
 
   // Bridges: grand center bridge + two side bridges
   // decks sit 2cm below bank level — flush tops z-fight where they overlap
@@ -2190,25 +2615,43 @@ function buildFortress(scene) {
   addBox(scene, world, 7.5, 3.5, 15, 7, 7, 2, fortress.hotOrange, { tex: 'fortress-stone' });
   addBox(scene, world, -11, 3.5, 26, 2, 7, 24, fortress.hotOrange, { tex: 'fortress-stone' });
   addBox(scene, world, 11, 3.5, 26, 2, 7, 24, fortress.hotOrange, { tex: 'fortress-stone' });
-  addBox(scene, world, 0, 4, 39.45, 8, 0.6, 2.9, fortress.royalShadow, { tex: 'fortress-deck' });
-  addBox(scene, world, 0, 7.4, 26, 24, 0.8, 26, fortress.royal, { tex: 'fortress-deck' }); // roof, top 7.8
-  // Real roof parapets: the visible cover and collision are the same boxes.
-  // Gaps preserve the existing catwalk, ramp, and jump-off routes.
-  addBox(scene, world, 0, 8.55, 38.55, 23, 1.5, 0.9, fortress.gold, { tex: 'fortress-stone' });
-  addBox(scene, world, -8.2, 8.55, 13.45, 6.6, 1.5, 0.9, fortress.gold, { tex: 'fortress-stone' });
-  addBox(scene, world, 8.2, 8.55, 13.45, 6.6, 1.5, 0.9, fortress.gold, { tex: 'fortress-stone' });
-  for (const x of [-11.55, 11.55]) {
-    if (x > 0) {
-      // The east side serves both the roof ramp and the east-west sky catwalk.
-      // Keep the opening clear through z=34.5 so the full four-metre catwalk
-      // meets the roof instead of running into the north parapet segment.
-      addBox(scene, world, x, 8.55, 19.25, 0.9, 1.5, 7.5, fortress.gold, { tex: 'fortress-stone' });
-      addBox(scene, world, x, 8.55, 36, 0.9, 1.5, 3, fortress.gold, { tex: 'fortress-stone' });
-    } else {
-      addBox(scene, world, x, 8.55, 20, 0.9, 1.5, 9, fortress.gold, { tex: 'fortress-stone' });
-      addBox(scene, world, x, 8.55, 33, 0.9, 1.5, 9, fortress.gold, { tex: 'fortress-stone' });
-    }
+  // Short rear ramp occupies only the gap between the back-wall walkway and
+  // the second-floor edge: y=5 at z=41.75 to y=7.8 at z=39.
+  addRamp(scene, world, { axis: 'z', minX: -3, maxX: 3, minZ: 39, maxZ: 41.75, h0: 7.8, h1: 5, color: fortress.royalMid, tex: 'fortress-deck' });
+  // The original roof becomes a broad terrace around a narrower second room.
+  // At 10.5m the upper room is exactly 1.5x the height of the room below. Its
+  // front and back stay completely open; only the two ramp-side walls remain.
+  addBox(scene, world, 0, 7.4, 26, 24, 0.8, 26, fortress.royal, { tex: 'fortress-deck' }); // second floor, top 7.8
+  // Each side wall is only as long as its neighboring ramp plus that ramp's
+  // small top landing, rather than spanning the entire lower keep.
+  addBox(scene, world, -7, 13.05, 25.25, 2, 10.5, 17.5, fortress.hotOrange, { tex: 'fortress-stone' });
+  addBox(scene, world, 7, 13.05, 26.75, 2, 10.5, 17.5, fortress.hotOrange, { tex: 'fortress-stone' });
+
+  // Mirrored ramps now sit fully on the second-floor terrace between the
+  // inset room walls and the terrace edges. Pulling both runs four metres
+  // inward leaves a generous approach at each bottom landing.
+  addRamp(scene, world, { axis: 'z', minX: 8, maxX: 11.5, minZ: 18, maxZ: 34, h0: 7.8, h1: 19.1, color: fortress.royalMid, tex: 'fortress-deck' });
+  addRamp(scene, world, { axis: 'z', minX: -11.5, maxX: -8, minZ: 18, maxZ: 34, h0: 19.1, h1: 7.8, color: fortress.royalMid, tex: 'fortress-deck' });
+
+  addBox(scene, world, 0, 18.7, 26, 16, 0.8, 26, fortress.royal, { tex: 'fortress-deck' }); // inset upper roof, top 19.1
+  // Level top landings extend beyond each slope. Short gold end-stops
+  // prevent players from carrying their momentum straight off the far ends
+  // while leaving the inward turn onto the roof open.
+  addBox(scene, world, 9.75, 18.9, 34.75, 3.5, 0.4, 1.5, fortress.royal, { tex: 'fortress-deck' });
+  addBox(scene, world, -9.75, 18.9, 17.25, 3.5, 0.4, 1.5, fortress.royal, { tex: 'fortress-deck' });
+  addBox(scene, world, 9.75, 19.6, 35.35, 3.5, 1, 0.3, fortress.gold, { tex: 'fortress-stone' });
+  addBox(scene, world, -9.75, 19.6, 16.65, 3.5, 1, 0.3, fortress.gold, { tex: 'fortress-stone' });
+  // Small gold crenellations crown the roof while leaving both ramp landings
+  // and the north/south centerline open.
+  for (const z of [13.45, 38.55]) for (const x of [-6, -2, 2, 6]) {
+    addBox(scene, world, x, 19.85, z, 2.2, 1.5, 0.9, fortress.gold, { tex: 'fortress-stone' });
   }
+
+  // A narrow high bridge continues the keep's north-south route to a lookout
+  // centered over the canal. The lookout matches the nine-metre width of the
+  // rust bridge directly below and provides the lip for paired side falls.
+  addBox(scene, world, 0, 18.7, 8, 4, 0.8, 10, fortress.royal, { tex: 'fortress-deck' });
+  addBox(scene, world, 0, 18.7, 0, 9, 0.8, 6, fortress.bridge, { tex: 'fortress-deck' });
   addVine(scene, world, -5.5, 15, 0.2, 7.9, 0.85, 0, -0.2);
   addVine(scene, world, 11, 22, 0.2, 7.9, 0.85, 0.25, 0);
   addVine(scene, world, -11, 31, 0.2, 7.9, 0.85, -0.25, 0);
@@ -2341,16 +2784,16 @@ function buildFortress(scene) {
   // Pickups
   pk(world, 'weapon', 64, 8, 38, { weapon: 'hyper' });        // NE tower
   pk(world, 'weapon', -64, 8, -38, { weapon: 'pulsar' });     // SW tower
-  pk(world, 'weapon', 0, 8.2, 30, { weapon: 'hyper' });       // keep roof
+  pk(world, 'weapon', 0, 19.5, 0, { weapon: 'hyper' });       // high waterfall platform
   pk(world, 'weapon', 40, -3.8, 0, { weapon: 'zooka' });      // east trench
   pk(world, 'weapon', -52.5, 0.2, -30.5, { weapon: 'scatter' }); // close-range sluice reward
   pk(world, 'weapon', 48, 0.2, 30, { weapon: 'scatter' });
   pk(world, 'weapon', 4, 0.2, 26, { weapon: 'sidewinder' }); // keep interior, beside the gold
   pk(world, 'weapon', -40, 5.4, 43.5, { weapon: 'whomper' }); // north battlement
-  pk(world, 'weapon', 0, 8.2, -30, { weapon: 'parasite' });      // keep roof south edge
+  pk(world, 'weapon', 0, 8.2, 30, { weapon: 'parasite' });    // former Hyperstrike position
   pk(world, 'ammo', -4, 0.2, 26, { weapon: 'sidewinder' });
   pk(world, 'ammo', -48, 5.4, 43.5, { weapon: 'whomper' });
-  pk(world, 'ammo', 8, 8.2, -30, { weapon: 'parasite' });
+  pk(world, 'ammo', 8, 8.2, 30, { weapon: 'parasite' });
   pk(world, 'ammo', 64, 8, 35, { weapon: 'hyper' });
   pk(world, 'ammo', -64, 8, -35, { weapon: 'pulsar' });
   pk(world, 'ammo', 34, -3.8, 0, { weapon: 'zooka' });
@@ -2400,9 +2843,15 @@ function buildFortress(scene) {
     [-58, -4, 7], [-58, 0, 11], [-28, -4, -7], [-28, 0, -11],
     [-10, -4, 7], [-10, 0, 11], [18, -4, -7], [18, 0, -11],
     [46, -4, 7], [46, 0, 11], [60, -4, -7], [60, 0, -11],
-    // keep: door, interior, roof + ramp
+    // keep: ground room, tall second room, exterior ramps, and upper roof
     [0, 0, 11], [0, 0, 26], [0, 0, 35], [0, 0, 39.5],
-    [9, 7.8, 27], [-5, 7.8, 26], [22, 3.9, 27], [34, 0, 27],
+    [0, 5, 41.75], [0, 6.4, 40.375], [0, 7.8, 39],
+    [0, 7.8, 16], [-5, 7.8, 26], [0, 7.8, 36], [9, 7.8, 32],
+    [9.75, 7.8, 18], [9.75, 10.625, 22], [9.75, 13.45, 26], [9.75, 16.275, 30], [9.75, 19.1, 34.75],
+    [-9.75, 19.1, 17.25], [-9.75, 16.275, 22], [-9.75, 13.45, 26], [-9.75, 10.625, 30], [-9.75, 7.8, 34],
+    [-6, 19.1, 18], [0, 19.1, 26], [6, 19.1, 34],
+    [0, 19.1, 12], [0, 19.1, 8], [0, 19.1, 3], [0, 19.1, 0],
+    [22, 3.9, 27], [34, 0, 27],
     // towers
     [64, 7.6, 38], [52, 3.8, 38], [44, 0, 38],
     [-64, 7.6, -38], [-52, 3.8, -38], [-44, 0, -38],
@@ -2755,6 +3204,12 @@ function buildCanopy(scene) {
   riverSide(57.6);
   addWater(scene, world, -54, -0.55, 0, 7.8, 162, 5.4);
   addWater(scene, world, 54, -0.55, 0, 7.8, 162, 5.4);
+  // Small decorative schools patrol beneath the open portions of both rivers.
+  // They intentionally have no collision or gameplay state.
+  addMinnowSchool(scene, world, -54, -50, 15, 0.2);
+  addMinnowSchool(scene, world, -54, 27, 13, 2.4);
+  addMinnowSchool(scene, world, 54, -34, 16, 1.1);
+  addMinnowSchool(scene, world, 54, 35, 12, 3.5);
   addWaterfall(scene, world, -54, -79.86, 8.4, 28.6, -0.55, 28, 1);
   addWaterfall(scene, world, 54, 79.86, 8.4, 28.6, -0.55, 28, -1);
   addBox(scene, world, 0, -5.3, 64, 108, 1, 8, 0x3f6e5e, { tex: 'rock', repeat: [12, 1] });   // underwater connector bed
@@ -2997,6 +3452,7 @@ function buildCanopy(scene) {
     blob.material.map = null;
     world.foliageZones.push({ x, y, z, r: r * 0.95 });
   }
+  addCanopyBirdFlocks(scene, world);
 
   // Spawns
   for (const dz of [-25, -12, 0, 12, 25]) world.spawns.blue.push(V(-62, 0.1, dz));
@@ -6290,6 +6746,142 @@ function addStormCloudDome(scene) {
   stormSky.material.opacity = 0;
   stormSky.material.depthWrite = false;
   return stormSky;
+}
+
+function addCanopyBirdFlocks(scene, world) {
+  const flock = new THREE.Group();
+  flock.visible = false;
+  scene.add(flock);
+
+  const featherMaterial = new THREE.MeshStandardMaterial({
+    color: 0x26382f,
+    roughness: 0.9,
+    flatShading: true,
+    side: THREE.DoubleSide,
+  });
+  const bodyGeometry = new THREE.ConeGeometry(0.1, 0.56, 5);
+  bodyGeometry.rotateX(Math.PI / 2);
+  const leftWingGeometry = new THREE.BufferGeometry();
+  leftWingGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0.12, -0.82, 0, -0.08, -0.14, 0, -0.22,
+  ], 3));
+  leftWingGeometry.computeVertexNormals();
+  const rightWingGeometry = new THREE.BufferGeometry();
+  rightWingGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0.12, 0.14, 0, -0.22, 0.82, 0, -0.08,
+  ], 3));
+  rightWingGeometry.computeVertexNormals();
+
+  const birds = [];
+  for (let i = 0; i < 11; i++) {
+    const bird = new THREE.Group();
+    const body = new THREE.Mesh(bodyGeometry, featherMaterial);
+    const leftWing = new THREE.Mesh(leftWingGeometry, featherMaterial);
+    const rightWing = new THREE.Mesh(rightWingGeometry, featherMaterial);
+    bird.add(body, leftWing, rightWing);
+    bird.scale.setScalar(0.72 + (i % 4) * 0.08);
+    flock.add(bird);
+    birds.push({
+      bird, leftWing, rightWing,
+      side: ((i * 1.73) % 5.8) - 2.9,
+      behind: (i % 4) * 1.25 + Math.floor(i / 4) * 0.8,
+      height: ((i * 2.1) % 2.8) - 1.1,
+      phase: i * 0.83,
+    });
+  }
+
+  const crowns = [
+    { x: -45, y: 38, z: -45 }, { x: 45, y: 38, z: -45 },
+    { x: -45, y: 38, z: 45 }, { x: 45, y: 38, z: 45 },
+    { x: 0, y: 45, z: 0 },
+  ];
+  let launches = 0;
+  let nextLaunch = rand(34, 78);
+  let flightTime = 0;
+  let flightDuration = 0;
+  let playerInCrown = false;
+  let crownTriggerCooldown = 0;
+  const direction = new THREE.Vector3();
+  const origin = new THREE.Vector3();
+
+  const launch = (scheduled = true) => {
+    const crown = crowns[Math.floor(Math.random() * crowns.length)];
+    let outwardX = crown.x;
+    let outwardZ = crown.z;
+    const outwardLength = Math.hypot(outwardX, outwardZ);
+    if (outwardLength < 1) {
+      const angle = rand(0, Math.PI * 2);
+      outwardX = Math.sin(angle);
+      outwardZ = Math.cos(angle);
+    } else {
+      outwardX /= outwardLength;
+      outwardZ /= outwardLength;
+    }
+    const crownRadius = crown.x === 0 && crown.z === 0 ? 14.5 : 11.5;
+    origin.set(
+      crown.x - outwardX * crownRadius,
+      crown.y - 0.5,
+      crown.z - outwardZ * crownRadius,
+    );
+    direction.set(-outwardX, rand(0.12, 0.28), -outwardZ);
+    direction.normalize();
+    flock.position.copy(origin);
+    flock.rotation.y = Math.atan2(direction.x, direction.z);
+    flock.visible = true;
+    flightTime = 0;
+    flightDuration = rand(15, 19);
+    if (scheduled) launches++;
+  };
+
+  world.anim.push((dt, t, characters = []) => {
+    const raining = (world.storm?.mix || 0) > 0.01;
+    crownTriggerCooldown = Math.max(0, crownTriggerCooldown - dt);
+    const player = characters.find(ch => ch?.isPlayer && ch.alive);
+    const insideCrown = !!player && crowns.some(crown => {
+      const dx = player.pos.x - crown.x;
+      const dy = player.pos.y + 1.5 - crown.y;
+      const dz = player.pos.z - crown.z;
+      const radius = crown.x === 0 && crown.z === 0 ? 15.2 : 12;
+      return dx * dx + dy * dy + dz * dz < radius * radius;
+    });
+    if (insideCrown && !playerInCrown && !raining && crownTriggerCooldown <= 0) {
+      launch(false);
+      crownTriggerCooldown = 12;
+    }
+    playerInCrown = insideCrown;
+
+    if (!flock.visible) {
+      if (launches >= 2 || raining) return;
+      nextLaunch -= dt;
+      if (nextLaunch <= 0) launch();
+      return;
+    }
+
+    flightTime += dt;
+    if (flightTime >= flightDuration || raining) {
+      flock.visible = false;
+      nextLaunch = rand(75, 135);
+      return;
+    }
+
+    const distance = flightTime * 12.5;
+    flock.position.set(
+      origin.x + direction.x * distance,
+      origin.y + direction.y * distance + Math.sin(flightTime / flightDuration * Math.PI) * 5,
+      origin.z + direction.z * distance,
+    );
+    const urgency = Math.min(1, flightTime * 1.5);
+    for (const b of birds) {
+      b.bird.position.set(
+        b.side,
+        b.height + Math.sin(t * 1.1 + b.phase) * 0.35,
+        -b.behind * urgency,
+      );
+      const flap = Math.sin(t * 9.5 + b.phase) * 0.62;
+      b.leftWing.rotation.z = flap;
+      b.rightWing.rotation.z = -flap;
+    }
+  });
 }
 
 function addCanopyStorm(scene, world) {

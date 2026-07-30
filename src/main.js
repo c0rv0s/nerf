@@ -61,6 +61,7 @@ const WATER = { name: 'Water', color: '#3fcfff', isPlayer: false, kills: 0, team
 const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills: 0, team: 'storm' };
 const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, team: 'meteor' };
 const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
+const GATOR = { name: 'Canal Gator', color: '#8fbd45', isPlayer: false, kills: 0, team: 'gator' };
 const EVENT_BLAST_RADIUS = 10;
 const EVENT_BLAST_DAMAGE = 50;
 
@@ -925,6 +926,12 @@ function startMatch(mapDef, mode = 'ffa') {
     applyDamage(ch, 50, LIGHTNING, { environmental: true });
     if (ch.isPlayer) hud.message('LIGHTNING STRIKE', '#dff7ff');
   };
+  world.onGatorBite = (ch) => {
+    if (!ch?.alive) return;
+    sfx('chomp', world.gator?.group?.position);
+    applyDamage(ch, 50, GATOR, { environmental: true });
+    if (ch.isPlayer) hud.message('GATOR BITE -50', '#b8e35b');
+  };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
 
   G = {
@@ -1037,6 +1044,15 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  world.onGatorBite = (ch) => {
+    // The host owns environmental damage and distributes the resulting health
+    // snapshot/events, preventing every client from applying the same bite.
+    if (!ch?.alive) return;
+    sfx('chomp', world.gator?.group?.position);
+    if (!G?.multiplayerHost) return;
+    applyDamage(ch, 50, GATOR, { environmental: true });
+    if (ch.isPlayer) hud.message('GATOR BITE -50', '#b8e35b');
+  };
   world.getPickups = () => pickups.items;
 
   G = {
