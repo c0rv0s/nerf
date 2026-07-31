@@ -21,6 +21,7 @@ import { createJetpack } from './jetpack.js';
 import { unlockSecretMap } from './secret-maps.js';
 import { byId, setStyle, setText } from './dom.js';
 import { mapPlayerLimit } from './map-rules.js';
+import { damageMultiplierForPowerup, resolveShieldedDamage } from './combat.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -30,7 +31,7 @@ const REMOTE_SLOT_SNAP_DIST = 20;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
 const REMOTE_HUMAN_MAX_PREDICT = 0.18;
 const REMOTE_HUMAN_SMOOTH = 20;
-const MP_PREDICTED_DAMAGE_TTL_MS = 2000;
+const MP_SNAPSHOT_STALL_MS = 2000;
 const DAMAGE_MARKER_LIFETIME = 1.15;
 const previousCharacterPos = new THREE.Vector3();
 const MULTI_KILL_WINDOW = 2.75;
@@ -511,7 +512,7 @@ function syncAtriumModeSign(world = G?.world) {
 }
 
 setInterval(() => {
-  if (!G?.multiplayerHost || multiplayer.phase !== 'playing' || G.over) return;
+  if (!G?.multiplayerHost || multiplayer.phase !== 'playing' || G.over || G.mpConnectionPaused) return;
   const now = performance.now();
   if (now - (G.lastStepWall || 0) < 120) return;
   const dt = Math.min(0.1, Math.max(0.016, (now - G.lastT) / 1000));
@@ -1037,7 +1038,9 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const projectiles = new ProjectileSystem(scene, world, {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
-    onDamage: (target, dmg, attacker, ctx) => applyPredictedMultiplayerDamage(target, dmg, attacker, ctx),
+    // Guest projectiles are presentation/prediction only. Damage feedback is
+    // shown after the host confirms the hit in an authoritative snapshot.
+    onDamage: () => {},
     targets: () => shootableWorldTargets(),
     onTargetDamage: (target, dmg, attacker, ctx) => {
       // The gator has no health authority to reconcile; react immediately on
@@ -1077,6 +1080,8 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     mpSendT: 0,
     mpSyncedSelf: false,
     mpSawSelfSnapshot: false,
+    mpLastSnapshotAt: performance.now(),
+    mpConnectionPaused: false,
   };
   syncRenderQuality();
 
@@ -1095,7 +1100,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   rafId = requestAnimationFrame(tick);
 }
 
-function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa') {
+function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa', resumeSnapshot = null) {
   startMatch(mapDef, mode);
   if (!G) return;
   bindWorldPresentation(G.world, true);
@@ -1106,6 +1111,7 @@ function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   G.mpEvents = [];
   G.remoteInputs = new Map();
   G.remoteHumans = new Map();
+  G.mpConnectionPaused = false;
   G.paused = false;
   setText(document.getElementById('catchtitle'), 'CLICK TO RESUME');
   setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
@@ -1120,7 +1126,64 @@ function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     ch.id = `bot-${botIdx}`;
     botIdx++;
   }
+  syncRemoteHumans();
+  if (resumeSnapshot) applyHostHandoffSnapshot(resumeSnapshot);
   syncMultiplayerNameTags();
+}
+
+function applyHostHandoffSnapshot(snap) {
+  if (!G?.multiplayerHost || !snap) return;
+  G.scores = {
+    blue: snap.scores?.blue || 0,
+    red: snap.scores?.red || 0,
+  };
+  const phaseEndsAt = Number.isFinite(snap.phaseEndsAt)
+    ? snap.phaseEndsAt
+    : multiplayer.phaseEndsAt;
+  G.timeLeft = Math.max(0, ((phaseEndsAt || Date.now()) - Date.now()) / 1000);
+  G.mpDropIds ||= new Set();
+  applyScoreTargetCooldowns(snap.targetCooldowns);
+  G.pickups?.applyAuthoritativeState?.(snap.pickups || []);
+
+  const byId = new Map(G.characters.map(ch => [characterNetworkId(ch), ch]));
+  for (const state of snap.players || []) {
+    const ch = byId.get(state.id);
+    if (!ch || !state.pos) continue;
+    ch.name = state.name || ch.name;
+    ch.color = state.color || ch.color;
+    ch.team = state.team || ch.team;
+    ch.pos.set(state.pos.x, state.pos.y, state.pos.z);
+    ch.vel?.set(0, 0, 0);
+    ch.yaw = state.yaw || 0;
+    ch.pitch = state.pitch || 0;
+    if (state.up && ch.up) ch.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
+    ch.hp = state.hp;
+    ch.alive = state.alive !== false;
+    ch.score = state.score || 0;
+    ch.kills = state.kills || 0;
+    ch.deaths = state.deaths || 0;
+    ch.awards = state.awards || {};
+    ch.weapons = Object.fromEntries((state.weapons || ['blaster']).map(id => [id, true]));
+    ch.weapons.blaster = true;
+    ch.ammo = { blaster: Infinity, ...(state.ammo || {}) };
+    ch.weapon = ch.weapons[state.weapon] &&
+      (state.weapon === 'blaster' || ch.ammo[state.weapon] > 0)
+      ? state.weapon
+      : 'blaster';
+    applyMultiplayerCombatState(ch, state);
+    ch.jetpack = state.jetpack ? createJetpack() : null;
+    if (ch.jetpack) ch.jetpack.active = !!state.jetpackActive;
+    ch.mesh && (ch.mesh.visible = ch.alive);
+    ch.syncGunModel?.();
+    if (ch.isPlayer) ch.showWeaponModel?.(ch.weapon);
+    if (state.respawn > 0 && !ch.alive) G.respawnTimers.set(ch, state.respawn);
+    else G.respawnTimers.delete(ch);
+    if (ch.remoteHuman) ch.remoteNet = makeRemoteNet(ch.pos);
+  }
+  reconcileMultiplayerDrops(snap.drops || []);
+  G.player.update(0, () => {});
+  G.lastT = performance.now();
+  G.lastStepWall = G.lastT;
 }
 
 function syncRemoteHumans() {
@@ -1462,6 +1525,7 @@ function applyMultiplayerSnapshot(snap) {
       G.player.deaths = state.deaths || 0;
       G.player.awards = state.awards || G.player.awards || {};
       applyMultiplayerLoadout(state);
+      applyMultiplayerCombatState(G.player, state);
       if (state.hp < G.player.hp) hud.damageFlash();
       G.player.hp = state.hp;
       if (!state.alive && G.player.alive) {
@@ -1489,6 +1553,7 @@ function applyMultiplayerSnapshot(snap) {
     remote.kills = state.kills || 0;
     remote.deaths = state.deaths || 0;
     remote.awards = state.awards || remote.awards || {};
+    applyMultiplayerCombatState(remote, state);
     const nextWeapon = state.weapon || 'blaster';
     if (nextWeapon !== remote.weapon) {
       remote.warmupAudioStop?.();
@@ -1534,10 +1599,9 @@ function applyMultiplayerSnapshot(snap) {
     if (ev.type === 'comet-impact') receiveCometImpact(ev);
     if (ev.type === 'damage' && ev.attackerId === multiplayer.slotId) {
       const target = G.characters.find(c => c.id === ev.targetId);
-      if (!consumePredictedMultiplayerDamage(ev.targetId, ev.amount || 0)) {
-        hud.hitmarker();
-        if (target) spawnDmgMarker(target, ev.amount || 0);
-      }
+      hud.hitmarker();
+      sfx('hit');
+      if (target) spawnDmgMarker(target, ev.amount || 0);
     }
     if (ev.type === 'damage' && ev.attackerId === 'gator' &&
       ev.targetId === multiplayer.slotId) {
@@ -1563,34 +1627,38 @@ function applyMultiplayerSnapshot(snap) {
       }
     }
   }
+  G.pickups?.applyAuthoritativeState?.(snap.pickups || []);
   reconcileMultiplayerDrops(snap.drops || []);
 }
 
 function applyMultiplayerLoadout(state) {
   if (!G?.player || !Array.isArray(state.weapons)) return;
   const previouslyOwned = { ...(G.player.weapons || {}) };
-  G.player.weapons ||= { blaster: true };
-  G.player.ammo ||= { blaster: Infinity };
-  G.player.weapons.blaster = true;
-  G.player.ammo.blaster = Infinity;
+  const authoritativeWeapons = { blaster: true };
+  const authoritativeAmmo = { blaster: Infinity };
 
   const newlyOwned = [];
   for (const id of state.weapons) {
     if (!WEAPONS[id]) continue;
-    if (!G.player.weapons[id]) newlyOwned.push(id);
-    G.player.weapons[id] = true;
+    if (!previouslyOwned[id]) newlyOwned.push(id);
+    authoritativeWeapons[id] = true;
     if (id !== 'blaster' && Number.isFinite(state.ammo?.[id])) {
-      G.player.ammo[id] = Math.max(0, state.ammo[id]);
+      authoritativeAmmo[id] = Math.max(0, state.ammo[id]);
     }
   }
+  G.player.weapons = authoritativeWeapons;
+  G.player.ammo = authoritativeAmmo;
 
-  const authoritativeWeapon = WEAPONS[state.weapon] && G.player.weapons[state.weapon]
+  const authoritativeWeapon = WEAPONS[state.weapon] && authoritativeWeapons[state.weapon] &&
+      (state.weapon === 'blaster' || authoritativeAmmo[state.weapon] > 0)
     ? state.weapon
     : 'blaster';
-  const currentHasAmmo = G.player.weapon === 'blaster' || G.player.ammo[G.player.weapon] > 0;
-  if (authoritativeWeapon !== 'blaster' &&
-      (G.player.weapon === 'blaster' || !G.player.weapons[G.player.weapon] || !currentHasAmmo)) {
-    G.player.switchWeapon(authoritativeWeapon);
+  const currentIsAuthoritative = authoritativeWeapons[G.player.weapon] &&
+    (G.player.weapon === 'blaster' || authoritativeAmmo[G.player.weapon] > 0);
+  if (!currentIsAuthoritative) {
+    G.player.cancelWeaponWarmup?.();
+    G.player.weapon = authoritativeWeapon;
+    G.player.showWeaponModel?.(authoritativeWeapon);
   }
 
   const acquired = newlyOwned.find(id => !previouslyOwned[id] && id !== 'blaster');
@@ -1600,38 +1668,20 @@ function applyMultiplayerLoadout(state) {
   }
 }
 
-function applyPredictedMultiplayerDamage(target, dmg, attacker, ctx = {}) {
-  if (!G?.multiplayer || attacker !== G.player || !target || target === G.player) return;
-  const targetId = characterNetworkId(target);
-  if (!targetId || !Number.isFinite(dmg) || dmg <= 0) return;
-  const now = performance.now();
-  G.mpPredictedDamage ||= [];
-  G.mpPredictedDamage = G.mpPredictedDamage
-    .filter(hit => now - hit.at <= MP_PREDICTED_DAMAGE_TTL_MS);
-  G.mpPredictedDamage.push({ targetId, amount: dmg, at: now });
-  hud.hitmarker();
-  sfx('hit');
-  spawnDmgMarker(target, dmg);
-}
-
-function consumePredictedMultiplayerDamage(targetId, amount) {
-  if (!G?.mpPredictedDamage?.length) return false;
-  const now = performance.now();
-  G.mpPredictedDamage = G.mpPredictedDamage
-    .filter(hit => now - hit.at <= MP_PREDICTED_DAMAGE_TTL_MS);
-  let match = -1;
-  let smallestDifference = Infinity;
-  for (let i = 0; i < G.mpPredictedDamage.length; i++) {
-    const hit = G.mpPredictedDamage[i];
-    if (hit.targetId !== targetId) continue;
-    const difference = Math.abs(hit.amount - amount);
-    if (difference >= smallestDifference) continue;
-    match = i;
-    smallestDifference = difference;
+function applyMultiplayerCombatState(ch, state) {
+  if (!ch || !state) return;
+  ch.shield = Math.max(0, Number(state.shield) || 0);
+  const kind = state.powerup?.kind === 'gold' || state.powerup?.kind === 'silver'
+    ? state.powerup.kind
+    : null;
+  ch.powerup = kind
+    ? { kind, timeLeft: Math.max(0, Number(state.powerup.timeLeft) || 0) }
+    : null;
+  ch.damageMult = damageMultiplierForPowerup(ch.powerup);
+  if (ch.isPlayer && ch._multiplayerPowerupKind !== kind) {
+    ch._multiplayerPowerupKind = kind;
+    ch.setSkin?.(kind);
   }
-  if (match < 0) return false;
-  G.mpPredictedDamage.splice(match, 1);
-  return true;
 }
 
 function dropSnapshotId(drop) {
@@ -1641,7 +1691,7 @@ function dropSnapshotId(drop) {
 }
 
 function reconcileMultiplayerDrops(drops) {
-  if (!G?.multiplayer || !G.pickups) return;
+  if ((!G?.multiplayer && !G?.multiplayerHost) || !G.pickups) return;
   G.mpDropIds ||= new Set();
   const live = new Set();
   for (const drop of drops) {
@@ -2717,12 +2767,9 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
   if (!target.alive || G.over) return;
   const rawDmg = dmg;
   if (attacker.isPlayer && attacker !== target) spawnDmgMarker(target, dmg);
-  if (target.shield > 0) { // shield soaks damage first
-    const absorbed = Math.min(target.shield, dmg);
-    target.shield -= absorbed;
-    dmg -= absorbed;
-  }
-  target.hp -= dmg;
+  const resolved = resolveShieldedDamage(target.hp, target.shield, dmg);
+  target.shield = resolved.shield;
+  target.hp = resolved.hp;
   target.lastAttacker = attacker;  // getting shot reveals the shooter to bots
   target.alertTimer = 4;
   if (ctx.headshot && attacker && attacker !== target) {
@@ -2734,6 +2781,7 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
       attackerId: characterNetworkId(attacker),
       targetId: characterNetworkId(target),
       amount: rawDmg,
+      headshot: !!ctx.headshot,
     });
   }
   if (attacker.isPlayer) { hud.hitmarker(); sfx('hit'); }
@@ -2999,12 +3047,17 @@ document.addEventListener('pointerlockchange', () => {
     const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
     const multiplayerPanelOpen = multiplayer.overlay && !multiplayer.overlay.hidden;
     const multiplayerChatOpen = multiplayer.isChatOpen();
-    G.paused = multiplayerMatch ? false : !locked;
-    setStyle(clickcatch, 'display', (locked || multiplayerPanelOpen || multiplayerChatOpen) ? 'none' : 'flex');
-    setText(document.getElementById('catchtitle'),
-      locked ? '' : (multiplayerMatch ? 'CLICK TO RESUME' : '⏸ PAUSED — CLICK TO RESUME'));
+    const connectionPaused = !!G.mpConnectionPaused;
+    G.paused = connectionPaused ? true : multiplayerMatch ? false : !locked;
+    setStyle(clickcatch, 'display',
+      (!connectionPaused && (locked || multiplayerPanelOpen || multiplayerChatOpen)) ? 'none' : 'flex');
+    if (!connectionPaused) {
+      setText(document.getElementById('catchtitle'),
+        locked ? '' : (multiplayerMatch ? 'CLICK TO RESUME' : '⏸ PAUSED — CLICK TO RESUME'));
+    }
     // pause menu extras (matches only): live scoreboard + quit
-    const showPause = !locked && !G.atrium && !multiplayerPanelOpen && !multiplayerChatOpen;
+    const showPause = !connectionPaused && !locked && !G.atrium &&
+      !multiplayerPanelOpen && !multiplayerChatOpen;
     setStyle(quitBtn, 'display', showPause ? '' : 'none');
     setStyle(volumeControl, 'display', showPause ? 'block' : 'none');
     setText(quitBtn, multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM');
@@ -3022,7 +3075,10 @@ document.addEventListener('pointerlockchange', () => {
     setStyle(volumeControl, 'display', 'none');
   }
 });
-clickcatch.addEventListener('click', requestPointerLock);
+clickcatch.addEventListener('click', () => {
+  if (G?.mpConnectionPaused) return;
+  requestPointerLock();
+});
 hud.els.board.addEventListener('click', (e) => e.stopPropagation());
 hud.els.board.addEventListener('pointerdown', (e) => e.stopPropagation());
 volumeControl.addEventListener('click', (e) => e.stopPropagation());
@@ -3126,7 +3182,12 @@ document.addEventListener('keyup', (e) => {
   if (e.code === 'Tab') G.showBoard = false;
 });
 
-function startCurrentMultiplayerMatch(mapId, force = false, mode = multiplayer.mode || 'ffa') {
+function startCurrentMultiplayerMatch(
+  mapId,
+  force = false,
+  mode = multiplayer.mode || 'ffa',
+  resumeSnapshot = null,
+) {
   clearTimeout(multiplayerVotingTimer);
   setStyle(document.getElementById('endscreen'), 'display', 'none');
   setStyle(clickcatch, 'display', 'none');
@@ -3137,10 +3198,15 @@ function startCurrentMultiplayerMatch(mapId, force = false, mode = multiplayer.m
   const endedMultiplayerMatch = !!(G?.over && (G.multiplayer || G.multiplayerHost));
   if (multiplayer.shouldHost()) {
     if (force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id || G.mode !== mode) {
-      startMultiplayerHostMatch(map, mode);
+      startMultiplayerHostMatch(map, mode, resumeSnapshot);
+    } else if (resumeSnapshot) {
+      applyHostHandoffSnapshot(resumeSnapshot);
     }
   } else if (force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id || G.mode !== mode) {
     startMultiplayerMatch(map, mode);
+    if (resumeSnapshot) applyMultiplayerSnapshot(resumeSnapshot);
+  } else if (resumeSnapshot) {
+    applyMultiplayerSnapshot(resumeSnapshot);
   }
 }
 
@@ -3148,7 +3214,12 @@ multiplayer.addEventListener('joined', (e) => {
   if (e.detail.phase === 'playing') {
     const slotChanged = !!G?.player?.id && G.player.id !== e.detail.slotId;
     const roleMismatch = multiplayer.shouldHost() ? !G?.multiplayerHost : !G?.multiplayer;
-    startCurrentMultiplayerMatch(e.detail.mapId, slotChanged || roleMismatch, e.detail.mode || multiplayer.mode || 'ffa');
+    startCurrentMultiplayerMatch(
+      e.detail.mapId,
+      slotChanged || roleMismatch,
+      e.detail.mode || multiplayer.mode || 'ffa',
+      e.detail.snapshot || null,
+    );
   } else if (G?.multiplayer || G?.multiplayerHost) {
     hud.message('MULTIPLAYER LOBBY REJOINED', '#ffd23c');
     endMatch(true);
@@ -3205,7 +3276,9 @@ multiplayer.addEventListener('snapshot', (e) => {
     const map = MAPS.find(m => m.id === e.detail.mapId) || MAPS[0];
     startMultiplayerMatch(map, e.detail.mode || multiplayer.mode || 'ffa');
   }
+  if (G?.multiplayer) G.mpLastSnapshotAt = performance.now();
   applyMultiplayerSnapshot(e.detail);
+  finishMultiplayerConnectionPause();
 });
 
 multiplayer.addEventListener('remoteInput', (e) => {
@@ -3214,25 +3287,53 @@ multiplayer.addEventListener('remoteInput', (e) => {
   G.remoteInputs.set(e.detail.slotId, { ...e.detail.input, receivedAt: performance.now() });
 });
 
-multiplayer.addEventListener('hostChanged', () => {
+multiplayer.addEventListener('hostChanged', (e) => {
   if (multiplayer.phase !== 'playing') return;
   const map = MAPS.find(m => m.id === multiplayer.mapId) || MAPS[0];
   if (multiplayer.shouldHost()) {
-    if (!G?.multiplayerHost) startMultiplayerHostMatch(map, multiplayer.mode || 'ffa');
+    if (!G?.multiplayerHost) {
+      startMultiplayerHostMatch(map, multiplayer.mode || 'ffa', e.detail.snapshot || null);
+    }
   } else if (G?.multiplayerHost) {
     startMultiplayerMatch(map, multiplayer.mode || 'ffa');
+    if (e.detail.snapshot) applyMultiplayerSnapshot(e.detail.snapshot);
   }
 });
+
+function pauseMultiplayerForConnection(message = 'CONNECTION LOST — RECONNECTING...') {
+  if (!G || (!G.multiplayer && !G.multiplayerHost) || G.mpConnectionPaused) return;
+  G.mpConnectionPaused = true;
+  G.paused = true;
+  G.player.firing = false;
+  G.player.cancelWeaponWarmup?.();
+  setPauseScoreboardLayer(false);
+  setStyle(hud.els.board, 'display', 'none');
+  setStyle(quitBtn, 'display', 'none');
+  setStyle(volumeControl, 'display', 'none');
+  setText(document.getElementById('catchtitle'), message);
+  setStyle(clickcatch, 'display', 'flex');
+  document.exitPointerLock?.();
+}
+
+function finishMultiplayerConnectionPause(message = 'SYNC RESTORED — CLICK TO RESUME') {
+  if (!G || (!G.multiplayer && !G.multiplayerHost) || !G.mpConnectionPaused) return;
+  G.mpConnectionPaused = false;
+  G.paused = false;
+  setText(document.getElementById('catchtitle'), message);
+  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+}
 
 multiplayer.addEventListener('connectionLost', () => {
   if (G?.multiplayer || G?.multiplayerHost) {
     hud.message('CONNECTION LOST — REJOINING...', '#ffd23c');
+    pauseMultiplayerForConnection();
   }
 });
 
 multiplayer.addEventListener('reconnected', () => {
   if (G?.multiplayer || G?.multiplayerHost) {
     hud.message('MULTIPLAYER REJOINED', '#6dff6d');
+    if (multiplayer.shouldHost()) finishMultiplayerConnectionPause('REJOINED — CLICK TO RESUME');
   }
 });
 
@@ -3246,6 +3347,10 @@ multiplayer.addEventListener('disconnect', () => {
 /* ---------------- main loop ---------------- */
 function tick(now) {
   if (!G) return;
+  if (G.multiplayer && multiplayer.phase === 'playing' && !G.mpConnectionPaused &&
+      now - (G.mpLastSnapshotAt || now) > MP_SNAPSHOT_STALL_MS) {
+    pauseMultiplayerForConnection('SYNC INTERRUPTED — RECONNECTING...');
+  }
   const frameMs = Math.max(0, now - G.lastT);
   const dt = Math.min(0.05, frameMs / 1000);
   G.lastT = now;
@@ -3964,7 +4069,11 @@ function step(dt) {
 
   if (G.hallOfFame) stepHallOfFame(dt);
   else if (G.atrium) stepAtrium(dt);
-  else G.timeLeft -= dt;
+  else if (G.multiplayerHost) {
+    G.timeLeft = Math.max(0, (multiplayer.phaseEndsAt - Date.now()) / 1000);
+  } else {
+    G.timeLeft -= dt;
+  }
   setListener(G.player.pos); // distance-based sfx volume
 
   G.world.update?.(dt, G.characters);
@@ -4102,6 +4211,7 @@ function serializeCharacter(ch, i) {
     pitch: ch.pitch ?? 0,
     up: ch.up ? { x: ch.up.x, y: ch.up.y, z: ch.up.z } : { x: 0, y: 1, z: 0 },
     hp: ch.hp ?? 100,
+    shield: ch.shield ?? 0,
     alive: ch.alive !== false,
     score: ch.score || 0,
     kills: ch.kills || 0,
@@ -4111,6 +4221,10 @@ function serializeCharacter(ch, i) {
     weapon: ch.weapon || 'blaster',
     weapons,
     ammo,
+    damageMult: ch.damageMult ?? 1,
+    powerup: ch.powerup
+      ? { kind: ch.powerup.kind, timeLeft: Math.max(0, ch.powerup.timeLeft || 0) }
+      : null,
     warmup: warming ? Math.max(0, Math.min(1, 1 - ch.warmupT / weapon.warmup)) : -1,
     jetpack: !!ch.jetpack,
     jetpackActive: !!ch.jetpack?.active,
@@ -4157,6 +4271,7 @@ function sendHostSnapshot(dt) {
     ranked: players.slice().sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths),
     events: G.mpEvents?.splice(0, 32) || [],
     drops: serializeDrops(),
+    pickups: G.pickups?.snapshotState?.() || [],
     targetCooldowns: serializeScoreTargetCooldowns(),
   });
 }

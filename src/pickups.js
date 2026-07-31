@@ -247,7 +247,7 @@ export class PickupManager {
   constructor(scene, defs, hooks) {
     this.scene = scene;
     this.hooks = hooks;
-    this.items = defs.map(def => {
+    this.items = defs.map((def, index) => {
       const mesh = makeMesh(def);
       // Existing map pickups seed the transient cache for free. Olympus
       // already contains every meteor reward, so impact-time work is clones.
@@ -267,7 +267,15 @@ export class PickupManager {
         L.userData.base = L.intensity;
         scene.add(L);
       }
-      return { def, mesh, lights, active: true, timer: 0, phase: Math.random() * 6 };
+      return {
+        def,
+        netId: `map-${index}`,
+        mesh,
+        lights,
+        active: true,
+        timer: 0,
+        phase: Math.random() * 6,
+      };
     });
     this.t = 0;
   }
@@ -336,6 +344,31 @@ export class PickupManager {
           }
           break;
         }
+      }
+    }
+  }
+
+  snapshotState() {
+    return this.items
+      .filter(item => !item.temporary && !item.active)
+      .map(item => ({
+        id: item.netId,
+        timer: Math.max(0, item.timer || 0),
+      }));
+  }
+
+  applyAuthoritativeState(states) {
+    const inactive = new Map((Array.isArray(states) ? states : [])
+      .filter(state => state && typeof state.id === 'string')
+      .map(state => [state.id, state]));
+    for (const item of this.items) {
+      if (item.temporary) continue;
+      const state = inactive.get(item.netId);
+      item.active = !state;
+      item.timer = state ? Math.max(0, Number(state.timer) || 0) : 0;
+      item.mesh.visible = item.active;
+      for (const light of item.lights) {
+        light.intensity = item.active ? light.userData.base : 0;
       }
     }
   }

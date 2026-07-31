@@ -180,17 +180,21 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
           human: true,
           pos: shifted,
           hp: 100,
+          shield: 75,
           alive: true,
           weapon: 'scatter',
           weapons: ['blaster', 'scatter'],
           ammo: { scatter: 7 },
+          damageMult: 2,
+          powerup: { kind: 'silver', timeLeft: 24.5 },
         },
       ],
       events: [{
         type: 'damage',
         attackerId: guestSlot,
         targetId: hostSlot,
-        amount: 25,
+        amount: 175,
+        headshot: true,
       }],
       drops: [
         {
@@ -207,6 +211,10 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
           pos: { x: 1, y: 0.1, z: 0 },
         },
       ],
+      pickups: [
+        { id: 'map-3', timer: 22.5 },
+        { id: 'invalid-pickup', timer: 10 },
+      ],
       targetCooldowns: [
         { id: 'target-poster-0', cooldown: 29.25 },
         { id: 'target-poster-0', cooldown: 5 },
@@ -220,12 +228,17 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   assert.equal(guestState.weapon, 'scatter');
   assert.deepEqual(guestState.weapons, ['blaster', 'scatter']);
   assert.deepEqual(guestState.ammo, { scatter: 7 });
+  assert.equal(guestState.shield, 75);
+  assert.equal(guestState.damageMult, 2);
+  assert.deepEqual(guestState.powerup, { kind: 'silver', timeLeft: 24.5 });
   assert.deepEqual(shiftedSnapshot.events, [{
     type: 'damage',
     attackerId: guestSlot,
     targetId: hostSlot,
-    amount: 25,
+    amount: 175,
+    headshot: true,
   }]);
+  assert.deepEqual(shiftedSnapshot.pickups, [{ id: 'map-3', timer: 22.5 }]);
   assert.deepEqual(shiftedSnapshot.drops.map(drop => ({
     id: drop.id,
     kind: drop.kind,
@@ -373,4 +386,95 @@ test('stalled clients do not ping-pong host authority and restart the match', {
   assert.equal(firstChanges.length, 1);
   assert.equal(secondChanges.length, 1);
   assert.equal(firstChanges[0].authorityEpoch, secondChanges[0].authorityEpoch);
+});
+
+test('host failover carries combat state forward and pauses the match clock', {
+  skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
+}, async (t) => {
+  const port = await freePort();
+  const server = await startServer(port, { HOST_SNAPSHOT_TIMEOUT_MS: '200' });
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.close();
+    server.kill('SIGTERM');
+    await once(server, 'exit').catch(() => {});
+  });
+
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const host = new TestClient(url, 'Host', 'handoff_host_token_123456789');
+  clients.push(host);
+  const hostJoined = await host.joined;
+  const guest = new TestClient(url, 'Guest', 'handoff_guest_token_12345678');
+  clients.push(guest);
+  const guestJoined = await guest.joined;
+  const playing = await host.waitFor(message =>
+    message.type === 'phaseChanged' && message.phase === 'playing', 4000);
+
+  host.send({
+    type: 'hostSnapshot',
+    authorityEpoch: playing.authorityEpoch,
+    seq: 1,
+    snapshot: {
+      players: [
+        {
+          id: hostJoined.slotId,
+          name: 'Host',
+          human: true,
+          pos: { x: -10, y: 0.1, z: -10 },
+          hp: 43,
+          shield: 0,
+          alive: true,
+          score: 750,
+          kills: 3,
+          deaths: 2,
+          weapon: 'hyper',
+          weapons: ['blaster', 'hyper'],
+          ammo: { hyper: 3 },
+        },
+        {
+          id: guestJoined.slotId,
+          name: 'Guest',
+          human: true,
+          pos: { x: 10, y: 0.1, z: 10 },
+          hp: 100,
+          shield: 29,
+          alive: true,
+          score: 500,
+          kills: 2,
+          deaths: 1,
+          weapon: 'scatter',
+          weapons: ['blaster', 'scatter'],
+          ammo: { scatter: 4 },
+          powerup: { kind: 'gold', timeLeft: 17 },
+        },
+      ],
+      scores: { blue: 1250, red: 900 },
+      events: [{ type: 'damage', attackerId: hostJoined.slotId, targetId: guestJoined.slotId, amount: 68 }],
+      drops: [],
+      pickups: [{ id: 'map-2', timer: 15 }],
+    },
+  });
+  await guest.waitFor(message => message.type === 'snapshot' && message.seq === 1);
+
+  const changed = await guest.waitFor(message =>
+    message.type === 'hostChanged' &&
+    message.isHost === true &&
+    message.authorityEpoch > playing.authorityEpoch, 3000);
+  assert.ok(changed.snapshot);
+  assert.equal(changed.snapshot.authorityEpoch, changed.authorityEpoch);
+  assert.equal(changed.phaseEndsAt, changed.snapshot.phaseEndsAt);
+  assert.equal(Number.isFinite(changed.snapshot.phaseEndsAt), true);
+  assert.ok(changed.snapshot.phaseEndsAt > playing.phaseEndsAt);
+  assert.deepEqual(changed.snapshot.events, []);
+  assert.deepEqual(changed.snapshot.pickups, [{ id: 'map-2', timer: 15 }]);
+
+  const restoredHost = changed.snapshot.players.find(player => player.id === hostJoined.slotId);
+  const restoredGuest = changed.snapshot.players.find(player => player.id === guestJoined.slotId);
+  assert.equal(restoredHost.hp, 43);
+  assert.equal(restoredHost.score, 750);
+  assert.equal(restoredHost.weapon, 'hyper');
+  assert.deepEqual(restoredHost.ammo, { hyper: 3 });
+  assert.equal(restoredGuest.shield, 29);
+  assert.equal(restoredGuest.damageMult, 3);
+  assert.deepEqual(restoredGuest.powerup, { kind: 'gold', timeLeft: 17 });
 });

@@ -219,6 +219,10 @@ class MultiplayerClient extends EventTarget {
       this._renderPhase();
     } else if (msg.type === 'hostChanged') {
       this._acceptAuthority(msg);
+      this.phase = msg.phase || this.phase;
+      this.mapId = msg.mapId || this.mapId;
+      this.mode = msg.mode || this.mode || 'ffa';
+      if (Number.isFinite(msg.phaseEndsAt)) this.phaseEndsAt = msg.phaseEndsAt;
       this.isHost = !!msg.isHost;
       this.hostId = msg.hostId || null;
       this.slots = msg.slots || [];
