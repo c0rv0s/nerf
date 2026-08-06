@@ -63,7 +63,7 @@ const MAPS = [
   // Mirrors buildCanopy's FFA pool. The previous corner coordinates were
   // inside the solid tree trunks, so the authoritative multiplayer snapshot
   // could repeatedly snap players into scenery.
-  { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25], [
+  { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-68, 0.1, 25], [68, 0.1, -25], [
     -40, 20.2, 40], [40, 20.2, -40], [8, 10.2, 45], [-8, 10.2, -45], [-34, 0.1, -30], [34, 0.1, -30], [-34, 0.1, 30], [34, 0.1, 30]] },
   { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },

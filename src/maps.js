@@ -3705,12 +3705,14 @@ function buildCanopy(scene) {
   addCanopyBirdFlocks(scene, world);
 
   // Spawns
-  for (const dz of [-25, -12, 0, 12, 25]) world.spawns.blue.push(V(-62, 0.1, dz));
-  for (const dz of [-25, -12, 0, 12, 25]) world.spawns.red.push(V(62, 0.1, dz));
+  // Keep the side starts out from behind the x = +/-60 hedge lanes. Facing
+  // toward mid from the old rows put several players directly into a hedge.
+  for (const dz of [25, 35, 45, 55, 65]) world.spawns.blue.push(V(-70, 0.1, dz));
+  for (const dz of [-65, -55, -45, -35, -25]) world.spawns.red.push(V(70, 0.1, dz));
   // Keep these clear of trunks, ramps, and hedges. The multiplayer server
   // mirrors this pool so its authoritative position cannot snap a player into
   // scenery after the local spawn selection has placed them safely.
-  for (const [x, y, z] of [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-62, 0.1, -25], [62, 0.1, 25],
+  for (const [x, y, z] of [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-68, 0.1, 25], [68, 0.1, -25],
                            [-40, 20.2, 40], [40, 20.2, -40], [8, 10.2, 45], [-8, 10.2, -45],
                            [-34, 0.1, -30], [34, 0.1, -30], [-34, 0.1, 30], [34, 0.1, 30]]) {
     world.spawns.ffa.push(V(x, y, z));
