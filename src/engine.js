@@ -244,7 +244,8 @@ const _moveHit = { hit: false, ny: 0, nx: 0, nz: 0 };
 // that a capsule cannot jump completely through a thin floor between checks.
 // char: {pos, vel, radius, height}; world: {colliders, ramps, gravity}
 export function moveCharacter(char, world, dt) {
-  const estimatedTravel = char.vel.length() * dt + world.gravity * dt * dt * 0.5;
+  const gravity = world.gravityAt?.(char.pos, char) ?? world.gravity;
+  const estimatedTravel = char.vel.length() * dt + gravity * dt * dt * 0.5;
   const steps = Math.min(4, Math.max(1, Math.ceil(estimatedTravel / 0.5)));
   const stepDt = dt / steps;
   let grounded = false;
@@ -253,7 +254,8 @@ export function moveCharacter(char, world, dt) {
 }
 
 function moveCharacterStep(char, world, dt) {
-  char.vel.y -= world.gravity * dt;
+  const gravity = world.gravityAt?.(char.pos, char) ?? world.gravity;
+  char.vel.y -= gravity * dt;
   char.pos.addScaledVector(char.vel, dt);
 
   const r = char.radius;

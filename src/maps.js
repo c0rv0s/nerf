@@ -2148,39 +2148,171 @@ function baseLighting(scene, skyColor, groundColor, sunDir, shadowHalf) {
 }
 
 const arenaLabelCache = new Map();
-function arenaLabelTexture(text, accent = '#ff7a2d') {
-  const key = `${text}:${accent}`;
+function arenaLabelTexture(text, accent = '#ff7a2d', style = 'industrial') {
+  const key = `${style}:${text}:${accent}`;
   if (arenaLabelCache.has(key)) return arenaLabelCache.get(key);
   const canvas = document.createElement('canvas');
   canvas.width = 512; canvas.height = 128;
   const g = canvas.getContext('2d');
-  g.fillStyle = '#09131f'; g.fillRect(0, 0, 512, 128);
-  g.fillStyle = accent; g.fillRect(0, 0, 13, 128);
-  g.fillRect(26, 18, 460, 4); g.fillRect(26, 106, 460, 4);
-  g.font = '900 52px Arial Black, sans-serif';
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = '#f4f1e8';
-  g.shadowColor = accent; g.shadowBlur = 9;
-  g.fillText(text, 266, 65, 444);
+
+  if (style === 'olympus') {
+    // Transparent lettering lets the real stone slab and raised metal border
+    // beneath this canvas remain visible instead of painting another UI card.
+    g.strokeStyle = 'rgba(83,49,24,.82)'; g.lineWidth = 5;
+    g.strokeRect(20, 19, 472, 90);
+    g.strokeStyle = accent; g.lineWidth = 2;
+    for (let x = 28; x <= 484; x += 24) {
+      g.beginPath(); g.moveTo(x, 27); g.lineTo(x + 8, 19); g.lineTo(x + 16, 27); g.stroke();
+      g.beginPath(); g.moveTo(x, 101); g.lineTo(x + 8, 109); g.lineTo(x + 16, 101); g.stroke();
+    }
+    g.font = '900 47px Georgia, "Times New Roman", serif';
+    g.lineWidth = 7; g.strokeStyle = 'rgba(61,35,19,.95)'; g.strokeText(text, 256, 65, 438);
+    g.fillStyle = accent; g.fillText(text, 256, 63, 438);
+  } else if (style === 'neon') {
+    g.fillStyle = 'rgba(8,4,23,.94)'; g.fillRect(0, 0, 512, 128);
+    const gradient = g.createLinearGradient(0, 0, 512, 128);
+    gradient.addColorStop(0, 'rgba(255,255,255,.04)');
+    gradient.addColorStop(0.5, 'rgba(255,255,255,0)');
+    gradient.addColorStop(1, 'rgba(255,255,255,.08)');
+    g.fillStyle = gradient; g.fillRect(0, 0, 512, 128);
+    g.strokeStyle = accent; g.lineWidth = 5; g.strokeRect(11, 11, 490, 106);
+    g.shadowColor = accent; g.shadowBlur = 18;
+    g.strokeStyle = accent; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(28, 27); g.lineTo(484, 27); g.moveTo(28, 101); g.lineTo(484, 101); g.stroke();
+    g.font = '900 49px Arial Black, sans-serif';
+    g.lineWidth = 10; g.strokeStyle = 'rgba(0,0,0,.92)'; g.strokeText(text, 256, 66, 446);
+    g.lineWidth = 4; g.strokeStyle = accent; g.strokeText(text, 256, 65, 446);
+    g.fillStyle = '#fff8ee'; g.fillText(text, 256, 65, 446);
+  } else if (style === 'marine') {
+    g.fillStyle = '#b7522c'; g.fillRect(0, 0, 512, 128);
+    g.fillStyle = 'rgba(18,37,43,.92)'; g.fillRect(28, 18, 456, 92);
+    g.fillStyle = accent;
+    for (let x = -12; x < 44; x += 16) {
+      g.beginPath(); g.moveTo(x, 128); g.lineTo(x + 18, 128); g.lineTo(x + 58, 0); g.lineTo(x + 40, 0); g.closePath(); g.fill();
+    }
+    g.strokeStyle = '#d17a42'; g.lineWidth = 4; g.strokeRect(27, 17, 458, 94);
+    g.fillStyle = '#d2b07a';
+    for (const x of [39, 473]) for (const y of [30, 98]) { g.beginPath(); g.arc(x, y, 5, 0, Math.PI * 2); g.fill(); }
+    g.font = '900 45px Arial Black, sans-serif';
+    g.lineWidth = 8; g.strokeStyle = 'rgba(0,0,0,.8)'; g.strokeText(text, 276, 65, 394);
+    g.fillStyle = '#f3e4c1'; g.fillText(text, 276, 64, 394);
+  } else if (style === 'hall') {
+    g.fillStyle = '#17100d'; g.fillRect(0, 0, 512, 128);
+    const gold = g.createLinearGradient(0, 0, 0, 128);
+    gold.addColorStop(0, '#fff0a3'); gold.addColorStop(0.48, accent); gold.addColorStop(1, '#87510f');
+    g.strokeStyle = gold; g.lineWidth = 8; g.strokeRect(12, 12, 488, 104);
+    g.lineWidth = 2; g.strokeRect(24, 23, 464, 82);
+    g.font = '900 46px Georgia, "Times New Roman", serif';
+    g.lineWidth = 8; g.strokeStyle = '#090504'; g.strokeText(text, 256, 66, 438);
+    g.fillStyle = gold; g.fillText(text, 256, 64, 438);
+  } else {
+    g.fillStyle = '#17222a'; g.fillRect(0, 0, 512, 128);
+    g.fillStyle = '#0b1116'; g.fillRect(24, 14, 464, 100);
+    g.fillStyle = accent;
+    for (let y = -16; y < 144; y += 32) {
+      g.beginPath(); g.moveTo(0, y); g.lineTo(18, y + 12); g.lineTo(18, y + 28); g.lineTo(0, y + 16); g.closePath(); g.fill();
+    }
+    g.fillRect(31, 19, 449, 4); g.fillRect(31, 105, 449, 4);
+    g.fillStyle = '#a9bbc5';
+    for (const x of [35, 477]) for (const y of [31, 97]) { g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill(); }
+    g.font = '900 49px Arial Black, sans-serif';
+    g.lineWidth = 8; g.strokeStyle = '#020609'; g.strokeText(text, 268, 65, 414);
+    g.fillStyle = '#f4f1e8'; g.fillText(text, 268, 64, 414);
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.anisotropy = 8;
   arenaLabelCache.set(key, texture);
   return texture;
 }
 
-function addArenaSign(parent, text, x, y, z, w, h, yaw = 0, accent = '#ff7a2d') {
+function addArenaSign(
+  parent, text, x, y, z, w, h, yaw = 0,
+  accent = '#ff7a2d', style = 'industrial', doubleFaced = false,
+) {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  group.rotation.y = yaw;
+  group.name = `${style}-environment-sign-${text.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  parent.add(group);
+
+  const styleMaterials = {
+    industrial: {
+      backing: () => mat(0x27343d, { tex: 'panel', repeat: [Math.max(1, w / 4), 1], roughness: 0.5, metalness: 0.48 }),
+      trim: () => mat(new THREE.Color(accent), { roughness: 0.34, metalness: 0.58 }),
+    },
+    neon: {
+      backing: () => mat(0x120b24, { tex: 'neonwall', repeat: [Math.max(1, w / 5), 1], roughness: 0.38, metalness: 0.28 }),
+      trim: () => new THREE.MeshBasicMaterial({ color: accent, toneMapped: false }),
+    },
+    marine: {
+      backing: () => mat(0xffffff, { tex: 'tidebreaker-orange-steel', repeat: [Math.max(1, w / 5), 1], roughness: 0.56, metalness: 0.46 }),
+      trim: () => mat(0x26383d, { roughness: 0.42, metalness: 0.7 }),
+    },
+    olympus: {
+      backing: () => mat(0xffffff, { tex: 'olympus-aether', repeat: [Math.max(1, w / 5), 1], roughness: 0.58, metalness: 0.05 }),
+      trim: () => mat(new THREE.Color(accent), { roughness: 0.3, metalness: 0.68 }),
+    },
+    hall: {
+      backing: () => mat(0x25150f, { tex: 'panel', repeat: [Math.max(1, w / 5), 1], roughness: 0.42, metalness: 0.34 }),
+      trim: () => mat(new THREE.Color(accent), { roughness: 0.24, metalness: 0.82 }),
+    },
+  };
+  const signStyle = styleMaterials[style] || styleMaterials.industrial;
+  const backingDepth = style === 'olympus' ? 0.5 : 0.32;
+  const backing = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.55, h + 0.48, backingDepth),
+    signStyle.backing(),
+  );
+  backing.position.z = -backingDepth / 2 - 0.035;
+  backing.castShadow = backing.receiveShadow = true;
+  group.add(backing);
+
+  const trimMaterial = signStyle.trim();
+  const addTrim = (px, py, pw, ph, pd = backingDepth + 0.08, pz = -backingDepth / 2 + 0.015) => {
+    const piece = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), trimMaterial);
+    piece.position.set(px, py, pz);
+    piece.castShadow = true;
+    group.add(piece);
+  };
+  const railThickness = style === 'olympus' || style === 'hall' ? 0.17 : 0.13;
+  addTrim(0, h / 2 + 0.15, w + 0.72, railThickness);
+  addTrim(0, -h / 2 - 0.15, w + 0.72, railThickness);
+  addTrim(-w / 2 - 0.16, 0, railThickness, h + 0.42);
+  addTrim(w / 2 + 0.16, 0, railThickness, h + 0.42);
+
+  if (style === 'industrial' || style === 'marine') {
+    const boltMaterial = mat(style === 'marine' ? 0xb6a77f : 0x9aabb4, { roughness: 0.28, metalness: 0.82 });
+    for (const bx of [-w / 2 + 0.22, w / 2 - 0.22]) for (const by of [-h / 2 + 0.2, h / 2 - 0.2]) {
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.08, 8), boltMaterial);
+      bolt.rotation.x = Math.PI / 2;
+      bolt.position.set(bx, by, 0.055);
+      group.add(bolt);
+    }
+  }
+
   const material = new THREE.MeshBasicMaterial({
-    map: arenaLabelTexture(text, accent),
+    map: arenaLabelTexture(text, accent, style),
+    transparent: style === 'olympus',
     side: THREE.DoubleSide,
     toneMapped: false,
     ...DECOR_DEPTH_BIAS,
   });
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
-  sign.position.set(x, y, z);
-  sign.rotation.y = yaw;
-  parent.add(sign);
-  return sign;
+  sign.position.z = 0.025;
+  sign.renderOrder = 3;
+  group.add(sign);
+  if (doubleFaced) {
+    const reverse = sign.clone();
+    reverse.position.z = -backingDepth - 0.095;
+    reverse.rotation.y = Math.PI;
+    reverse.name = `${group.name}-reverse-face`;
+    group.add(reverse);
+  }
+  return group;
 }
 
 // A single padded barrier replaces a run of touching crates. The colored skin
@@ -4215,9 +4347,9 @@ function addCityPresentation(scene, world) {
 
   // Landmark labels make the vertical routes legible from the street without
   // competing with the existing wall posters.
-  addArenaSign(essential, 'VICE GALLERIA', -12, 29.2, 21.92, 17, 3.6, Math.PI, '#ff3ca6');
-  addArenaSign(essential, 'LASER PALMS', 32, 22.5, -21.92, 14, 3.2, 0, '#32e7ff');
-  addArenaSign(essential, 'MIDNIGHT ARCADE', -12, 14.3, -49.98, 16, 3.2, 0, '#ffd23c');
+  addArenaSign(essential, 'VICE GALLERIA', -12, 29.2, 21.92, 17, 3.6, Math.PI, '#ff3ca6', 'neon');
+  addArenaSign(essential, 'LASER PALMS', 32, 22.5, -21.92, 14, 3.2, 0, '#32e7ff', 'neon');
+  addArenaSign(essential, 'MIDNIGHT ARCADE', -12, 14.3, -49.98, 16, 3.2, 0, '#ffd23c', 'neon');
   registerWallFeature(world, 'galleria-south', 'Vice Galleria sign', -12, 29.2, 17, 3.6);
   registerWallFeature(world, 'east-tower-north', 'Laser Palms sign', 32, 22.5, 14, 3.2);
   registerWallFeature(world, 'arcade-south', 'Midnight Arcade sign', -12, 14.3, 16, 3.2);
@@ -4243,7 +4375,15 @@ function addCityPresentation(scene, world) {
   });
   const windows = [];
   for (const [cx, cz, size, height, signedFace] of [
-    [32, -35, 26, 28, 'north'], [-58, 33, 22, 24, null], [32, 34, 22, 18, null],
+    // The blue and pink towers close the east end of the street canyon; both
+    // need lit façades so that end of the map reads as occupied skyline.
+    [32, -35, 26, 28, 'north'], [62, -32, 18, 16, null],
+    [-58, 33, 22, 24, null], [32, 34, 22, 18, null],
+    // Carry the same window grid across the remaining skyline blocks,
+    // including the purple and pink towers at the opposite end.
+    [64, 30, 16, 10, null], [-78, 24, 12, 16, null], [-78, -30, 12, 18, null],
+    [-38, 58, 14, 14, null], [10, 58, 16, 12, null], [78, 48, 12, 22, null],
+    [78, -50, 12, 18, null], [-36, -60, 14, 10, null], [12, -58, 12, 14, null],
   ]) {
     const edge = size / 2 + 0.04;
     for (const face of ['north', 'south', 'east', 'west']) {
@@ -4574,11 +4714,15 @@ function buildCity(scene) {
   // ground variety: galleria plaza, crosswalk bands
   addBox(scene, world, -12, 0.031, 14, 30, 0.06, 14, 0x9088b0, { tex: 'arcade', repeat: [6, 3] });
   // floating platforms over the street + pads
-  addBox(scene, world, 0, 11.7, -20, 12, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
-  addJumpPad(scene, world, -9, 0, -20, 28, 3.8, 0, 0x30e0ff);
+  // Recess the west edge from x = -6 to x = -3 so the nearby pad's launch
+  // clears the underside. The east edge stays at x = 6 and the pickup remains
+  // supported near the platform center.
+  addBox(scene, world, 1.5, 11.7, -20, 9, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
+  // Keep the pad clear of the monorail ramp edge at x = -9.
+  addJumpPad(scene, world, -6, 0, -20, 28, 3.8, 0, 0x30e0ff);
   pk(world, 'shield', 0, 12.2, -20);
-  wp(world, -9, 0, -20); wp(world, 0, 12, -20);
-  world.manualLinks.push([-9, 0, -20, 0, 12, -20, true]);
+  wp(world, -6, 0, -20); wp(world, 0, 12, -20);
+  world.manualLinks.push([-6, 0, -20, 0, 12, -20, true]);
   addBox(scene, world, -40, 9.7, 20, 10, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
   addJumpPad(scene, world, -49, 0, 20, 26, 5.5, 0, 0x30e0ff);
   pk(world, 'ammo', -40, 10.2, 20, { weapon: 'whomper' });
@@ -4654,7 +4798,7 @@ function buildCity(scene) {
   pk(world, 'ammo', 26, -5.8, -7, { weapon: 'whomper' });
   pk(world, 'ammo', -54, 24.2, 37, { weapon: 'sidewinder' });
   pk(world, 'ammo', -8, 20.2, -34, { weapon: 'hyper' });
-  pk(world, 'ammo', -29, 8.2, 40, { weapon: 'parasite' });
+  pk(world, 'ammo', -29, 0.2, 40, { weapon: 'parasite' }); // street outside the galleria
   pk(world, 'ammo', 44, 0.2, -6, { weapon: 'zooka' });
   pk(world, 'ammo', 60, 0.2, -8, { weapon: 'scatter' });
   pk(world, 'ammo', 36, 18.2, 38, { weapon: 'pulsar' });
@@ -7098,8 +7242,20 @@ function addAtriumMarquee(scene, id, text, color, x, y, z, yaw, width = 15.5) {
     g.moveTo(48, 192); g.lineTo(176, 48); g.lineTo(858, 48); g.lineTo(976, 192);
     g.lineTo(858, 336); g.lineTo(176, 336);
   } else if (id === 'tidebreaker') {
-    g.moveTo(58, 112); g.lineTo(140, 46); g.lineTo(884, 46); g.lineTo(966, 112);
-    g.lineTo(966, 270); g.lineTo(884, 338); g.lineTo(140, 338); g.lineTo(58, 270);
+    // A breaking-wave profile: the tall curl at the left rolls into a long,
+    // uneven swell instead of reusing the Labyrinth's octagonal plaque.
+    g.moveTo(42, 278);
+    g.bezierCurveTo(84, 252, 78, 174, 126, 126);
+    g.bezierCurveTo(176, 74, 246, 58, 304, 86);
+    g.bezierCurveTo(264, 88, 230, 115, 219, 152);
+    g.bezierCurveTo(258, 124, 304, 116, 358, 116);
+    g.lineTo(872, 92);
+    g.bezierCurveTo(914, 110, 950, 142, 976, 184);
+    g.bezierCurveTo(947, 204, 936, 244, 942, 278);
+    g.bezierCurveTo(874, 325, 790, 330, 706, 309);
+    g.bezierCurveTo(606, 285, 532, 344, 424, 326);
+    g.bezierCurveTo(332, 311, 282, 340, 196, 330);
+    g.bezierCurveTo(120, 321, 70, 304, 42, 278);
   } else if (id === 'multiplayer') {
     g.moveTo(58, 122); g.lineTo(156, 122); g.lineTo(218, 54); g.lineTo(806, 54);
     g.lineTo(868, 122); g.lineTo(966, 122); g.lineTo(906, 192); g.lineTo(966, 262);
@@ -8685,8 +8841,8 @@ export function buildHallOfFame(scene) {
 
   // The back wall is now a proper monument with large, separately spaced title
   // bands above the champion cards rather than a stack of overlapping signs.
-  makeSign(scene, 0, 45, -110.85, 42, '#ffd75e', 'THE IMMORTAL HALL OF FAME', 0);
-  makeSign(scene, 0, 33, -110.8, 30, '#fff1c9', 'TOP 100 CHAMPIONS', 0);
+  addArenaSign(scene, 'THE IMMORTAL HALL OF FAME', 0, 45, -110.85, 42, 10.5, 0, '#ffd75e', 'hall');
+  addArenaSign(scene, 'TOP 100 CHAMPIONS', 0, 33, -110.8, 30, 7.5, 0, '#fff1c9', 'hall');
 
   const leaderboardDraws = [];
   for (let i = 0; i < 10; i++) {
@@ -9908,7 +10064,10 @@ function addOlympusMountain(scene, world) {
    and beacon animation all scale through the map's visual-quality hook. */
 function buildTidebreaker(scene) {
   const world = newWorld({
-    killY: -18,
+    // Falling from the rig enters the ocean rather than an instant void. The
+    // emergency kill plane is far below the playable water column and exists
+    // only as a numerical safety net if something escapes the volume.
+    killY: -260,
     waypointLinkDist: 23,
     waypointLinkDy: 4.8,
     waypointLinkClearance: 0.45,
@@ -10018,6 +10177,8 @@ function buildTidebreaker(scene) {
     fog: true,
   });
 
+  const oceanSurfaceY = -7.25;
+  const oceanBottomY = -240;
   const oceanMat = waterMaterial(0x061c29, 0x1b5a6c, 1.42, 0.34, 1, 1.72);
   const oceanMeshes = [
     new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 38, 38), oceanMat),
@@ -10026,10 +10187,16 @@ function buildTidebreaker(scene) {
   ];
   for (const mesh of oceanMeshes) {
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = -7.25;
+    mesh.position.y = oceanSurfaceY;
     mesh.receiveShadow = true;
     scene.add(mesh);
   }
+  const oceanZone = {
+    minX: -214, maxX: 214, minZ: -214, maxZ: 214,
+    surfaceY: oceanSurfaceY, bottomY: oceanBottomY,
+    openOcean: true,
+  };
+  world.waterZones = [oceanZone];
 
   // Heavy legs, diagonal braces, and caissons establish the platform above the
   // animated sea without turning under-map decoration into collision clutter.
@@ -10043,7 +10210,14 @@ function buildTidebreaker(scene) {
     return geo;
   };
   for (const x of [-58, -20, 20, 58]) for (const z of [-26, 26]) {
-    supportGeometries.push(cylinderBetween(V(x, -13, z), V(x, 0, z), 1.1, 10));
+    // The primary legs vanish into the blue-black fog rather than ending just
+    // below the surface, selling a rig anchored in genuinely deep water.
+    supportGeometries.push(cylinderBetween(V(x, -210, z), V(x, 0, z), 1.1, 10));
+    world.colliders.push({
+      type: 'box',
+      min: V(x - 0.9, -210, z - 0.9),
+      max: V(x + 0.9, 0, z + 0.9),
+    });
     const braceX = x < 0 ? x + 9 : x - 9;
     supportGeometries.push(cylinderBetween(V(x, -11.5, z), V(braceX, -0.6, z), 0.34, 6));
   }
@@ -10051,6 +10225,163 @@ function buildTidebreaker(scene) {
   supports.castShadow = supports.receiveShadow = true;
   essential.add(supports);
   supportGeometries.forEach(g => g.dispose());
+
+  // Three low-poly sharks patrol below the swell. Only one commits to a
+  // swimmer at a time; after biting it breaks away briefly, making the exact
+  // two-second damage cooldown readable rather than looking like contact DPS.
+  const sharkBodyGeometry = new THREE.CapsuleGeometry(0.78, 3.4, 5, 10);
+  const sharkBodyMaterial = mat(0x607883, { roughness: 0.78, metalness: 0.04, flatShading: true });
+  const sharkFinMaterial = new THREE.MeshStandardMaterial({
+    color: 0x506873, roughness: 0.82, metalness: 0.03,
+    flatShading: true, side: THREE.DoubleSide,
+  });
+  const sharkFinGeometry = new THREE.BufferGeometry();
+  sharkFinGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    // dorsal fin
+    0.55, 0.38, 0, -0.35, 1.55, 0, -1.0, 0.3, 0,
+    // left and right pectoral fins
+    0.4, -0.12, 0.45, -1.15, -0.08, 1.72, -1.35, -0.12, 0.32,
+    0.4, -0.12, -0.45, -1.35, -0.12, -0.32, -1.15, -0.08, -1.72,
+    // forked tail
+    -2.15, 0, 0, -3.55, 1.18, 0, -3.25, 0, 0,
+    -2.15, 0, 0, -3.25, 0, 0, -3.55, -1.18, 0,
+  ], 3));
+  sharkFinGeometry.computeVertexNormals();
+  const sharkEyeGeometry = new THREE.SphereGeometry(0.09, 7, 5);
+  const sharkEyeMaterial = new THREE.MeshBasicMaterial({ color: 0x050708 });
+  const buildShark = () => {
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(sharkBodyGeometry, sharkBodyMaterial);
+    body.rotation.z = Math.PI / 2;
+    const fins = new THREE.Mesh(sharkFinGeometry, sharkFinMaterial);
+    group.add(body, fins);
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(sharkEyeGeometry, sharkEyeMaterial);
+      eye.position.set(1.92, 0.28, side * 0.66);
+      group.add(eye);
+    }
+    group.scale.setScalar(1.08);
+    return group;
+  };
+  const sharkStates = [0, 1, 2].map(i => {
+    const group = buildShark();
+    const angle = i * Math.PI * 2 / 3 + 0.45;
+    group.position.set(Math.cos(angle) * (46 + i * 7), oceanSurfaceY - 2.4 - i * 0.7,
+      Math.sin(angle) * (34 + i * 5));
+    essential.add(group);
+    return {
+      group, orbitAngle: angle, orbitRadius: 48 + i * 8,
+      biteCooldown: 0, retreatT: 0,
+    };
+  });
+  world.sharks = sharkStates.map(state => state.group);
+  let sharkTarget = null;
+  let sharkHunter = null;
+  let sharkAcquireT = 0;
+  const swimmingInOcean = ch => ch?.alive &&
+    ch.pos.x >= oceanZone.minX && ch.pos.x <= oceanZone.maxX &&
+    ch.pos.z >= oceanZone.minZ && ch.pos.z <= oceanZone.maxZ &&
+    ch.pos.y < oceanZone.surfaceY + 0.35 && ch.pos.y > oceanZone.bottomY;
+  world.anim.push((dt, t, characters = []) => {
+    const swimmers = characters.filter(swimmingInOcean);
+    if (!sharkTarget || !swimmingInOcean(sharkTarget)) {
+      sharkTarget = null;
+      sharkHunter = null;
+      sharkAcquireT = swimmers.length ? Math.max(0, sharkAcquireT || 0.7) : 0;
+    }
+    if (!sharkTarget && swimmers.length) {
+      sharkAcquireT -= dt;
+      if (sharkAcquireT <= 0) {
+        let bestDistance = Infinity;
+        for (const state of sharkStates) for (const swimmer of swimmers) {
+          const distance = state.group.position.distanceToSquared(swimmer.pos);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            sharkHunter = state;
+            sharkTarget = swimmer;
+          }
+        }
+        // A patrol may be on the far side of the platform. Re-enter near the
+        // swimmer's depth at a fair but urgent distance instead of taking ten
+        // seconds to cross the whole ocean. Detection itself has no range
+        // limit — any living swimmer in the ocean volume is fair game.
+        const toHunter = sharkHunter.group.position.clone().sub(sharkTarget.pos);
+        toHunter.y = 0;
+        if (toHunter.length() > 38) {
+          if (toHunter.lengthSq() < 0.01) toHunter.set(1, 0, 0);
+          toHunter.normalize();
+          sharkHunter.group.position.set(
+            sharkTarget.pos.x + toHunter.x * 34,
+            THREE.MathUtils.clamp(sharkTarget.pos.y + 0.65, oceanBottomY + 2, oceanSurfaceY - 1.15),
+            sharkTarget.pos.z + toHunter.z * 34,
+          );
+        }
+      }
+    }
+
+    for (let i = 0; i < sharkStates.length; i++) {
+      const state = sharkStates[i];
+      state.biteCooldown = Math.max(0, state.biteCooldown - dt);
+      state.retreatT = Math.max(0, state.retreatT - dt);
+      const current = state.group.position;
+      const desired = V(0, 0, 0);
+      let speed = 6.5;
+      if (state === sharkHunter && sharkTarget) {
+        // Follow the swimmer through the full water column — no shallow-only
+        // chase band, so deep dives stay hunted the same as surface swims.
+        const targetY = THREE.MathUtils.clamp(
+          sharkTarget.pos.y + 0.65, oceanBottomY + 2, oceanSurfaceY - 1.15,
+        );
+        desired.set(sharkTarget.pos.x, targetY, sharkTarget.pos.z);
+        if (state.retreatT > 0) {
+          const away = current.clone().sub(sharkTarget.pos);
+          away.y = 0;
+          if (away.lengthSq() < 0.01) away.set(1, 0, 0);
+          away.normalize();
+          const retreatY = THREE.MathUtils.clamp(
+            current.y, oceanBottomY + 2, oceanSurfaceY - 1.15,
+          );
+          desired.set(current.x + away.x * 12, retreatY, current.z + away.z * 12);
+          speed = 18;
+        } else {
+          speed = 21;
+        }
+      } else {
+        const orbitSpeed = 0.16 + i * 0.025;
+        const angle = state.orbitAngle + t * orbitSpeed;
+        desired.set(
+          Math.cos(angle) * state.orbitRadius,
+          oceanSurfaceY - 2.6 - i * 0.65 + Math.sin(t * 0.7 + i) * 0.45,
+          Math.sin(angle) * state.orbitRadius * 0.72,
+        );
+      }
+      const travel = desired.sub(current);
+      const distance = travel.length();
+      if (distance > 0.001) {
+        travel.multiplyScalar(Math.min(distance, speed * dt) / distance);
+        current.add(travel);
+        const flatSpeed = Math.hypot(travel.x, travel.z);
+        if (flatSpeed > 0.0001) {
+          const yaw = Math.atan2(-travel.z, travel.x);
+          state.group.rotation.y = THREE.MathUtils.lerp(
+            state.group.rotation.y, yaw,
+            1 - Math.exp(-8 * dt),
+          );
+          state.group.rotation.z = THREE.MathUtils.lerp(
+            state.group.rotation.z,
+            THREE.MathUtils.clamp(-travel.y / flatSpeed, -0.28, 0.28),
+            1 - Math.exp(-5 * dt),
+          );
+        }
+      }
+      if (state === sharkHunter && sharkTarget && state.retreatT <= 0 &&
+          state.biteCooldown <= 0 && current.distanceTo(sharkTarget.pos) < 2.75) {
+        state.biteCooldown = 2;
+        state.retreatT = 0.72;
+        world.onSharkBite?.(sharkTarget, state.group.position);
+      }
+    }
+  });
 
   // Main low deck, evacuation catwalks, east operations roof, and west helipad.
   addBox(scene, world, 0, -0.55, 0, 124, 1.1, 66, steel, { ...wetDeck, debugName: 'processing deck' });
@@ -10275,7 +10606,7 @@ function buildTidebreaker(scene) {
     windows.rotation.y = z > 0 ? 0 : Math.PI;
     essential.add(windows);
   }
-  addArenaSign(essential, 'TIDEBREAKER // OPS', 52, 15.1, 7.62, 13, 2.2, 0, '#ff7a2d');
+  addArenaSign(essential, 'TIDEBREAKER // OPS', 52, 15.1, 7.62, 13, 2.2, 0, '#e6b45c', 'marine');
 
   // Cargo containers use corrugated ribs, end doors, locking bars, and corner
   // castings. Colliders remain a single box apiece; the visible detail merges.
@@ -10590,7 +10921,7 @@ function buildTidebreaker(scene) {
     minX: -62, maxX: 62, minZ: -33, maxZ: 33,
     surfaceY: -4.8, bottomY: -2.4,
   };
-  world.waterZones = [floodZone];
+  world.waterZones.push(floodZone);
 
   const breakerCols = 88;
   const breakerRows = 12;
@@ -11394,8 +11725,8 @@ function buildOlympusMons(scene) {
     [24.35, -12, 1, 0], [63.65, 12, -1, 0],
   ]) addVine(scene, world, x, z, 60.5, 74.45, 1.02, exitX * 0.13, exitZ * 0.13,
     exitX, exitZ, 0.2, 1.5);
-  makeSign(scene, -26.08, 69.5, 0, 11, '#ffb14a', 'ARMORY', Math.PI / 2);
-  makeSign(scene, 26.08, 69.5, 0, 11, '#72d8ff', 'STORM CHAPEL', -Math.PI / 2);
+  addArenaSign(scene, 'ARMORY', -26.08, 69.5, 0, 11, 2.75, Math.PI / 2, '#d6ad45', 'olympus');
+  addArenaSign(scene, 'STORM CHAPEL', 26.08, 69.5, 0, 11, 2.75, -Math.PI / 2, '#d6ad45', 'olympus');
   addBox(scene, world, -44, 67, -22.42, 15, 7, 0.16, 0xffffff, {
     collide: false, tex: 'olympus-relief', repeat: [1, 1],
   });
@@ -11551,7 +11882,7 @@ function buildOlympusMons(scene) {
   addBox(scene, world, 37.5, 91.25, 20, 11, 1.5, 1, 0xb88748, {
     tex: 'olympus-aether', repeat: [2, 1],
   });
-  makeSign(scene, 0, 97.5, 37.94, 13, '#8ee8ff', 'AETHER CROWN', 0);
+  addArenaSign(scene, 'AETHER CROWN', 0, 97.5, 37.94, 13, 3.25, 0, '#d6ad45', 'olympus', true);
   addOlympusBrazier(scene, world, -23, 90.5, 34, 0xffd36a);
   addOlympusBrazier(scene, world, 23, 90.5, 34, 0x72d8ff);
   const aetherLight = new THREE.PointLight(0xc4edff, 12, 32);
@@ -11672,7 +12003,7 @@ function buildOlympusMons(scene) {
   addWaterfall(scene, world, 0, -28.8, 6, 13, 78.15, sourceWaterY, -1.5, {
     lipColor: 0xd5a33e, lipTex: 'olympus-aether',
   });
-  makeSign(scene, 0, 96.5, 79.94, 12, '#72d8ff', 'SPRING OF AETHER', Math.PI);
+  addArenaSign(scene, 'SPRING OF AETHER', 0, 96.5, 79.94, 12, 3, Math.PI, '#d6ad45', 'olympus');
 
   // The receiving aqueduct on the north roof still drops the full cliff face,
   // then becomes a wadeable river running all the way to the map boundary.
@@ -11937,113 +12268,204 @@ function buildSolarFlare(scene) {
   const inner = 0x26384a;
   const floor = 0x5d6872;
 
-  const addModuleShell = (cx, baseY, cz, w, d, openings = {}) => {
-    const wallH = 6.2;
-    addBox(scene, world, cx, baseY - 0.55, cz, w, 1.1, d, floor, { tex: 'solar-hull' });
-    addBox(scene, world, cx, baseY + wallH + 0.35, cz, w, 0.7, d, hull, { tex: 'solar-hull' });
-    const sideWall = (side, openCenter = null) => {
-      const alongZ = side === 'west' || side === 'east';
-      const length = alongZ ? d : w;
-      const gap = openCenter == null ? 0 : 5.4;
-      const wallX = side === 'west' ? cx - w / 2 : side === 'east' ? cx + w / 2 : cx;
-      const wallZ = side === 'north' ? cz - d / 2 : side === 'south' ? cz + d / 2 : cz;
-      if (openCenter == null) {
-        addBox(scene, world, wallX, baseY + wallH / 2, wallZ,
-          alongZ ? 1 : length, wallH, alongZ ? length : 1, hull, { tex: 'solar-hull' });
-        return;
-      }
-      const local = openCenter - (alongZ ? cz : cx);
-      const before = local - gap / 2 + length / 2;
-      const after = length / 2 - local - gap / 2;
-      if (before > 0.1) addBox(scene, world,
-        alongZ ? wallX : cx - length / 2 + before / 2,
-        baseY + wallH / 2,
-        alongZ ? cz - length / 2 + before / 2 : wallZ,
-        alongZ ? 1 : before, wallH, alongZ ? before : 1, hull, { tex: 'solar-hull' });
-      if (after > 0.1) addBox(scene, world,
-        alongZ ? wallX : cx + length / 2 - after / 2,
-        baseY + wallH / 2,
-        alongZ ? cz + length / 2 - after / 2 : wallZ,
-        alongZ ? 1 : after, wallH, alongZ ? after : 1, hull, { tex: 'solar-hull' });
-    };
-    for (const side of ['west', 'east', 'north', 'south']) sideWall(side, openings[side]);
+  const wallH = 6.2;
+  const addRealGlass = (side, cx, baseY, cz, w, d, feature) => {
+    const alongZ = side === 'west' || side === 'east';
+    const wallX = side === 'west' ? cx - w / 2 : side === 'east' ? cx + w / 2 : feature.center;
+    const wallZ = side === 'north' ? cz - d / 2 : side === 'south' ? cz + d / 2 : feature.center;
+    const glassH = feature.top - feature.bottom;
+    const glass = new THREE.Mesh(
+      new THREE.BoxGeometry(alongZ ? 0.16 : feature.width, glassH, alongZ ? feature.width : 0.16),
+      new THREE.MeshPhysicalMaterial({
+        color: feature.tint || 0xa8eaff, transparent: true, opacity: 0.18,
+        transmission: 0.72, roughness: 0.08, metalness: 0.04,
+        thickness: 0.12, depthWrite: false, side: THREE.DoubleSide,
+      }),
+    );
+    glass.position.set(wallX, baseY + (feature.bottom + feature.top) / 2, wallZ);
+    scene.add(glass);
+    world.colliders.push({
+      type: 'box',
+      min: V(wallX - (alongZ ? 0.12 : feature.width / 2), baseY + feature.bottom, wallZ - (alongZ ? feature.width / 2 : 0.12)),
+      max: V(wallX + (alongZ ? 0.12 : feature.width / 2), baseY + feature.top, wallZ + (alongZ ? feature.width / 2 : 0.12)),
+    });
+  };
+  const addWallSide = (cx, baseY, cz, w, d, side, doorCenter = null, windowFeatures = []) => {
+    const alongZ = side === 'west' || side === 'east';
+    const length = alongZ ? d : w;
+    const center = alongZ ? cz : cx;
+    const wallX = side === 'west' ? cx - w / 2 : side === 'east' ? cx + w / 2 : cx;
+    const wallZ = side === 'north' ? cz - d / 2 : side === 'south' ? cz + d / 2 : cz;
+    const openings = [];
+    if (doorCenter != null) openings.push({
+      min: doorCenter - 2.7, max: doorCenter + 2.7, bottom: 0, top: 5.4,
+    });
+    for (const feature of windowFeatures) openings.push({
+      min: feature.center - feature.width / 2, max: feature.center + feature.width / 2,
+      bottom: feature.bottom, top: feature.top,
+    });
+    const min = center - length / 2;
+    const max = center + length / 2;
+    const alongCuts = [...new Set([min, max, ...openings.flatMap((o) => [Math.max(min, o.min), Math.min(max, o.max)])])].sort((a, b) => a - b);
+    const yCuts = [...new Set([0, wallH, ...openings.flatMap((o) => [Math.max(0, o.bottom), Math.min(wallH, o.top)])])].sort((a, b) => a - b);
+    for (let ai = 0; ai < alongCuts.length - 1; ai++) for (let yi = 0; yi < yCuts.length - 1; yi++) {
+      const a0 = alongCuts[ai], a1 = alongCuts[ai + 1];
+      const y0 = yCuts[yi], y1 = yCuts[yi + 1];
+      if (a1 - a0 < 0.05 || y1 - y0 < 0.05) continue;
+      const am = (a0 + a1) / 2, ym = (y0 + y1) / 2;
+      if (openings.some((o) => am > o.min && am < o.max && ym > o.bottom && ym < o.top)) continue;
+      addBox(scene, world,
+        alongZ ? wallX : am, baseY + ym, alongZ ? am : wallZ,
+        alongZ ? 1 : a1 - a0, y1 - y0, alongZ ? a1 - a0 : 1,
+        hull, { tex: 'solar-hull' });
+    }
+    for (const feature of windowFeatures) addRealGlass(side, cx, baseY, cz, w, d, feature);
+  };
+  const addModuleShell = (cx, baseY, cz, w, d, {
+    doors = {}, windows = {}, roof = true, hasFloor = true,
+  } = {}) => {
+    if (hasFloor) addBox(scene, world, cx, baseY - 0.55, cz, w, 1.1, d, floor, { tex: 'solar-hull' });
+    if (roof) addBox(scene, world, cx, baseY + wallH + 0.35, cz, w, 0.7, d, hull, { tex: 'solar-hull' });
+    for (const side of ['west', 'east', 'north', 'south'])
+      addWallSide(cx, baseY, cz, w, d, side, doors[side], windows[side] || []);
   };
   const addPassage = (x, baseY, z, w, d, axis = 'x') => {
     addBox(scene, world, x, baseY - 0.45, z, w, 0.9, d, floor, { tex: 'solar-hull' });
-    addBox(scene, world, x, baseY + 4.8, z, w, 0.55, d, hull, { tex: 'solar-hull' });
+    addBox(scene, world, x, baseY + 5.75, z, w, 0.9, d, hull, { tex: 'solar-hull' });
     if (axis === 'x') for (const sz of [-1, 1])
-      addBox(scene, world, x, baseY + 2.35, z + sz * d / 2, w, 4.7, 0.7, inner, { tex: 'solar-hull' });
+      addBox(scene, world, x, baseY + 2.65, z + sz * d / 2, w, 5.3, 0.7, inner, { tex: 'solar-hull' });
     else for (const sx of [-1, 1])
-      addBox(scene, world, x + sx * w / 2, baseY + 2.35, z, 0.7, 4.7, d, inner, { tex: 'solar-hull' });
+      addBox(scene, world, x + sx * w / 2, baseY + 2.65, z, 0.7, 5.3, d, inner, { tex: 'solar-hull' });
   };
 
-  // Four readable modules. Interiors are intentionally open rooms; geometry
+  // Three readable modules. Interiors are intentionally open rooms; geometry
   // inside them stays waist-high so the hull boundaries and exits remain clear.
-  addModuleShell(-42, 0, 0, 28, 24, { east: 0 });                   // engineering
-  addModuleShell(0, 0, 0, 32, 28, { west: 0, south: 8 });           // central lower
-  addModuleShell(12, 0, 38, 24, 22, { north: 12 });                 // science
-  addModuleShell(42, 7, 0, 26, 24, { west: 0, east: 0 });           // elevated bridge
+  // (The old port-side engineering dead-end was cut to keep the loop tight.)
+  addModuleShell(0, 0, 0, 32, 28, {
+    doors: { south: 8 }, roof: false,
+    windows: { west: [{ center: 0, width: 17, bottom: 1.5, top: 5.1, tint: 0xffc58a }] },
+  });                                                               // central lower
+  addModuleShell(34, 0, 25, 24, 22, {
+    doors: { west: 25 },
+    windows: { south: [{ center: 34, width: 13, bottom: 1.5, top: 5.1 }] },
+    roof: false,
+  });                                                               // science
+  addModuleShell(42, 7.4, 0, 26, 24, {
+    doors: { west: 0, east: 0, south: 42 },
+    windows: { north: [{ center: 42, width: 16, bottom: 1.5, top: 5.1 }] },
+  });                                                               // elevated bridge
 
-  // Ground engineering tube, one deliberate L-bend to science, and one upper
-  // bridge. Each connection has a single obvious direction of travel.
-  addPassage(-22, 0, 0, 12, 6, 'x');
-  addPassage(8, 0, 19.5, 6, 11, 'z');
-  addPassage(10, 0, 25, 10, 6, 'x');
-  addPassage(12, 0, 29, 6, 8, 'z');
-  addPassage(22.5, 7, 0, 13, 6, 'x');
-  addPassage(29, 7, 0, 6, 6, 'x');
+  // L-bend to science and one upper bridge. Each connection has a single
+  // obvious direction of travel.
+  addPassage(8, 0, 18, 6, 8, 'z');
+  addModuleShell(8, 0, 25, 8, 8, { doors: { north: 8, east: 25 } });
+  addPassage(17, 0, 25, 10, 6, 'x');
+  addPassage(22.5, 7.4, 0, 13, 6, 'x');
+
+  // Science has a real maintenance hatch rather than an ornamental ladder
+  // disappearing into a ceiling. The compact upper relay room closes the map
+  // loop: science -> ladder -> relay -> bridge -> ramp -> central -> science.
+  for (const [x, z, w, d] of [
+    [31.25, 25, 18.5, 22], [44.75, 25, 2.5, 22],
+    [42, 18.75, 3, 9.5], [42, 31.25, 3, 9.5],
+  ]) addBox(scene, world, x, 6.55, z, w, 0.7, d, hull, { tex: 'solar-hull' });
+
+  addModuleShell(42, 7.4, 25, 14, 10, {
+    doors: { north: 42, west: 25 }, hasFloor: false,
+  });
+  for (const [x, z, w, d] of [
+    [37.75, 25, 5.5, 10], [46.25, 25, 5.5, 10],
+    [42, 21.75, 3, 3.5], [42, 28.25, 3, 3.5],
+  ]) addBox(scene, world, x, 6.85, z, w, 1.1, d, floor, { tex: 'solar-hull' });
+  addPassage(42, 7.4, 16, 6, 8, 'z');
+  const solarCylinderBetween = (start, end, radius, radial = 8) => {
+    const delta = end.clone().sub(start);
+    const geometry = new THREE.CylinderGeometry(radius, radius, delta.length(), radial, 1);
+    geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), delta.clone().normalize()));
+    geometry.translate((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+    return geometry;
+  };
+  const addMaintenanceLadder = (x, z, y0, y1, exitX, exitZ) => {
+    const geometries = [];
+    for (const dx of [-0.68, 0.68])
+      geometries.push(solarCylinderBetween(V(x + dx, y0, z), V(x + dx, y1, z), 0.075, 7));
+    for (let y = y0 + 0.35; y <= y1 - 0.35; y += 0.48)
+      geometries.push(solarCylinderBetween(V(x - 0.68, y, z), V(x + 0.68, y, z), 0.065, 7));
+    const ladder = new THREE.Mesh(mergeGeometries(geometries, false), mat(0x768b98, {
+      roughness: 0.38, metalness: 0.72, emissive: 0x102b35, emissiveIntensity: 0.18,
+    }));
+    ladder.castShadow = true;
+    scene.add(ladder);
+    geometries.forEach((geometry) => geometry.dispose());
+    (world.vineZones ||= []).push({
+      x, z, minY: y0, maxY: y1 - 0.35, r: 0.84, grabR: 1.22, exitX, exitZ,
+    });
+  };
+  addMaintenanceLadder(42, 25, 0.15, 7.75, -1, 0);
+  addMaintenanceLadder(42, 30.48, 7.1, 14.65, 0, -1);
 
   // Central upper storey with a large ramp opening. No partitions are placed
   // around the landing, so players immediately understand the floor change.
-  addBox(scene, world, -11, 7.1, 0, 10, 0.6, 28, hull, { tex: 'solar-hull' });
-  addBox(scene, world, 11, 7.1, 0, 10, 0.6, 28, hull, { tex: 'solar-hull' });
-  addBox(scene, world, 0, 7.1, 10, 12, 0.6, 8, hull, { tex: 'solar-hull' });
-  addBox(scene, world, 0, 7.1, -10, 12, 0.6, 8, hull, { tex: 'solar-hull' });
-  for (const [x, z, w, d] of [[-16, 0, 1, 28], [16, -7, 1, 14], [16, 11, 1, 6], [0, -14, 32, 1], [0, 14, 32, 1]])
-    addBox(scene, world, x, 10.1, z, w, 6.2, d, hull, { tex: 'solar-hull' });
-  addBox(scene, world, 0, 13.55, 0, 32, 0.7, 28, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 0, 6.85, -9.5, 32, 1.1, 9, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 0, 6.85, 9.5, 32, 1.1, 9, hull, { tex: 'solar-hull' });
+  addBox(scene, world, -12.5, 6.85, 0, 7, 1.1, 10, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 12, 6.85, 0, 8, 1.1, 10, hull, { tex: 'solar-hull' });
+  addWallSide(0, 7.4, 0, 32, 28, 'west');
+  addWallSide(0, 7.4, 0, 32, 28, 'east', 0);
+  addWallSide(0, 7.4, 0, 32, 28, 'north', null,
+    [{ center: 0, width: 29, bottom: 0.65, top: 5.6 }]);
+  addWallSide(0, 7.4, 0, 32, 28, 'south');
+  // Central roof with a ceiling airlock hatch (SE) so fights can spill onto the
+  // outer decks instead of looping the two main interior rooms forever.
+  const roofHatch = { x: 10, z: 9, halfW: 2.6, halfD: 2.6 };
+  for (const [x, z, w, d] of [
+    [0, -3.8, 32, 20.4],                                  // north of hatch
+    [0, 12.8, 32, 2.4],                                   // south strip
+    [-4.3, 9, 23.4, 5.2],                                 // west of hatch
+    [14.3, 9, 3.4, 5.2],                                  // east of hatch
+  ]) addBox(scene, world, x, 13.95, z, w, 0.7, d, hull, { tex: 'solar-hull' });
+  // Hatch collar — reads as an airlock lip from the roof.
+  for (const [x, z, w, d] of [
+    [roofHatch.x, roofHatch.z - roofHatch.halfD - 0.35, 6.2, 0.7],
+    [roofHatch.x, roofHatch.z + roofHatch.halfD + 0.35, 6.2, 0.7],
+    [roofHatch.x - roofHatch.halfW - 0.35, roofHatch.z, 0.7, 5.2],
+    [roofHatch.x + roofHatch.halfW + 0.35, roofHatch.z, 0.7, 5.2],
+  ]) addBox(scene, world, x, 14.45, z, w, 0.55, d, 0x425468, { tex: 'solar-hull' });
+  addMaintenanceLadder(roofHatch.x, roofHatch.z, 7.55, 14.55, 1, 0);
   addRamp(scene, world, {
-    axis: 'z', minX: -5, maxX: 5, minZ: -8, maxZ: 8,
+    axis: 'x', minX: -8, maxX: 8, minZ: -5, maxZ: 5,
     h0: 0, h1: 7.4, color: 0xc7c9c3, tex: 'solar-hull',
   });
-  addJumpPad(scene, world, 10, 0.2, -9, 12.5, 0, 0, cool);
 
-  // Purposeful room furniture: one reactor island, one map table, one lab
-  // bench, and one bridge console. Nothing is tall enough to become a maze.
+  // Purposeful room furniture: flare emitter cover is separate; map table, lab
+  // bench, and bridge console stay waist-high so exits remain readable.
+  // Central map table sits south of the ramp well (ramp occupies z −5..5).
   for (const [x, y, z, w, d, color] of [
-    [-42, 1.15, 0, 10, 5, 0x344b5c], [2, 1.05, 5, 8, 4, 0x4b5965],
-    [12, 1.05, 38, 9, 3, 0x365266], [42, 8.05, 3, 11, 3, 0x394f62],
+    // West of the ramp well — keep cover off the x −8..8 / z −5..5 climb.
+    [-10, 1.05, 8, 6, 4, 0x4b5965],
+    [34, 1.05, 25, 9, 3, 0x365266], [42, 8.05, 3, 11, 3, 0x394f62],
   ]) addBox(scene, world, x, y, z, w, 2.1, d, color, { tex: 'solar-hull' });
 
-  // Star windows give every major room an exterior orientation cue.
-  const windowCanvas = document.createElement('canvas');
-  windowCanvas.width = 512; windowCanvas.height = 128;
-  const wg = windowCanvas.getContext('2d');
-  wg.fillStyle = '#020714'; wg.fillRect(0, 0, 512, 128);
-  const windowRnd = seededRandom(0x5701a55);
-  for (let i = 0; i < 115; i++) {
-    wg.fillStyle = windowRnd() > 0.9 ? '#8edfff' : '#ffffff';
-    const s = windowRnd() > 0.94 ? 2 : 1;
-    wg.fillRect(windowRnd() * 512, windowRnd() * 128, s, s);
-  }
-  const windowTex = new THREE.CanvasTexture(windowCanvas);
-  windowTex.colorSpace = THREE.SRGBColorSpace;
-  const addWindow = (x, y, z, w, h, yaw = 0) => {
-    const frame = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.8, h + 0.8),
-      new THREE.MeshBasicMaterial({ color: 0x26394a, side: THREE.DoubleSide }));
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
-      new THREE.MeshBasicMaterial({ map: windowTex, color: 0xbdeaff, side: THREE.DoubleSide, toneMapped: false }));
-    frame.position.set(x, y, z); glass.position.set(x, y, z);
-    frame.rotation.y = glass.rotation.y = yaw;
-    const nx = Math.sin(yaw), nz = Math.cos(yaw);
-    glass.position.x += nx * 0.03; glass.position.z += nz * 0.03;
-    scene.add(frame, glass);
-  };
-  addWindow(-42, 3.3, -11.48, 15, 3.1, 0);
-  addWindow(0, 10.4, -13.48, 18, 3.4, 0);
-  addWindow(12, 3.3, 48.48, 13, 3.1, Math.PI);
-  addWindow(54.48, 10.4, 0, 15, 3.4, Math.PI / 2);
-  addWindow(-22, 2.8, -2.97, 6.5, 2.2, 0);
+  // Artificial gravity is strongest inside the pressurized modules. Crossing
+  // a doorway onto a roof or passing through the aft energy curtain cuts it
+  // exactly in half; falling away from the hull remains in the exterior field.
+  const solarInteriorZones = [
+    // Central lower/upper, science, and bridge rooms.
+    { minX: -15.5, maxX: 15.5, minY: -0.1, maxY: 13.6, minZ: -13.5, maxZ: 13.5 },
+    { minX: 22.5, maxX: 45.5, minY: -0.1, maxY: 6.4, minZ: 14.5, maxZ: 35.5 },
+    { minX: 29.5, maxX: 54.9, minY: 7.3, maxY: 13.6, minZ: -11.5, maxZ: 11.5 },
+    { minX: 35.5, maxX: 48.5, minY: 7.3, maxY: 13.6, minZ: 20.5, maxZ: 29.5 },
+    // Fully enclosed connector tubes and the L-shaped science junction.
+    { minX: 5.3, maxX: 10.7, minY: -0.1, maxY: 5.3, minZ: 13.5, maxZ: 29 },
+    { minX: 8.5, maxX: 22.5, minY: -0.1, maxY: 5.3, minZ: 22.3, maxZ: 27.7 },
+    { minX: 15.5, maxX: 29.5, minY: 7.3, maxY: 13.0, minZ: -2.7, maxZ: 2.7 },
+    { minX: 39.3, maxX: 44.7, minY: 7.3, maxY: 13.0, minZ: 11.5, maxZ: 20.5 },
+  ];
+  world.gravityAt = (pos) => solarInteriorZones.some((zone) =>
+    pos.x >= zone.minX && pos.x <= zone.maxX &&
+    pos.y >= zone.minY && pos.y <= zone.maxY &&
+    pos.z >= zone.minZ && pos.z <= zone.maxZ)
+    ? world.gravity : world.gravity * 0.5;
 
   // Shuttle-bay-style atmospheric curtain: completely non-solid, luminous,
   // and placed in the upper aft opening leading directly onto the outer hull.
@@ -12059,17 +12481,30 @@ function buildSolarFlare(scene) {
   for (let y = 12; y < 256; y += 20) { fg.beginPath(); fg.moveTo(0, y); fg.lineTo(256, y + 5); fg.stroke(); }
   const fieldTex = new THREE.CanvasTexture(fieldCanvas);
   fieldTex.wrapS = fieldTex.wrapT = THREE.RepeatWrapping;
-  const energyField = new THREE.Mesh(new THREE.PlaneGeometry(16, 7.2),
+  // Air curtains: aft hull exit, science-roof side exit, and the new central
+  // ceiling hatch. Indoor connector doorways stay clear.
+  const energyField = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 5.25),
     new THREE.MeshBasicMaterial({ map: fieldTex, transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
   energyField.rotation.y = Math.PI / 2;
-  energyField.position.set(55.08, 10.35, 0);
-  scene.add(energyField);
-  const fieldLight = new THREE.PointLight(cool, 12, 24);
-  fieldLight.position.set(53, 10.5, 0);
-  scene.add(fieldLight);
+  energyField.position.set(55.08, 10.025, 0);
+  const roofEnergyField = energyField.clone();
+  roofEnergyField.material = energyField.material.clone();
+  roofEnergyField.position.set(34.92, 10.025, 25);
+  const ceilingEnergyField = energyField.clone();
+  ceilingEnergyField.material = energyField.material.clone();
+  ceilingEnergyField.rotation.set(-Math.PI / 2, 0, 0);
+  ceilingEnergyField.position.set(roofHatch.x, 13.95, roofHatch.z);
+  scene.add(energyField, roofEnergyField, ceilingEnergyField);
+  for (const [x, y, z] of [[53, 10.1, 0], [37, 10.1, 25], [roofHatch.x, 12.2, roofHatch.z]]) {
+    const fieldLight = new THREE.PointLight(cool, 8, 16);
+    fieldLight.position.set(x, y, z);
+    scene.add(fieldLight);
+  }
   for (const [x, y, z, color] of [
-    [-42, 5.7, 0, 0x58ddff], [0, 5.7, 0, 0xffb34c],
-    [12, 5.7, 38, 0x58ddff], [0, 12.7, 0, 0x58ddff],
+    // Central lower light mounts under the south lip of the upper deck — the
+    // ramp well has no ceiling at (0,0), so a bar there just floated in space.
+    [0, 6.2, 5.55, 0xffb34c],
+    [34, 5.7, 25, 0x58ddff], [0, 12.7, 0, 0x58ddff],
     [42, 12.7, 0, 0xffa63d],
   ]) {
     addBox(scene, world, x, y, z, 5.5, 0.12, 0.28, color, {
@@ -12082,23 +12517,28 @@ function buildSolarFlare(scene) {
 
   // The end module opens through its air curtain onto an irregular exterior
   // hull chain rather than the roof of one giant rectangle.
-  const solarExteriorZones = [
-    { minX: 54, maxX: 72, minZ: -6, maxZ: 6 },
-    { minX: 66, maxX: 84, minZ: 0, maxZ: 16 },
-    { minX: 78, maxX: 98, minZ: -9, maxZ: 9 },
-  ];
+  // Pads sit slightly below bridge floor (top 7.2 vs 7.4) so the sill ramp can
+  // actually slope instead of leaving a square lip you have to hop.
   for (const [x, z, w, d] of [[63, 0, 18, 12], [75, 8, 18, 16], [88, 0, 20, 18]])
-    addBox(scene, world, x, 7.45, z, w, 0.9, d, hull, { tex: 'solar-hull' });
+    addBox(scene, world, x, 6.75, z, w, 0.9, d, hull, { tex: 'solar-hull' });
+  addRamp(scene, world, {
+    axis: 'x', minX: 54.5, maxX: 57.4, minZ: -2.55, maxZ: 2.55,
+    h0: 7.4, h1: 7.2, color: 0xc7c9c3, tex: 'solar-hull',
+  });
+  // Science-roof curtain: relay deck 7.4 → roof walk ~6.9.
+  addRamp(scene, world, {
+    axis: 'x', minX: 33.5, maxX: 36.2, minZ: 22.6, maxZ: 27.4,
+    h0: 6.95, h1: 7.4, color: 0xc7c9c3, tex: 'solar-hull',
+  });
   const sensorDish = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.35, 8, 48, Math.PI * 1.35),
     mat(0xb6c9d1, { metalness: 0.55, roughness: 0.28 }));
   sensorDish.position.set(88, 13.2, 0);
   sensorDish.rotation.set(0.4, -0.7, 0.3);
   scene.add(sensorDish);
 
-  // The center is only the station's flare emitter. The actual sun is a
-  // colossal environmental body off the port side, large enough to dominate
-  // the skyline and silhouette whole station wings against its surface.
-  addBox(scene, world, 0, 1.6, 0, 8, 3.2, 8, 0x34384a, { tex: 'panel' });
+  // Flare emitter sits south of the central ramp (which owns x −8..8, z −5..5).
+  // The actual sun is a colossal environmental body off the port side.
+  addBox(scene, world, 0, 1.6, 11, 8, 3.2, 6, 0x34384a, { tex: 'panel' });
   const solarCanvas = document.createElement('canvas');
   solarCanvas.width = 1024;
   solarCanvas.height = 512;
@@ -12155,19 +12595,125 @@ function buildSolarFlare(scene) {
   scene.add(sunLight);
   scene.add(sunLight.target);
 
-  // Solar-panel wings sit on the exposed lower-hull shoulders.
-  for (const [x, z] of [[63, 0], [75, 8], [88, 0]]) {
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(7, 0.3, 10),
-      mat(0x173c71, { emissive: 0x092050, emissiveIntensity: 0.65, metalness: 0.65, roughness: 0.28 }));
-    panel.position.set(x, 8.25, z);
+  // Roof photovoltaic inlays sit flush with each deck top — no walkable lips.
+  // (floorTop is the walkable surface; the thin plate is inset to avoid z-fight.)
+  const pvInlayMat = mat(0x173c71, {
+    emissive: 0x092050, emissiveIntensity: 0.65, metalness: 0.65, roughness: 0.28,
+  });
+  for (const [x, floorTop, z, w, d] of [
+    [29, 6.9, 29, 6, 5], [4, 14.3, 8, 6, 5], [75, 7.2, 8, 5, 6],
+  ]) {
+    const h = 0.06;
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), pvInlayMat);
+    panel.position.set(x, floorTop - h / 2 - 0.02, z);
+    panel.receiveShadow = true;
     scene.add(panel);
-    world.colliders.push({ type: 'box', min: V(x - 3.5, 7.9, z - 5), max: V(x + 3.5, 8.4, z + 5) });
   }
   for (const [x, y, z, w, d] of [
-    [-47, 1.3, 6, 5, 3], [6, 1.3, -7, 5, 3], [16, 1.3, 42, 4, 5],
-    [-7, 8.6, 7, 4, 5], [45, 8.6, 4, 3, 4], [88, 8.8, 4, 4, 4],
+    [6, 1.3, -7, 5, 3], [38, 1.3, 29, 4, 5],
+    [-7, 8.6, 7, 4, 5], [45, 8.6, 4, 3, 4],
+    [25, 8.2, 21, 4, 3],
+    [-8, 15.6, 7, 4, 3], [47, 15.6, 5, 4, 3], [88, 8.7, 4, 4, 4],
   ]) addBox(scene, world, x, y, z, w, 2.6, d, 0x425468, { tex: 'solar-hull' });
 
+  // Diagonal solar arm: 45° up and sunward from the central upper roof, with a
+  // giant PV wing mounted at the tip (ISS-style boom + blanket array).
+  const pvCellCanvas = document.createElement('canvas');
+  pvCellCanvas.width = pvCellCanvas.height = 256;
+  const pvg = pvCellCanvas.getContext('2d');
+  pvg.fillStyle = '#0d2a58'; pvg.fillRect(0, 0, 256, 256);
+  pvg.strokeStyle = 'rgba(70,160,220,.55)'; pvg.lineWidth = 2;
+  for (let i = 0; i <= 256; i += 32) {
+    pvg.beginPath(); pvg.moveTo(i, 0); pvg.lineTo(i, 256); pvg.stroke();
+    pvg.beginPath(); pvg.moveTo(0, i); pvg.lineTo(256, i); pvg.stroke();
+  }
+  pvg.fillStyle = 'rgba(40,190,255,.14)';
+  for (let y = 4; y < 256; y += 32) for (let x = 4; x < 256; x += 32)
+    pvg.fillRect(x, y, 24, 24);
+  pvg.fillStyle = 'rgba(255,180,80,.2)';
+  pvg.fillRect(0, 124, 256, 8);
+  const pvCellTex = new THREE.CanvasTexture(pvCellCanvas);
+  pvCellTex.colorSpace = THREE.SRGBColorSpace;
+  pvCellTex.wrapS = pvCellTex.wrapT = THREE.RepeatWrapping;
+  const armAng = Math.PI / 4;
+  const armLen = 54;
+  const armRun = armLen * Math.cos(armAng);
+  const armRise = armLen * Math.sin(armAng);
+  // Hinge on the north lip of the central upper roof (station center module).
+  // Approach pad top is flush with the ramp start; hinge blocks sit to the sides.
+  const armRoot = V(0, 15.4, -13.5);
+  const armTip = V(0, armRoot.y + armRise, armRoot.z - armRun);
+  addBox(scene, world, 0, 14.85, -11.5, 10, 1.1, 5, 0x425468, { tex: 'solar-hull' });
+  for (const sx of [-3.4, 3.4])
+    addBox(scene, world, sx, 16.05, -13.2, 2.6, 2.8, 3.6, 0x5a6570, { tex: 'solar-hull' });
+  // Thick structural boom (visual) under the walkable ramp spine.
+  const boomMat = mat(0x8a9298, { roughness: 0.38, metalness: 0.72 });
+  const boomCore = new THREE.Mesh(
+    solarCylinderBetween(armRoot.clone().add(V(0, -0.9, 0)), armTip.clone().add(V(0, -0.9, 0)), 1.35, 10),
+    boomMat,
+  );
+  boomCore.castShadow = boomCore.receiveShadow = true;
+  scene.add(boomCore);
+  for (const dx of [-1.55, 1.55]) {
+    const rail = new THREE.Mesh(
+      solarCylinderBetween(armRoot.clone().add(V(dx, 0.15, 0)), armTip.clone().add(V(dx, 0.15, 0)), 0.22, 7),
+      boomMat,
+    );
+    rail.castShadow = true;
+    scene.add(rail);
+  }
+  // Walkable 45° spine — players climb the arm itself.
+  addRamp(scene, world, {
+    axis: 'z',
+    minX: -2.4, maxX: 2.4,
+    minZ: armTip.z, maxZ: armRoot.z,
+    h0: armTip.y, h1: armRoot.y,
+    color: 0xb8bcc0, tex: 'solar-hull',
+  });
+  // Ring trusses along the boom so it reads as a heavy station arm.
+  const boomDir = V(0, armRise, -armRun).normalize();
+  for (let i = 1; i <= 4; i++) {
+    const t = i / 5;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.05, 0.18, 6, 20), boomMat);
+    ring.position.set(0, armRoot.y + armRise * t - 0.9, armRoot.z - armRun * t);
+    ring.quaternion.setFromUnitVectors(V(0, 0, 1), boomDir);
+    scene.add(ring);
+  }
+  // Tip hub + giant lateral solar wing (flat fight deck at the end of the arm).
+  const hubY = armTip.y;
+  const hubZ = armTip.z;
+  addBox(scene, world, 0, hubY - 0.45, hubZ, 8, 0.9, 8, 0x425468, { tex: 'solar-hull' });
+  // Beacon sits sunward of the arrival point so the ramp exit stays clear.
+  addBox(scene, world, 0, hubY + 0.9, hubZ - 3.2, 2.8, 1.8, 2.8, 0x5a6570, { tex: 'solar-hull' });
+  addBox(scene, world, 0, hubY + 2.0, hubZ - 3.2, 1.4, 0.22, 1.4, cool, {
+    collide: false, shadow: false, emissive: cool, emissiveIntensity: 1.5,
+  });
+  // Cross-spar carrying the PV blankets.
+  addBox(scene, world, 0, hubY - 0.45, hubZ, 52, 0.9, 2.4, 0x6a7580, { tex: 'solar-hull' });
+  const addPvBlanket = (x, y, z, w, d, repeatX, repeatZ) => {
+    const cellMap = pvCellTex.clone();
+    cellMap.needsUpdate = true;
+    cellMap.repeat.set(repeatX, repeatZ);
+    const blanket = new THREE.Mesh(
+      new THREE.BoxGeometry(w, 0.55, d),
+      mat(0x163a72, {
+        map: cellMap,
+        emissive: 0x071a40, emissiveIntensity: 0.6, metalness: 0.55, roughness: 0.3,
+      }),
+    );
+    // Slight sunward tilt so the wing reads as an array, not a roof tile.
+    blanket.position.set(x, y, z);
+    blanket.rotation.x = -0.18;
+    blanket.castShadow = blanket.receiveShadow = true;
+    scene.add(blanket);
+    world.colliders.push({
+      type: 'box',
+      min: V(x - w / 2, hubY - 0.45, z - d / 2 - 0.2),
+      max: V(x + w / 2, hubY + 0.55, z + d / 2 + 0.2),
+    });
+  };
+  for (const x of [-18, 18]) addPvBlanket(x, hubY + 0.05, hubZ - 0.4, 20, 16, 6, 5);
+  for (const x of [-30, 30]) addPvBlanket(x, hubY + 0.1, hubZ - 0.5, 12, 12, 3, 3);
   // The flare is a physical-looking plasma tentacle from the nearby sun, not
   // a rotating arena laser. It snakes across the void and terminates at the
   // exterior hull's aft emitter.
@@ -12207,24 +12753,36 @@ function buildSolarFlare(scene) {
   scene.add(impactLight);
   const baseBackground = scene.background.clone();
   const flashBackground = new THREE.Color(0xffd0a8);
-  let previousPhase = 'calm';
+  const calmSunTint = new THREE.Color(0xffffff);
+  const warningSunTint = new THREE.Color(0xff5530);
+  const calmCoronaTint = new THREE.Color(0xff6818);
+  const warningCoronaTint = new THREE.Color(0xff174d);
+  const calmSunLightTint = new THREE.Color(0xff8a32);
+  const warningSunLightTint = new THREE.Color(0xff3b20);
   let struckCycle = -1;
   world.anim.push((dt, t, characters) => {
     const CYCLE = 70;
     const cycle = Math.floor(t / CYCLE);
     const local = t % CYCLE;
-    const warning = local >= 26 && local < 34;
     const striking = local >= 32 && local < 36;
     const impact = local >= 34 && local < 35.2;
-    const phase = impact ? 'impact' : warning ? 'warning' : 'calm';
-    if (phase === 'warning' && previousPhase === 'calm') world.onSolarFlareWarning?.();
-    previousPhase = phase;
+    // The sun itself is the countdown. It visibly reddens and becomes more
+    // violent for seven seconds before the strike, then cools after impact.
+    const warningHeat = local < 34
+      ? THREE.MathUtils.smoothstep(local, 27, 34)
+      : 1 - THREE.MathUtils.smoothstep(local, 35.2, 38);
     sunCore.rotation.y += dt * 0.007;
     sunCore.rotation.x = Math.sin(t * 0.05) * 0.025;
-    corona.scale.setScalar(1.01 + Math.sin(t * 1.7) * 0.025);
-    corona.material.opacity = 0.13 + Math.sin(t * 2.1) * 0.035 + (warning ? 0.08 : 0);
+    sunCore.material.color.lerpColors(calmSunTint, warningSunTint, warningHeat);
+    corona.material.color.lerpColors(calmCoronaTint, warningCoronaTint, warningHeat);
+    sunLight.color.lerpColors(calmSunLightTint, warningSunLightTint, warningHeat);
+    sunLight.intensity = 4.8 + warningHeat * 2.4;
+    corona.scale.setScalar(1.01 + Math.sin(t * (1.7 + warningHeat * 2.8)) * (0.025 + warningHeat * 0.035));
+    corona.material.opacity = 0.13 + Math.sin(t * 2.1) * 0.035 + warningHeat * 0.11;
     fieldTex.offset.y = (t * 0.13) % 1;
     energyField.material.opacity = 0.62 + Math.sin(t * 5.5) * 0.1;
+    roofEnergyField.material.opacity = 0.62 + Math.sin(t * 5.5 + 1.6) * 0.1;
+    ceilingEnergyField.material.opacity = 0.62 + Math.sin(t * 5.5 + 2.4) * 0.1;
     const charge = striking ? THREE.MathUtils.smoothstep(local, 32, 34) : 0;
     const fade = local >= 34 ? 1 - THREE.MathUtils.smoothstep(local, 34.3, 36) : 1;
     flareGlowMat.opacity = striking ? (0.16 + charge * 0.5) * fade : 0;
@@ -12240,11 +12798,7 @@ function buildSolarFlare(scene) {
       world.onSolarFlareStrike?.();
       for (const ch of characters) {
         if (!ch?.alive) continue;
-        const onExterior = solarExteriorZones.some(zone =>
-          ch.pos.x >= zone.minX && ch.pos.x <= zone.maxX &&
-          ch.pos.z >= zone.minZ && ch.pos.z <= zone.maxZ && ch.pos.y >= 7.4);
-        const onRoof = ch.pos.y > 13.7;
-        const outside = onExterior || onRoof;
+        const outside = (world.gravityAt?.(ch.pos, ch) ?? world.gravity) < world.gravity;
         if (!outside) continue;
         ch.vel.y = Math.max(ch.vel.y, 3.8);
         ch.grounded = false;
@@ -12253,27 +12807,113 @@ function buildSolarFlare(scene) {
     }
   });
 
-  world.spawns.blue.push(V(-48, 0.1, -6), V(-48, 0.1, 6), V(-8, 7.4, 8));
-  world.spawns.red.push(V(12, 0.1, 34), V(12, 0.1, 42), V(45, 7.4, 4));
-  world.spawns.ffa.push(...world.spawns.blue, ...world.spawns.red, V(0, 0.1, 8), V(5, 7.4, -8), V(75, 8.1, 8));
+  // Indoor starts plus dedicated exterior hull spawns so bots actually contest
+  // the flare-exposed arsenal instead of looping the pressurized rooms.
+  world.spawns.blue.push(
+    V(-8, 0.1, -8), V(-8, 0.1, 8), V(-8, 7.4, 8),
+    V(0, 14.5, -8), V(-8, 14.5, 8), V(5, 7.4, -8),
+  );
+  world.spawns.red.push(
+    V(30, 0.1, 20), V(38, 0.1, 30), V(45, 7.4, 4),
+    V(63, 7.5, -3), V(75, 7.5, 8), V(88, 7.5, 3), V(28, 7.3, 30),
+  );
+  world.spawns.ffa.push(
+    ...world.spawns.blue, ...world.spawns.red,
+    V(0, 0.1, 8), V(8, 0.1, 8),
+    V(56, 7.5, 0), V(70, 7.5, 0), V(82, 7.5, -2),
+    V(0, 14.5, 0), V(0, hubY + 0.2, hubZ), V(70, 7.5, -12),
+  );
   for (const [x, y, z] of [
-    [-48, 0.1, -6], [-48, 0.1, 6], [-36, 0.1, 0],
-    [-28, 0.1, 0], [-22, 0.1, 0], [-16, 0.1, 0],
     [-8, 0.1, -8], [-8, 0.1, 8], [0, 0.1, 0], [8, 0.1, 8],
-    [8, 0.1, 14], [8, 0.1, 20], [10, 0.1, 25], [12, 0.1, 29],
-    [12, 0.1, 34], [12, 0.1, 42],
+    [8, 0.1, 14], [8, 0.1, 18], [8, 0.1, 22], [8, 0.1, 25],
+    [13, 0.1, 25], [17, 0.1, 25], [22, 0.1, 25],
+    [28, 0.1, 20], [34, 0.1, 25], [38, 0.1, 30],
     [0, 7.4, 0], [8, 7.4, 0], [16, 7.4, 0], [22, 7.4, 0],
-    [29, 7.4, 0], [38, 7.4, 0], [46, 7.4, 0],
-    [63, 8.1, 0], [75, 8.1, 8], [88, 8.1, 0],
+    [29, 7.4, 0], [38, 7.4, 0], [46, 7.4, 0], [52, 7.5, 0],
+    [42, 7.4, 12], [42, 7.4, 16], [42, 7.4, 20], [42, 7.4, 25],
+    [35, 7.4, 25], [42, 7.0, 31], [42, 14.4, 29],
+    // Exterior roof circuits + hull pads (dense enough for bot loot routes).
+    [8, 6.3, 18], [8, 7.0, 25], [17, 6.3, 25],
+    [24, 7.2, 28], [28, 7.3, 30], [32, 7.2, 26], [34, 7.3, 30],
+    [-8, 14.5, 0], [0, 14.5, 0], [8, 14.5, 0],
+    [0, 14.5, 8], [0, 14.5, -8], [-8, 14.5, 8], [8, 14.5, -8],
+    // Ceiling airlock climb: upper deck → hatch → roof.
+    [10, 7.5, 9], [10, 11.0, 9], [10, 14.5, 9], [10, 14.5, 12], [14, 14.5, 9],
+    [22, 13.7, 0], [42, 14.4, 0], [42, 13.7, 16], [42, 14.4, 25],
+    // Aft exterior pads through the air curtain.
+    [56, 7.5, 0], [56, 7.5, 3], [56, 7.5, -3],
+    [63, 7.5, 0], [63, 7.5, -4], [63, 7.5, 4],
+    [70, 7.5, 0], [70, 7.5, 8], [75, 7.5, 4], [75, 7.5, 8], [75, 7.5, 12],
+    [82, 7.5, 0], [88, 7.5, -4], [88, 7.5, 0], [88, 7.5, 4],
+    // Solar-arm approach from the aft deck lip.
+    [70, 7.5, -8], [70, 7.5, -12],
   ]) wp(world, x, y, z);
-  world.manualLinks.push([0, 0.1, 0, 0, 7.4, 0], [10, 0.1, -9, 8, 7.4, -8]);
-  pk(world, 'health', -48, 0.2, 6);
-  pk(world, 'shield', 45, 7.5, 4);
-  pk(world, 'ammo', 12, 0.2, 42, { weapon: 'scatter' });
-  // The premium arsenal is deliberately exposed to the flare cycle.
-  pk(world, 'weapon', 63, 8.5, 0, { weapon: 'hyper' });
-  pk(world, 'weapon', 75, 8.5, 8, { weapon: 'whomper' });
-  pk(world, 'weapon', 88, 8.5, 0, { weapon: 'zooka' });
+  for (const t of [0, 0.25, 0.5, 0.75, 1])
+    wp(world, 0, armRoot.y + armRise * t, armRoot.z - armRun * t);
+  wp(world, -18, hubY + 0.2, hubZ);
+  wp(world, 18, hubY + 0.2, hubZ);
+  wp(world, -30, hubY + 0.2, hubZ);
+  wp(world, 30, hubY + 0.2, hubZ);
+  world.manualLinks.push(
+    [-8, 0.1, 0, 8, 7.4, 0],
+    [42, 0.1, 25, 42, 7.4, 25],
+    [42, 7.0, 31, 42, 14.4, 29],
+    [28, 7.3, 30, 42, 7.4, 25],
+    [32, 7.2, 26, 35, 7.4, 25],
+    [-8, 14.5, 0, 8, 14.5, 0],
+    [0, 14.5, 0, 0, 14.5, 8],
+    [0, 14.5, 0, 0, 14.5, -8],
+    [10, 7.5, 9, 10, 14.5, 9],
+    [10, 14.5, 9, 10, 14.5, 12],
+    [10, 14.5, 9, 0, 14.5, 8],
+    [42, 14.4, 0, 42, 13.7, 16],
+    [42, 13.7, 16, 42, 14.4, 25],
+    [-8, 14.5, 0, armRoot.x, armRoot.y, armRoot.z],
+    [8, 14.5, 0, armRoot.x, armRoot.y, armRoot.z],
+    [0, 14.5, -8, armRoot.x, armRoot.y, armRoot.z],
+    // Bridge interior → air curtain → aft hull (force the outdoor loot graph).
+    [46, 7.4, 0, 52, 7.5, 0],
+    [52, 7.5, 0, 56, 7.5, 0],
+    [56, 7.5, 0, 63, 7.5, 0],
+    [63, 7.5, 0, 70, 7.5, 0],
+    [70, 7.5, 0, 75, 7.5, 8],
+    [75, 7.5, 8, 88, 7.5, 0],
+    [63, 7.5, 0, 70, 7.5, -8],
+    [70, 7.5, -8, 70, 7.5, -12],
+    // Upper roof hop onto the science exterior deck / aft pads.
+    [8, 14.5, 0, 28, 7.3, 30],
+    [42, 14.4, 0, 56, 7.5, 0],
+  );
+  // Lean loot: one pickup per room when possible, weapons split across inside
+  // and outside. Secret Shot (blaster) is the default — never a floor drop.
+  // Central lower / upper
+  pk(world, 'weapon', -8, 0.2, 6, { weapon: 'scatter' });
+  pk(world, 'ammo', -5, 0.2, 8, { weapon: 'scatter' });
+  pk(world, 'health', 8, 0.2, -8);
+  pk(world, 'silver', 12, 7.5, 0);
+  // Science + L-junction
+  pk(world, 'weapon', 34, 0.2, 28, { weapon: 'zooka' });
+  pk(world, 'ammo', 30, 0.2, 20, { weapon: 'zooka' });
+  pk(world, 'health', 8, 0.2, 25);
+  // Bridge + relay
+  pk(world, 'weapon', 42, 7.6, -6, { weapon: 'sidewinder' });
+  pk(world, 'ammo', 40, 7.6, -4, { weapon: 'sidewinder' });
+  pk(world, 'shield', 48, 7.6, 4);
+  pk(world, 'weapon', 42, 7.6, 25, { weapon: 'parasite' });
+  pk(world, 'ammo', 40, 7.6, 27, { weapon: 'parasite' });
+  pk(world, 'star', 46, 7.6, 28, { hidden: true });
+  // Exterior hull / roof (not the solar wing) — Pulsator + Gold on the main roof.
+  pk(world, 'weapon', 10, 14.5, 12, { weapon: 'pulsar' });
+  pk(world, 'ammo', 14, 14.5, 9, { weapon: 'pulsar' });
+  pk(world, 'gold', -8, 14.5, 8);
+  pk(world, 'weapon', 75, 7.3, 8, { weapon: 'whomper' });
+  pk(world, 'ammo', 70, 7.3, 0, { weapon: 'whomper' });
+  pk(world, 'health', 88, 7.3, 0);
+  pk(world, 'star', 0, 14.5, -8, { hidden: true });
+  // Solar wing — Hyperstrike climb reward only (do not add more here).
+  pk(world, 'weapon', 0, hubY + 0.3, hubZ - 0.5, { weapon: 'hyper' });
+  pk(world, 'ammo', -18, hubY + 0.3, hubZ - 0.5, { weapon: 'hyper' });
+  pk(world, 'shield', 18, hubY + 0.3, hubZ - 0.5);
   mergeStatic(scene, world);
   return world;
 }
@@ -12307,7 +12947,7 @@ export const MAPS = [
     desc: 'A sentient machine realm recursively contains itself. Fall or fire into the living miniature and emerge above the full-size arena at the same point.',
     thumb: 'linear-gradient(135deg,#101600,#b7ed1c 52%,#e43814)', build: buildInfiniteBloom },
   { id: 'solar', name: 'SOLAR FLARE', emoji: '☀️', secret: true,
-    desc: 'A compact two-deck starship beside a colossal sun: tight maintenance tunnels, bridge rooms, a permeable air curtain, and low-gravity combat across the outer hull.',
+    desc: 'A compact two-deck starship beside a colossal sun: tight maintenance tunnels, bridge rooms, a permeable air curtain, and a 45° solar arm climbing to a giant PV wing in the void.',
     thumb: 'linear-gradient(135deg,#080611,#ff5a18 48%,#ffd45a)', build: buildSolarFlare },
   { id: 'olympus', name: 'OLYMPUS MONS', emoji: '🔴', secret: true,
     desc: 'A Greco-futurist cliff-temple on Mars: stepped golden palaces, Olympian statues, an ornate Aether Crown, connected roof arenas, a mountain-sized Hades cavern, and waterfall caves.',

@@ -814,9 +814,10 @@ export class Bot {
           // apex of the solved arc is always at or above the target, and the
           // integrator lands a hair low — straight into the platform top).
           const T = clamp(d / 11, 1.4, 3.6);
+          const gravity = this.world.gravityAt?.(this.pos, this) ?? this.world.gravity;
           this.vel.x = (wpTarget.x - this.pos.x) / T;
           this.vel.z = (wpTarget.z - this.pos.z) / T;
-          this.vel.y = dy / T + 0.5 * this.world.gravity * T;
+          this.vel.y = dy / T + 0.5 * gravity * T;
           this.pos.y += 0.4; // clear the launch surface
           this.grounded = false;
         } else if (!lowGrav && dy > 1 && d < 4) {

@@ -70,6 +70,8 @@ const MAPS = [
   { id: 'tidebreaker', name: 'TIDEBREAKER', bounds: 82, spawns: [[-50, 14.2, -8], [-50, 14.2, 8], [-35, 8.2, -34], [-12, 8.2, 34], [18, 8.2, -34], [38, 8.2, 34], [49, 8.2, -18], [49, 8.2, 18]] },
   { id: 'prism', name: 'PRISM RUN', secret: true, bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
   { id: 'bloom', name: 'INFINITE BLOOM', secret: true, bounds: 48, spawns: [[-24, 0.1, -24], [24, 0.1, 24], [-24, 0.1, 24], [24, 0.1, -24], [0, 0.1, -27], [0, 0.1, 27], [-27, 0.1, 0], [27, 0.1, 0]] },
+  // Mirrors buildSolarFlare FFA spawns. Bounds cover the sunward wing tip (~x97 / z-61).
+  { id: 'solar', name: 'SOLAR FLARE', secret: true, bounds: 110, spawns: [[-48, 0.1, -6], [-48, 0.1, 6], [-8, 7.4, 8], [30, 0.1, 20], [38, 0.1, 30], [45, 7.4, 4], [0, 0.1, 8], [5, 7.4, -8], [75, 7.5, 8]] },
   { id: 'olympus', name: 'OLYMPUS MONS', secret: true, bounds: 170, spawns: [[-18, 60.6, 32], [18, 60.6, 32], [-52, 60.6, 38], [52, 60.6, 38], [-44, 60.6, -14], [44, 60.6, -14], [-15, 60.6, -52], [15, 60.6, -52], [-44, 74.6, 20], [44, 74.6, 20], [-20, 90.6, 26], [20, 90.6, 26]] },
 ];
 const LEADERBOARD_MAP_IDS = new Set([...MAPS.map(map => map.id), 'olympus']);

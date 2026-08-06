@@ -63,6 +63,7 @@ const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills:
 const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, team: 'meteor' };
 const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
 const GATOR = { name: 'Canal Gator', color: '#8fbd45', isPlayer: false, kills: 0, team: 'gator' };
+const SHARK = { name: 'Shark', color: '#79b7c8', isPlayer: false, kills: 0, team: 'shark' };
 const SOLAR_FLARE = { name: 'Solar Flare', color: '#ff4b24', isPlayer: false, kills: 0, team: 'solar' };
 const EVENT_BLAST_RADIUS = 10;
 const EVENT_BLAST_DAMAGE = 50;
@@ -1063,10 +1064,14 @@ function startMatch(mapDef, mode = 'ffa') {
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
-  world.onTideWarning = () => {
-    sfx('siren');
-    hud.message('SURGE INBOUND — GET TO HIGH GROUND', '#ff8a3d');
+  world.onSharkBite = (ch, sharkPos) => {
+    if (!ch?.alive) return;
+    applyDamage(ch, 90, SHARK, { environmental: true, silentImpact: true });
+    sfx('chomp', sharkPos || (ch.isPlayer ? null : ch.pos));
+    sfx('gatorhit', ch.isPlayer ? null : ch.pos);
+    if (ch.isPlayer) hud.message('SHARK BITE -90', '#8ed8e8');
   };
+  world.onTideWarning = () => sfx('siren');
   world.onSurgeHit = (ch) => {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
     if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
@@ -1209,10 +1214,16 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
-  world.onTideWarning = () => {
-    sfx('siren');
-    hud.message('SURGE INBOUND — GET TO HIGH GROUND', '#ff8a3d');
+  world.onSharkBite = (ch, sharkPos) => {
+    // As with the canal gator, only the host applies authoritative wildlife
+    // damage. Every client still animates the same local predator pursuit.
+    if (!ch?.alive || !G?.multiplayerHost) return;
+    applyDamage(ch, 90, SHARK, { environmental: true, silentImpact: true });
+    sfx('chomp', sharkPos || (ch.isPlayer ? null : ch.pos));
+    sfx('gatorhit', ch.isPlayer ? null : ch.pos);
+    if (ch.isPlayer) hud.message('SHARK BITE -90', '#8ed8e8');
   };
+  world.onTideWarning = () => sfx('siren');
   world.onSurgeHit = (ch) => {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
     if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
@@ -1772,14 +1783,21 @@ function applyMultiplayerSnapshot(snap) {
       ev.targetId === multiplayer.slotId) {
       sfx('gatorhit');
     }
+    if (ev.type === 'damage' && ev.attackerId === 'shark' &&
+      ev.targetId === multiplayer.slotId) {
+      sfx('chomp');
+      sfx('gatorhit');
+      hud.message('SHARK BITE -90', '#8ed8e8');
+    }
     if (ev.type === 'kill') {
       const killer = G.characters.find(c => c.team === ev.killerId || c.id === ev.killerId) ||
         (ev.killerId === multiplayer.slotId ? G.player :
           ev.killerId === 'meteor' ? METEOR :
-            ev.killerId === 'comet' ? COMET : { name: 'The Void', color: '#8899aa' });
+            ev.killerId === 'comet' ? COMET :
+              ev.killerId === 'shark' ? SHARK : { name: 'The Void', color: '#8899aa' });
       const victim = G.characters.find(c => c.id === ev.victimId) ||
         (ev.victimId === multiplayer.slotId ? G.player : { name: 'Player', color: '#ccc' });
-      if (ev.killerId === 'gator') hud.chompFeed(victim);
+      if (ev.killerId === 'gator' || ev.killerId === 'shark') hud.chompFeed(victim);
       else hud.killfeed(killer, victim);
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
@@ -2089,7 +2107,8 @@ function updateMultiplayerTracers(dt) {
     const moveDt = Math.min(dt, Math.max(0, tr.life - tr.t));
     tr.t += moveDt;
     if (tr.weapon?.remoteBounce && tr.weapon.gravity) {
-      tr.vel.y -= G.world.gravity * 0.9 * moveDt;
+      const gravity = G.world.gravityAt?.(tr.pos, tr) ?? G.world.gravity;
+      tr.vel.y -= gravity * 0.9 * moveDt;
     }
     let remaining = moveDt;
     let traversalFailed = false;
@@ -2966,7 +2985,7 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
       // the killer always races for it; idle bystanders contest close drops
       if (c === attacker || (!c.target && c.pos.distanceTo(target.pos) < 18)) c.noticeDrop(target.pos);
     }
-    if (attacker === GATOR) hud.chompFeed(target);
+    if (attacker === GATOR || attacker === SHARK) hud.chompFeed(target);
     else hud.killfeed(attacker, target);
     G.fxPool.spawnPuff(new THREE.Vector3(target.pos.x, target.pos.y + 1, target.pos.z),
       target.team === 'blue' ? 0x5cb3ff : 0xff5c5c, 2);
