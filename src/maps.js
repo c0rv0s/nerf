@@ -12679,13 +12679,15 @@ function buildSolarFlare(scene) {
     ring.quaternion.setFromUnitVectors(V(0, 0, 1), boomDir);
     scene.add(ring);
   }
-  // Tip hub + giant lateral solar wing (flat fight deck at the end of the arm).
+  // Tip hub + giant lateral solar wing. Hub sits entirely sunward of the ramp
+  // tip so the climb lands flush on the deck instead of hitting a wall.
   const hubY = armTip.y;
-  const hubZ = armTip.z;
-  addBox(scene, world, 0, hubY - 0.45, hubZ, 8, 0.9, 8, 0x425468, { tex: 'solar-hull' });
-  // Beacon sits sunward of the arrival point so the ramp exit stays clear.
-  addBox(scene, world, 0, hubY + 0.9, hubZ - 3.2, 2.8, 1.8, 2.8, 0x5a6570, { tex: 'solar-hull' });
-  addBox(scene, world, 0, hubY + 2.0, hubZ - 3.2, 1.4, 0.22, 1.4, cool, {
+  const hubDepth = 9;
+  const hubZ = armTip.z - hubDepth / 2;
+  addBox(scene, world, 0, hubY - 0.45, hubZ, 8, 0.9, hubDepth, 0x425468, { tex: 'solar-hull' });
+  // Beacon on the far sunward end — clear of the arrival lip.
+  addBox(scene, world, 0, hubY + 0.9, armTip.z - hubDepth + 1.8, 2.8, 1.8, 2.8, 0x5a6570, { tex: 'solar-hull' });
+  addBox(scene, world, 0, hubY + 2.0, armTip.z - hubDepth + 1.8, 1.4, 0.22, 1.4, cool, {
     collide: false, shadow: false, emissive: cool, emissiveIntensity: 1.5,
   });
   // Cross-spar carrying the PV blankets.
@@ -12712,8 +12714,9 @@ function buildSolarFlare(scene) {
       max: V(x + w / 2, hubY + 0.55, z + d / 2 + 0.2),
     });
   };
-  for (const x of [-18, 18]) addPvBlanket(x, hubY + 0.05, hubZ - 0.4, 20, 16, 6, 5);
-  for (const x of [-30, 30]) addPvBlanket(x, hubY + 0.1, hubZ - 0.5, 12, 12, 3, 3);
+  // Keep blankets on the hub footprint only — no overhang back over the ramp.
+  for (const x of [-18, 18]) addPvBlanket(x, hubY + 0.05, hubZ, 20, 8, 6, 4);
+  for (const x of [-30, 30]) addPvBlanket(x, hubY + 0.1, hubZ - 0.5, 12, 7, 3, 3);
   // The flare is a physical-looking plasma tentacle from the nearby sun, not
   // a rotating arena laser. It snakes across the void and terminates at the
   // exterior hull's aft emitter.

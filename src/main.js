@@ -836,7 +836,7 @@ function startAtrium() {
     onDamage: () => {},
   });
   const pickups = new PickupManager(scene, [], { onPickup });
-  world.onPad = () => {};
+  world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
   world.onSecretFountainReveal = () => {
     sfx('powerup');
   };
@@ -3081,6 +3081,7 @@ function onPickup(ch, def) {
       const w = WEAPONS[def.weapon];
       const cur = ch.ammo[def.weapon] || 0;
       const cap = w.pickupAmmo * 3;
+      if (def.kind === 'ammo' && !ch.weapons[def.weapon]) return false; // need the gun first
       if (def.kind === 'ammo' && cur >= cap) return false; // full — leave it
       const gain = def.kind === 'drop' ? def.amount : w.pickupAmmo;
       ch.ammo[def.weapon] = Math.min(cap, cur + gain);
