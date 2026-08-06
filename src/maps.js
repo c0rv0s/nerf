@@ -310,6 +310,7 @@ export const texturesReady = Promise.all(
    'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
    'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
    'power-gold', 'power-silver',
+   'tidebreaker-deck', 'tidebreaker-orange-steel',
    'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
    'infinite-bloom-surface', 'infinite-bloom-faces', 'infinite-bloom-sky-eyeless', 'infinite-bloom-eye-atlas',
    'atrium-gate-frame-atlas']
@@ -977,6 +978,350 @@ function addFittedWater(scene, world, {
   );
 }
 
+function addAtriumFountain(scene, world, x, z) {
+  const root = new THREE.Group();
+  root.position.set(x, 0, z);
+  root.name = 'atrium-fountain-centerpiece';
+  scene.add(root);
+
+  const stone = mat(0x66728d, { metalness: 0.42, roughness: 0.3 });
+  const darkStone = mat(0x303951, { metalness: 0.5, roughness: 0.28 });
+  const orange = mat(0xff6a2b, {
+    emissive: 0x7a1705, emissiveIntensity: 0.55, metalness: 0.5, roughness: 0.24,
+  });
+  const water = new THREE.MeshBasicMaterial({
+    color: 0xa8efff, transparent: true, opacity: 0.82,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const waterSurface = new THREE.MeshStandardMaterial({
+    color: 0x6bdcff, emissive: 0x117aa0, emissiveIntensity: 0.65,
+    transparent: true, opacity: 0.86, roughness: 0.08, metalness: 0.08,
+    depthWrite: false,
+  });
+  const add = (geometry, material, y, { rotateX = 0, shadow = true } = {}) => {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.y = y;
+    mesh.rotation.x = rotateX;
+    if (shadow) mesh.castShadow = mesh.receiveShadow = true;
+    root.add(mesh);
+    return mesh;
+  };
+
+  // A compact art-deco pedestal and two stepped bowls create a recognizable
+  // fountain silhouette without blocking sightlines across the atrium.
+  add(new THREE.CylinderGeometry(1.5, 1.8, 0.42, 12), darkStone, 0.72);
+  add(new THREE.CylinderGeometry(0.72, 1.04, 1.65, 12), stone, 1.72);
+  add(new THREE.CylinderGeometry(1.78, 0.68, 0.46, 24), stone, 2.67);
+  add(new THREE.TorusGeometry(1.67, 0.14, 8, 32), orange, 2.91, { rotateX: Math.PI / 2 });
+  add(new THREE.CylinderGeometry(1.48, 1.48, 0.07, 28), waterSurface, 2.93, { shadow: false });
+  add(new THREE.CylinderGeometry(0.3, 0.48, 1.18, 10), darkStone, 3.46);
+  add(new THREE.CylinderGeometry(1.0, 0.38, 0.35, 20), stone, 4.12);
+  add(new THREE.TorusGeometry(0.92, 0.11, 8, 28), orange, 4.31, { rotateX: Math.PI / 2 });
+  add(new THREE.CylinderGeometry(0.78, 0.78, 0.055, 24), waterSurface, 4.32, { shadow: false });
+  const crown = add(new THREE.IcosahedronGeometry(0.38, 1), orange, 4.74);
+
+  // Six visible arcs spill from the upper bowl into the basin. Tube geometry
+  // reads as actual water from oblique angles where a flat sprite disappears.
+  const jets = [];
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3;
+    const radial = V(Math.cos(a), 0, Math.sin(a));
+    const start = radial.clone().multiplyScalar(0.66).setY(4.43);
+    const control = radial.clone().multiplyScalar(2.05).setY(5.5);
+    const end = radial.clone().multiplyScalar(3.35).setY(0.82);
+    const curve = new THREE.QuadraticBezierCurve3(start, control, end);
+    const jet = new THREE.Mesh(new THREE.TubeGeometry(curve, 28, 0.065, 7, false), water.clone());
+    jet.renderOrder = 4;
+    root.add(jet);
+    jets.push(jet);
+  }
+  const plumeCurve = new THREE.CatmullRomCurve3([
+    V(0, 4.82, 0), V(0.08, 5.65, -0.03), V(-0.06, 6.35, 0.04), V(0, 6.85, 0),
+  ]);
+  const plume = new THREE.Mesh(new THREE.TubeGeometry(plumeCurve, 22, 0.09, 7, false), water.clone());
+  plume.renderOrder = 4;
+  root.add(plume);
+
+  const glow = new THREE.PointLight(0x70dfff, 18, 18);
+  glow.position.set(0, 4.2, 0);
+  root.add(glow);
+  world.anim.push((dt, t) => {
+    crown.rotation.y += dt * 0.7;
+    plume.material.opacity = 0.72 + Math.sin(t * 4.2) * 0.12;
+    jets.forEach((jet, i) => { jet.material.opacity = 0.68 + Math.sin(t * 3.4 + i) * 0.11; });
+  });
+  return root;
+}
+
+function addAtriumSecretObservatory(scene, world, fountain) {
+  const floorY = 420;
+  const observatory = new THREE.Group();
+  observatory.name = 'atrium-hidden-secret-space-map';
+  observatory.visible = false;
+  scene.add(observatory);
+
+  const rnd = seededRandom(0x51aceb00);
+
+  // A very large seamless sky shell replaces the atrium's pink background
+  // while this hidden destination is active. Its scale and lack of a visible
+  // rim make it read as open space rather than another enclosed bubble.
+  const voidCanvas = document.createElement('canvas');
+  voidCanvas.width = 2048;
+  voidCanvas.height = 1024;
+  const voidCtx = voidCanvas.getContext('2d');
+  const voidGradient = voidCtx.createLinearGradient(0, 0, 0, 1024);
+  voidGradient.addColorStop(0, '#020511');
+  voidGradient.addColorStop(0.48, '#090a27');
+  voidGradient.addColorStop(1, '#01030b');
+  voidCtx.fillStyle = voidGradient;
+  voidCtx.fillRect(0, 0, 2048, 1024);
+  for (const [x, y, radius, inner, outer] of [
+    [420, 390, 520, 'rgba(55,35,125,.23)', 'rgba(9,8,35,0)'],
+    [1520, 570, 600, 'rgba(16,75,118,.2)', 'rgba(2,4,18,0)'],
+    [1040, 820, 440, 'rgba(92,24,92,.12)', 'rgba(4,2,16,0)'],
+  ]) {
+    const nebula = voidCtx.createRadialGradient(x, y, 0, x, y, radius);
+    nebula.addColorStop(0, inner);
+    nebula.addColorStop(1, outer);
+    voidCtx.fillStyle = nebula;
+    voidCtx.fillRect(0, 0, 2048, 1024);
+  }
+  for (let i = 0; i < 1500; i++) {
+    const x = rnd() * 2048;
+    const y = rnd() * 1024;
+    const r = 0.35 + rnd() * (rnd() > 0.96 ? 2.6 : 1.25);
+    voidCtx.globalAlpha = 0.35 + rnd() * 0.65;
+    const tint = rnd();
+    voidCtx.fillStyle = tint > 0.94 ? '#8bdcff' : tint < 0.04 ? '#d6b6ff' : '#ffffff';
+    voidCtx.beginPath();
+    voidCtx.arc(x, y, r, 0, Math.PI * 2);
+    voidCtx.fill();
+  }
+  voidCtx.globalAlpha = 1;
+  const voidTexture = new THREE.CanvasTexture(voidCanvas);
+  voidTexture.colorSpace = THREE.SRGBColorSpace;
+  const deepSpace = new THREE.Mesh(new THREE.SphereGeometry(240, 64, 40),
+    new THREE.MeshBasicMaterial({
+      map: voidTexture, side: THREE.BackSide, fog: false, depthWrite: false,
+    }));
+  deepSpace.position.y = floorY + 8;
+  deepSpace.renderOrder = -20;
+  deepSpace.name = 'observatory-deep-space-sky';
+  observatory.add(deepSpace);
+
+  const deckMaterial = mat(0x202944, { tex: 'panel', repeat: [4, 4], roughness: 0.42, metalness: 0.3 });
+  const addDeckBox = (x, y, z, w, h, d, material = deckMaterial, collide = true) => {
+    if (collide) world.colliders.push({
+      type: 'box', min: V(x - w / 2, y - h / 2, z - d / 2), max: V(x + w / 2, y + h / 2, z + d / 2),
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = mesh.receiveShadow = true;
+    observatory.add(mesh);
+    return mesh;
+  };
+
+  // The hub is a complete solid deck. The special launcher handles arrival
+  // above it, so the chamber never needs a visible hole or access shaft.
+  addDeckBox(0, floorY - 0.35, 0, 40, 0.7, 40);
+
+  // Monumental orbital paths surround the platform without entering the
+  // 40x40 walkable square. Their different planes make the hub feel suspended
+  // inside a much larger celestial mechanism rather than fenced in.
+  const orbitRoot = new THREE.Group();
+  orbitRoot.position.y = floorY + 7;
+  observatory.add(orbitRoot);
+  const orbitMaterial = new THREE.MeshBasicMaterial({
+    color: 0x7be5ff, transparent: true, opacity: 0.78,
+    depthWrite: false, fog: false, toneMapped: false,
+  });
+  const orbitSpecs = [
+    { radius: 31, tube: 0.18, rot: [Math.PI / 2, 0, 0] },
+    { radius: 42, tube: 0.2, rot: [Math.PI / 2 + 0.3, 0.18, 0.12] },
+    { radius: 53, tube: 0.24, rot: [Math.PI / 2 - 0.24, -0.3, -0.16] },
+  ];
+  for (const spec of orbitSpecs) {
+    const orbit = new THREE.Mesh(
+      new THREE.TorusGeometry(spec.radius, spec.tube, 8, 128),
+      orbitMaterial.clone(),
+    );
+    orbit.rotation.set(...spec.rot);
+    orbitRoot.add(orbit);
+  }
+
+  // Keep the asteroid dressing behind the player and above the rear edge so
+  // every destination marquee has a permanently clear sightline.
+  for (let i = 0; i < 12; i++) {
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + rnd() * 1.7, 0),
+      mat(0x34334f, { roughness: 0.9, metalness: 0.04 }));
+    rock.position.set(-18 + rnd() * 36, floorY + 13 + rnd() * 18, 23 + rnd() * 15);
+    rock.rotation.set(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
+    observatory.add(rock);
+  }
+  const doorSpecs = [
+    {
+      id: 'asteroids', name: 'ASTEROID BELT', color: 0x8fb8d8, frame: 'asteroids', marquee: 'asteroids',
+      x: 0, z: -19.2, horiz: true, yaw: 0, portalX: 0, portalZ: -19.02, triggerX: 0, triggerZ: -17.7,
+    },
+    {
+      id: 'prism', name: 'PRISM RUN', color: 0x9a6fe0, frame: 'sanctum', marquee: 'sanctum',
+      x: -19.2, z: 0, horiz: false, yaw: Math.PI / 2,
+      portalX: -19.02, portalZ: 0, triggerX: -17.7, triggerZ: 0,
+    },
+    {
+      id: 'bloom', name: 'INFINITE BLOOM', color: 0xcfff2c, frame: 'canopy', marquee: 'canopy',
+      x: 19.2, z: 0, horiz: false, yaw: -Math.PI / 2,
+      portalX: 19.02, portalZ: 0, triggerX: 17.7, triggerZ: 0,
+    },
+  ];
+  for (const door of doorSpecs) {
+    addAtriumGateBrickFrame(scene, world, door.frame, door.color,
+      door.x, door.z, door.horiz, floorY, observatory);
+    if (door.id === 'bloom') {
+      addBloomFacePortal(scene, world, door.portalX, floorY + 3.7, door.portalZ,
+        6.2, 7.6, door.yaw, observatory);
+    } else {
+      addMagicPortal(scene, world, door.portalX, floorY + 3.7, door.portalZ,
+        6.2, 7.6, door.color, door.yaw, observatory);
+    }
+    const marquee = addAtriumMarquee(scene, door.marquee, door.name, door.color,
+      door.x, floorY + 10.35, door.z, door.yaw, 15.5);
+    observatory.add(marquee);
+    const light = new THREE.PointLight(door.color, 16, 18);
+    light.position.set(
+      door.portalX + Math.sin(door.yaw) * 2.5,
+      floorY + 4,
+      door.portalZ + Math.cos(door.yaw) * 2.5,
+    );
+    observatory.add(light);
+    world.portals.push({
+      x: door.triggerX, y: floorY, z: door.triggerZ,
+      radius: 2.45, map: door.id, name: door.name,
+    });
+  }
+
+  // The plate deliberately reads as a slightly raised patch of lawn rather
+  // than a glowing mission button. Orange corner hardware rewards a closer look.
+  const plateBase = addBox(scene, world, 0, 0.19, 12, 5.4, 0.18, 3.6, 0x33445c, {
+    collide: false, emissive: 0x10263c, emissiveIntensity: 0.35,
+  });
+  const plateGrass = addBox(scene, world, 0, 0.305, 12, 5, 0.08, 3.2, 0x4d8e3f, {
+    tex: 'atrium-grass', repeat: [1, 1], collide: false, shadow: false,
+    emissive: 0x102808, emissiveIntensity: 0.12,
+  });
+  for (const x of [-2.38, 2.38]) for (const z of [10.48, 13.52]) {
+    addBox(scene, world, x, 0.37, z, 0.22, 0.12, 0.22, 0xff8a2b, {
+      collide: false, shadow: false, emissive: 0x8a2600, emissiveIntensity: 1.2,
+    });
+  }
+
+  const launch = addJumpPad(scene, world, 0, 0.55, 0, 95, 0, 0, 0x65e8ff, true);
+  launch.pad.disabled = true;
+  launch.base.visible = launch.disc.visible = false;
+  const mechanism = {
+    activated: false, phase: 'closed', progress: 0, openTimer: 0,
+    plateArmed: true, inHub: false, boosting: false,
+    transit: null, transportPlayer: null, transportAnchor: null,
+    plate: { x: 0, z: 12, radius: 2.35 },
+  };
+  world.secretFountainMechanism = mechanism;
+  world.finishSecretTransit = (direction) => {
+    const player = mechanism.transportPlayer;
+    if (!player || mechanism.transit !== direction) return;
+    if (direction === 'outbound') {
+      mechanism.inHub = true;
+      observatory.visible = true;
+      // The rush ejects the player above and slightly behind the platform.
+      // Ordinary gravity completes the visible landing arc.
+      player.pos.set(0, floorY + 18, 11);
+      player.vel.set(0, -2, -6);
+      world.onSecretObservatoryArrival?.();
+    } else {
+      mechanism.inHub = false;
+      observatory.visible = false;
+      // Reverse transit ends above the atrium, leaving the final drop physical.
+      player.pos.set(0, 32, 9);
+      player.vel.set(0, -14, 0);
+      world.onSecretAtriumReturn?.();
+    }
+    mechanism.boosting = false;
+    mechanism.transit = null;
+    mechanism.transportPlayer = null;
+    mechanism.transportAnchor = null;
+  };
+  world.anim.push((dt, t, characters) => {
+    const player = characters.find(ch => ch.isPlayer && ch.alive);
+    const onPlate = !!player && Math.abs(player.pos.y) < 2 &&
+      Math.hypot(player.pos.x, player.pos.z - 12) < mechanism.plate.radius;
+    if (!onPlate && mechanism.phase === 'closed') mechanism.plateArmed = true;
+    if (mechanism.phase === 'closed' && mechanism.plateArmed && onPlate) {
+      mechanism.activated = true;
+      mechanism.plateArmed = false;
+      mechanism.phase = 'opening';
+      world.onSecretFountainReveal?.();
+    }
+
+    if (mechanism.phase === 'opening') {
+      mechanism.progress = Math.min(1, mechanism.progress + dt * 0.9);
+      if (mechanism.progress >= 1) {
+        mechanism.phase = 'open';
+        mechanism.openTimer = 5;
+      }
+    } else if (mechanism.phase === 'open') {
+      mechanism.openTimer -= dt;
+      if (mechanism.openTimer <= 0) mechanism.phase = 'closing';
+    } else if (mechanism.phase === 'closing') {
+      mechanism.progress = Math.max(0, mechanism.progress - dt * 1.15);
+      if (mechanism.progress <= 0) {
+        mechanism.phase = 'closed';
+        mechanism.activated = false;
+      }
+    }
+
+    const p = mechanism.progress;
+    const eased = p * p * (3 - 2 * p);
+    fountain.rotation.z = eased * Math.PI;
+    fountain.position.y = -0.35 * eased;
+    plateBase.position.y = 0.19 - eased * 0.1;
+    plateGrass.position.y = 0.305 - eased * 0.1;
+    const padVisible = mechanism.phase !== 'closing' && mechanism.phase !== 'closed' && p > 0.38;
+    launch.base.visible = launch.disc.visible = padVisible;
+    launch.pad.disabled = !padVisible || p <= 0.72;
+
+    if (!mechanism.inHub && !mechanism.transit && !mechanism.boosting && player && player.vel.y > 80 &&
+        Math.hypot(player.pos.x, player.pos.z) < 2.2) {
+      mechanism.boosting = true;
+    }
+    if (mechanism.boosting && !mechanism.transit && player) {
+      // Engine gravity is still active, so this produces a genuinely
+      // accelerating launch rather than a constant-speed scripted lift.
+      player.vel.y += 130 * dt;
+      player.vel.x *= Math.max(0, 1 - dt * 4);
+      player.vel.z *= Math.max(0, 1 - dt * 4);
+      if (player.pos.y >= 140) {
+        mechanism.boosting = false;
+        mechanism.transit = 'outbound';
+        mechanism.transportPlayer = player;
+        mechanism.transportAnchor = player.pos.clone();
+        player.vel.set(0, 0, 0);
+        world.onSecretTransit?.('outbound');
+      }
+    } else if (mechanism.inHub && !mechanism.transit && player && player.pos.y < floorY - 22) {
+      mechanism.transit = 'inbound';
+      mechanism.transportPlayer = player;
+      mechanism.transportAnchor = player.pos.clone();
+      player.vel.set(0, 0, 0);
+      world.onSecretTransit?.('inbound');
+    }
+    if (mechanism.transit && mechanism.transportPlayer) {
+      mechanism.transportPlayer.pos.copy(mechanism.transportAnchor);
+      mechanism.transportPlayer.vel.set(0, 0, 0);
+    }
+    observatory.visible = mechanism.inHub;
+    orbitRoot.rotation.y += dt * 0.012;
+  });
+}
+
 function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style = {}) {
   const flowsAlongX = style.axis === 'x';
   const worldPosition = (across, y, outward) => flowsAlongX
@@ -1422,7 +1767,8 @@ function addCanalAlligator(scene, world) {
 }
 
 function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff, playersOnly = false) {
-  world.jumpPads.push({ x, y, z, r: 1.7, vy, vx, vz, playersOnly });
+  const pad = { x, y, z, r: 1.7, vy, vx, vz, playersOnly, disabled: false };
+  world.jumpPads.push(pad);
   const base = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.1, 0.3, 20),
     mat(0x223344, { roughness: 0.6 }));
   base.position.set(x, y + 0.15, z);
@@ -1435,6 +1781,7 @@ function addJumpPad(scene, world, x, y, z, vy, vx = 0, vz = 0, color = 0x30e0ff,
     disc.position.y = y + 0.34 + Math.abs(Math.sin(t * 3)) * 0.12;
     disc.material.emissiveIntensity = 1.2 + Math.sin(t * 6) * 0.6;
   });
+  return { pad, base, disc };
 }
 
 function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exitX = 0, exitZ = 0, visualTopPad = 0.16, visualWidth = null, vineColor = 0x5fc84d, visualStyle = 'sheet') {
@@ -5352,8 +5699,8 @@ function bloomTexture(name, rx = 1, ry = 1) {
   return map;
 }
 
-function addBloomFacePortal(scene, world, x, y, z, w, h, yaw = 0) {
-  addMagicPortal(scene, world, x, y, z, w, h, 0x365f08, yaw);
+function addBloomFacePortal(scene, world, x, y, z, w, h, yaw = 0, parent = scene) {
+  addMagicPortal(scene, world, x, y, z, w, h, 0x365f08, yaw, parent);
   const map = bloomTexture('infinite-bloom-faces', 1.15, 1.15);
   if (!map) return;
   const normalX = Math.sin(yaw), normalZ = Math.cos(yaw);
@@ -5369,7 +5716,7 @@ function addBloomFacePortal(scene, world, x, y, z, w, h, yaw = 0) {
   const faces = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.94, h * 0.94), material);
   faces.position.set(x + normalX * 0.09, y, z + normalZ * 0.09);
   faces.rotation.y = yaw;
-  scene.add(faces);
+  parent.add(faces);
   world.anim.push((dt, t) => {
     material.opacity = 0.73 + Math.sin(t * 2.7) * 0.07;
     map.offset.set(Math.sin(t * 0.17) * 0.035, Math.cos(t * 0.13) * 0.035);
@@ -6689,6 +7036,202 @@ function makeSign(scene, x, y, z, w, color, text, yaw = 0, doubleFaced = false) 
   return draw;
 }
 
+// The original Arena Blast atrium treated every entrance like an attraction:
+// huge, irregular wordmarks floated over the storefronts instead of sharing a
+// single UI-panel template. Keep utility signs on makeSign(), but give arena
+// gates their own arcade marquee with a chunky drop-shadow and map motif.
+function addAtriumMarquee(scene, id, text, color, x, y, z, yaw, width = 15.5) {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 384;
+  const g = c.getContext('2d');
+  const ink = '#' + color.toString(16).padStart(6, '0');
+  const accent = new THREE.Color(color).offsetHSL(0.08, 0.12, 0.18).getStyle();
+  const dark = new THREE.Color(color).offsetHSL(-0.02, 0.04, -0.3).getStyle();
+
+  // Each attraction gets a genuinely different silhouette, not one plaque
+  // with a swapped icon. All keep a broad, quiet center for distant legibility.
+  g.beginPath();
+  if (id === 'fortress') {
+    g.moveTo(74, 318); g.lineTo(74, 104); g.lineTo(126, 104); g.lineTo(126, 58);
+    g.lineTo(204, 58); g.lineTo(204, 104); g.lineTo(820, 104); g.lineTo(820, 58);
+    g.lineTo(898, 58); g.lineTo(898, 104); g.lineTo(950, 104); g.lineTo(950, 318);
+  } else if (id === 'asteroids') {
+    g.ellipse(512, 192, 448, 132, -0.045, 0, Math.PI * 2);
+  } else if (id === 'sanctum') {
+    g.moveTo(150, 42); g.lineTo(874, 42); g.lineTo(970, 138); g.lineTo(970, 246);
+    g.lineTo(874, 342); g.lineTo(150, 342); g.lineTo(54, 246); g.lineTo(54, 138);
+  } else if (id === 'canopy') {
+    g.moveTo(75, 265); g.bezierCurveTo(25, 180, 92, 105, 190, 112);
+    g.bezierCurveTo(240, 35, 350, 60, 390, 105); g.bezierCurveTo(480, 18, 615, 48, 646, 108);
+    g.bezierCurveTo(755, 48, 930, 90, 944, 190); g.bezierCurveTo(955, 282, 824, 326, 718, 290);
+    g.bezierCurveTo(604, 350, 460, 318, 406, 286); g.bezierCurveTo(290, 350, 126, 328, 75, 265);
+  } else if (id === 'city') {
+    g.moveTo(62, 320); g.lineTo(62, 132); g.lineTo(145, 132); g.lineTo(145, 74);
+    g.lineTo(230, 74); g.lineTo(230, 118); g.lineTo(324, 118); g.lineTo(324, 46);
+    g.lineTo(418, 46); g.lineTo(418, 104); g.lineTo(962, 104); g.lineTo(962, 320);
+  } else if (id === 'arena') {
+    g.moveTo(48, 192); g.lineTo(176, 48); g.lineTo(858, 48); g.lineTo(976, 192);
+    g.lineTo(858, 336); g.lineTo(176, 336);
+  } else if (id === 'tidebreaker') {
+    g.moveTo(58, 112); g.lineTo(140, 46); g.lineTo(884, 46); g.lineTo(966, 112);
+    g.lineTo(966, 270); g.lineTo(884, 338); g.lineTo(140, 338); g.lineTo(58, 270);
+  } else if (id === 'multiplayer') {
+    g.moveTo(58, 122); g.lineTo(156, 122); g.lineTo(218, 54); g.lineTo(806, 54);
+    g.lineTo(868, 122); g.lineTo(966, 122); g.lineTo(906, 192); g.lineTo(966, 262);
+    g.lineTo(868, 262); g.lineTo(806, 330); g.lineTo(218, 330); g.lineTo(156, 262); g.lineTo(58, 262); g.lineTo(118, 192);
+  } else { // Hall of Fame: a medal/crest rather than another storefront banner.
+    g.moveTo(138, 64); g.lineTo(886, 64); g.lineTo(950, 192); g.lineTo(886, 320);
+    g.lineTo(650, 320); g.lineTo(610, 354); g.lineTo(512, 318); g.lineTo(414, 354);
+    g.lineTo(374, 320); g.lineTo(138, 320); g.lineTo(74, 192);
+  }
+  g.closePath();
+  g.fillStyle = 'rgba(5,7,18,.97)'; g.fill();
+  g.lineJoin = 'round';
+  g.lineWidth = 30; g.strokeStyle = 'rgba(0,0,0,.68)'; g.stroke();
+  g.lineWidth = 15; g.strokeStyle = dark; g.stroke();
+  g.lineWidth = 7; g.strokeStyle = ink; g.stroke();
+
+  // The interior detailing also follows the attraction instead of repeating
+  // the same two light rails everywhere.
+  g.globalAlpha = 0.55; g.strokeStyle = accent; g.fillStyle = accent; g.lineWidth = 5;
+  if (id === 'asteroids') {
+    g.beginPath(); g.ellipse(520, 192, 380, 86, -0.12, 0, Math.PI * 2); g.stroke();
+    for (const [sx, sy, sr] of [[245, 115, 6], [770, 245, 9], [850, 145, 5]]) { g.beginPath(); g.arc(sx, sy, sr, 0, Math.PI * 2); g.fill(); }
+  } else if (id === 'sanctum') {
+    for (const ox of [105, 855]) { g.strokeRect(ox, 115, 64, 154); g.strokeRect(ox + 18, 139, 46, 52); }
+  } else if (id === 'canopy') {
+    g.beginPath(); g.moveTo(90, 280); g.bezierCurveTo(230, 240, 192, 98, 356, 83); g.stroke();
+    g.beginPath(); g.moveTo(930, 270); g.bezierCurveTo(790, 240, 840, 100, 690, 84); g.stroke();
+  } else if (id === 'city') {
+    for (let bx = 90; bx < 930; bx += 46) for (const by of [145, 275]) g.fillRect(bx, by, 13, 9);
+  } else if (id === 'arena') {
+    for (const by of [112, 272]) { g.beginPath(); g.moveTo(170, by); g.lineTo(854, by); g.stroke(); }
+  } else if (id === 'tidebreaker') {
+    for (const by of [118, 272]) { g.beginPath(); g.moveTo(150, by); g.lineTo(874, by); g.stroke(); }
+    g.beginPath(); g.moveTo(112, 238); g.bezierCurveTo(228, 152, 324, 284, 438, 196);
+    g.bezierCurveTo(558, 108, 674, 278, 906, 174); g.stroke();
+  } else if (id === 'multiplayer') {
+    for (let bx = 190; bx <= 834; bx += 54) { g.beginPath(); g.arc(bx, 92, 5, 0, Math.PI * 2); g.fill(); }
+  } else if (id === 'hall') {
+    for (let bx = 185; bx <= 839; bx += 48) { g.beginPath(); g.arc(bx, 100, 5, 0, Math.PI * 2); g.fill(); }
+  } else {
+    g.fillRect(95, 286, 834, 14);
+  }
+  g.globalAlpha = 1;
+
+  // A tiny arena-specific glyph keeps the eight marquees from feeling cloned.
+  g.save();
+  g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 10;
+  if (id === 'fortress') {
+    for (const bx of [92, 126, 160]) g.fillRect(bx, 150, 23, 24);
+    g.fillRect(92, 170, 91, 58); g.clearRect(125, 194, 25, 34);
+  } else if (id === 'asteroids') {
+    g.beginPath(); g.ellipse(137, 192, 62, 25, -0.3, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(137, 192, 24, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(189, 166, 9, 0, Math.PI * 2); g.fill();
+  } else if (id === 'sanctum') {
+    g.strokeRect(91, 148, 92, 88); g.beginPath();
+    g.moveTo(111, 216); g.lineTo(111, 170); g.lineTo(160, 170);
+    g.lineTo(160, 194); g.lineTo(134, 194); g.lineTo(134, 225); g.stroke();
+  } else if (id === 'canopy') {
+    g.beginPath(); g.ellipse(120, 177, 22, 52, -0.7, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(160, 204, 20, 47, 0.75, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = accent; g.beginPath(); g.moveTo(102, 224); g.lineTo(179, 158); g.stroke();
+  } else if (id === 'city') {
+    g.fillRect(91, 174, 26, 57); g.fillRect(124, 143, 32, 88); g.fillRect(163, 164, 24, 67);
+    g.fillStyle = accent; for (const wx of [100, 135, 146, 172]) for (const wy of [181, 202]) g.fillRect(wx, wy, 6, 8);
+  } else if (id === 'arena') {
+    for (let i = 0; i < 3; i++) { g.beginPath(); g.moveTo(87 + i * 17, 155); g.lineTo(139 + i * 17, 192); g.lineTo(87 + i * 17, 229); g.stroke(); }
+  } else if (id === 'tidebreaker') {
+    g.beginPath(); g.arc(137, 192, 45, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(91, 201); g.bezierCurveTo(111, 166, 130, 224, 151, 183);
+    g.bezierCurveTo(165, 158, 178, 194, 190, 178); g.stroke();
+  } else if (id === 'multiplayer') {
+    g.beginPath(); g.arc(119, 176, 26, 0, Math.PI * 2); g.arc(163, 176, 26, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(119, 229, 38, Math.PI, 0); g.arc(163, 229, 38, Math.PI, 0); g.fill();
+  } else { // Hall of Fame
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const r = i % 2 ? 22 : 48;
+      g.lineTo(137 + Math.cos(a) * r, 192 + Math.sin(a) * r);
+    }
+    g.closePath(); g.fill();
+  }
+  g.restore();
+
+  // Solid pale faces stay readable against every gate color and at oblique
+  // angles. One dark keyline replaces the previous stack of competing outlines.
+  let fontSize = 104;
+  g.font = `900 ${fontSize}px "Arial Black", Impact, sans-serif`;
+  while (g.measureText(text).width > 720 && fontSize > 52) {
+    fontSize -= 2;
+    g.font = `900 ${fontSize}px "Arial Black", Impact, sans-serif`;
+  }
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineJoin = 'round';
+  g.lineWidth = 22; g.strokeStyle = 'rgba(0,0,0,.98)'; g.strokeText(text, 574, 198);
+  g.lineWidth = 8; g.strokeStyle = ink; g.strokeText(text, 574, 198);
+  g.fillStyle = '#fffaf0'; g.fillText(text, 574, 198);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 16;
+  const material = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, alphaTest: 0.025, depthWrite: false,
+  });
+  const marquee = new THREE.Mesh(new THREE.PlaneGeometry(width, width * 0.375), material);
+  marquee.position.set(x, y, z);
+  marquee.rotation.y = yaw;
+  marquee.renderOrder = 3;
+  marquee.name = `atrium-marquee-${id}`;
+  scene.add(marquee);
+  return marquee;
+}
+
+function addAtriumHeroSign(scene, x, y, z) {
+  const c = document.createElement('canvas');
+  c.width = 1536; c.height = 512;
+  const g = c.getContext('2d');
+  g.lineJoin = 'round';
+  g.beginPath();
+  g.moveTo(108, 92); g.lineTo(1228, 92); g.lineTo(1428, 256);
+  g.lineTo(1228, 420); g.lineTo(108, 420); g.lineTo(250, 256); g.closePath();
+  g.fillStyle = 'rgba(7,8,20,.98)'; g.fill();
+  g.lineWidth = 38; g.strokeStyle = 'rgba(0,0,0,.7)'; g.stroke();
+  g.lineWidth = 18; g.strokeStyle = '#ff4d25'; g.stroke();
+  g.lineWidth = 7; g.strokeStyle = '#ffbd3d'; g.stroke();
+
+  // Speed fins and a target burst make this the atrium's unmistakable anchor.
+  g.fillStyle = '#ff4d25';
+  for (let i = 0; i < 3; i++) {
+    const yy = 176 + i * 48;
+    g.beginPath(); g.moveTo(32, yy); g.lineTo(232, yy - 24); g.lineTo(198, yy + 20); g.closePath(); g.fill();
+  }
+  g.save(); g.translate(1328, 256);
+  for (let i = 0; i < 16; i++) { g.rotate(Math.PI / 8); g.fillRect(62, -5, 82, 10); }
+  for (const [r, fill] of [[70, '#fffaf0'], [51, '#ff4d25'], [31, '#ffbd3d'], [14, '#172034']]) {
+    g.fillStyle = fill; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+  }
+  g.restore();
+
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '900 82px "Arial Black", Impact, sans-serif';
+  g.lineWidth = 18; g.strokeStyle = '#000'; g.strokeText('NERF ARENA', 748, 205);
+  g.fillStyle = '#ff5a2f'; g.fillText('NERF ARENA', 748, 205);
+  g.font = '900 118px "Arial Black", Impact, sans-serif';
+  g.lineWidth = 22; g.strokeStyle = '#000'; g.strokeText('BLAST REVIVAL', 748, 310);
+  g.lineWidth = 7; g.strokeStyle = '#ff5a2f'; g.strokeText('BLAST REVIVAL', 748, 310);
+  g.fillStyle = '#fff8e7'; g.fillText('BLAST REVIVAL', 748, 310);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 16;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(29, 29 / 3),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.025, depthWrite: false }));
+  mesh.position.set(x, y, z); mesh.renderOrder = 3; mesh.name = 'atrium-hero-sign';
+  scene.add(mesh);
+}
+
 const GATE_FRAME_INDEX = { arena: 0, fortress: 1, asteroids: 2, canopy: 3, city: 4, sanctum: 5 };
 const gateFrameCache = {};
 function gateFrameTex(index) {
@@ -6788,7 +7331,7 @@ function portalMaterial(color) {
   });
 }
 
-function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
+function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0, parent = scene) {
   const material = portalMaterial(color);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
     material);
@@ -6797,7 +7340,7 @@ function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0) {
   m.position.set(x + nX * PORTAL_SURFACE_EPS, y, z + nZ * PORTAL_SURFACE_EPS);
   m.rotation.y = yaw;
   m.renderOrder = 2;
-  scene.add(m);
+  parent.add(m);
   world.anim.push((dt, t) => {
     material.uniforms.uTime.value = t;
   });
@@ -7484,7 +8027,7 @@ function gateBrickMaterial(id, color) {
   });
 }
 
-function addGateBrick(scene, world, id, color, x, y, z, w, h, d) {
+function addGateBrick(scene, world, id, color, x, y, z, w, h, d, parent = scene) {
   world.colliders.push({
     type: 'box',
     min: V(x - w / 2, y - h / 2, z - d / 2),
@@ -7493,30 +8036,30 @@ function addGateBrick(scene, world, id, color, x, y, z, w, h, d) {
   const brick = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), gateBrickMaterial(id, color));
   brick.position.set(x, y, z);
   brick.castShadow = brick.receiveShadow = true;
-  scene.add(brick);
+  parent.add(brick);
   return brick;
 }
 
-function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz) {
+function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz, baseY = 0, parent = scene) {
   const sideCenters = [-4, 4];
   const brickH = 1.55;
   for (const u of sideCenters) {
     for (let i = 0; i < 4; i++) {
-      const y = brickH / 2 + i * brickH;
-      if (horiz) addGateBrick(scene, world, id, color, px + u, y, pz, 1.6, brickH, 1.6);
-      else addGateBrick(scene, world, id, color, px, y, pz + u, 1.6, brickH, 1.6);
+      const y = baseY + brickH / 2 + i * brickH;
+      if (horiz) addGateBrick(scene, world, id, color, px + u, y, pz, 1.6, brickH, 1.6, parent);
+      else addGateBrick(scene, world, id, color, px, y, pz + u, 1.6, brickH, 1.6, parent);
     }
   }
-  const lintelY = 6.9;
+  const lintelY = baseY + 6.9;
   const lintelH = 1.4;
   for (const u of sideCenters) {
-    if (horiz) addGateBrick(scene, world, id, color, px + u, lintelY, pz, 1.6, lintelH, 1.6);
-    else addGateBrick(scene, world, id, color, px, lintelY, pz + u, 1.6, lintelH, 1.6);
+    if (horiz) addGateBrick(scene, world, id, color, px + u, lintelY, pz, 1.6, lintelH, 1.6, parent);
+    else addGateBrick(scene, world, id, color, px, lintelY, pz + u, 1.6, lintelH, 1.6, parent);
   }
   for (let i = 0; i < 4; i++) {
     const u = -2.4 + i * 1.6;
-    if (horiz) addGateBrick(scene, world, id, color, px + u, lintelY, pz, 1.6, lintelH, 1.6);
-    else addGateBrick(scene, world, id, color, px, lintelY, pz + u, 1.6, lintelH, 1.6);
+    if (horiz) addGateBrick(scene, world, id, color, px + u, lintelY, pz, 1.6, lintelH, 1.6, parent);
+    else addGateBrick(scene, world, id, color, px, lintelY, pz + u, 1.6, lintelH, 1.6, parent);
   }
 }
 
@@ -7533,68 +8076,26 @@ export function buildAtrium(scene) {
   addBox(scene, world, 0, 6, -49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
   addBox(scene, world, 0, 6, 49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
   addBox(scene, world, -33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
-  // east wall hides a doorway in the NE corner (z 40..44) behind a slab —
-  // slip around its north edge into the passage to the secret gate
-  addBox(scene, world, 33.5, 6, -4.75, 3, 12, 89.5, 0x6a5f88, { tex: 'neonwall', repeat: [11, 2] });
-  addBox(scene, world, 33.5, 6, 46.75, 3, 12, 5.5, 0x6a5f88, { tex: 'neonwall' });
-  addBox(scene, world, 33.5, 8.5, 42, 3, 7, 4, 0x6a5f88, { tex: 'neonwall' });     // lintel
-  addBox(scene, world, 31.7, 2.5, 40, 0.6, 5, 5.6, 0x6a5f88, { tex: 'neonwall' }); // concealer slab, back face flush with wall
-  addBox(scene, world, 33.5, -0.5, 42, 3, 1, 4, 0x3a3452, { tex: 'panel' });       // threshold owns only the wall thickness
-  // the passage: east hallway, then a leg north to the gate chamber
-  // hall pieces start at the outer wall face (x 35); the threshold ends there,
-  // so the floor planes meet edge-to-edge without coplanar overlap.
-  addBox(scene, world, 41.5, -0.5, 42, 13, 1, 8, 0x3a3452, { tex: 'panel' });
-  addBox(scene, world, 44, -0.5, 24, 8, 1, 28, 0x3a3452, { tex: 'panel' });
-  addBox(scene, world, 37.5, 3, 38.3, 5, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
-  addBox(scene, world, 41.5, 3, 45.7, 13, 6, 0.6, 0x4a4266, { tex: 'neonwall' });
-  addBox(scene, world, 47.7, 3, 28, 0.6, 6, 36, 0x4a4266, { tex: 'neonwall' });
-  addBox(scene, world, 40.3, 3, 24, 0.6, 6, 28, 0x4a4266, { tex: 'neonwall' });
-  addBox(scene, world, 44, 3, 10.3, 8, 6, 0.6, 0x4a4266, { tex: 'neonwall' });     // gate wall
-  addBox(scene, world, 41.5, 6.1, 42, 13, 0.6, 8, 0x3a3452, { tex: 'panel' });     // roofs
-  addBox(scene, world, 44, 6.1, 24, 8, 0.6, 28, 0x3a3452, { tex: 'panel' });
-  addMagicPortal(scene, world, 44, 3, 10.9, 7.95, 6.0, 0x8a5fff, 0);
-  const sancLight = new THREE.PointLight(0x8a5fff, 20, 16);
-  sancLight.position.set(44, 3, 14);
-  scene.add(sancLight);
+  // The former secret hallway is gone; the east wall is once again a complete
+  // atrium boundary. Secret-map discovery now happens above the fountain.
+  addBox(scene, world, 33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
 
-  // A second secret is inset into the same hidden passage as Prism Run.
-  // Its trigger hugs the east wall, so simply walking down the corridor does
-  // not enter it; the player has to notice the watching faces and approach.
-  addBloomFacePortal(scene, world, 47.34, 3, 27.2, 5.7, 5.45, -Math.PI / 2);
-  for (const [y, z, w, h, d] of [
-    [3, 24.05, 0.46, 6, 0.46],
-    [3, 30.35, 0.46, 6, 0.46],
-    [0.22, 27.2, 0.46, 0.44, 6.75],
-    [5.78, 27.2, 0.46, 0.44, 6.75],
-  ]) {
-    addBox(scene, world, 47.24, y, z, w, h, d, 0x91b91c, {
-      collide: false,
-      shadow: false,
-      emissive: 0x4d0a00,
-      emissiveIntensity: 0.32,
-    });
-  }
-  const bloomGateLight = new THREE.PointLight(0xcfff2c, 9, 15);
-  bloomGateLight.position.set(45.2, 3.2, 27.2);
-  scene.add(bloomGateLight);
-
-  // grass boulevard + fountain. End rim slabs own the corners; side slabs stop
-  // between them so their top faces never overlap and shimmer.
-  addBox(scene, world, 0, 0.06, 14, 12, 0.14, 52, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 9] });
-  addBox(scene, world, 0, 0.45, -22, 16, 0.9, 2, 0x555a74, { tex: 'panel' });   // pool rim
-  addBox(scene, world, 0, 0.45, -34, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
-  addBox(scene, world, -8, 0.45, -28, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
-  addBox(scene, world, 8, 0.45, -28, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
+  // Central fountain with matching lawn runs on both sides. End rim slabs own
+  // the corners; side slabs stop between them so their top faces never overlap.
+  addBox(scene, world, 0, 0.06, 25, 12, 0.14, 30, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 5] });
+  addBox(scene, world, 0, 0.06, -25, 12, 0.14, 30, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 5] });
+  addBox(scene, world, 0, 0.45, 6, 16, 0.9, 2, 0x555a74, { tex: 'panel' });   // pool rim
+  addBox(scene, world, 0, 0.45, -6, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
+  addBox(scene, world, -8, 0.45, 0, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
+  addBox(scene, world, 8, 0.45, 0, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
   addFittedWater(scene, world, {
-    minX: -7, maxX: 7, minZ: -33, maxZ: -23, y: 0.55,
+    minX: -7, maxX: 7, minZ: -5, maxZ: 5, y: 0.55,
   });
-  addBox(scene, world, 0, 1.6, -28, 0.7, 2.6, 0.7, 0x9fd8ff, { collide: false, shadow: false, emissive: 0x9fd8ff, emissiveIntensity: 1.2 }); // jet
-  const fLight = new THREE.PointLight(0x9fd8ff, 25, 24);
-  fLight.position.set(0, 3, -28);
-  scene.add(fLight);
+  const fountain = addAtriumFountain(scene, world, 0, 0);
 
-  // rooftop billboard above the north wall
-  makeSign(scene, 0, 15.5, -48.5, 26, '#ff4d2e', 'NERF ARENA BLAST REVIVAL');
+  // The atrium's visual anchor: a large two-tier arcade wordmark rather than a
+  // stretched version of the small utility sign component.
+  addAtriumHeroSign(scene, 0, 16.2, -48.5);
   addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
   addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
 
@@ -7604,11 +8105,11 @@ export function buildAtrium(scene) {
   const bays = [
     ['hall', 'HALL OF FAME', 0xffd45a, 'n', 0, 'hall'],
     ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 24, 'map'],
-    ['asteroids', 'ASTEROID BELT', 0x8fb8d8, 'w', 0, 'map'],
-    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', -24, 'map'],
-    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 24, 'map'],
-    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', 0, 'map'],
-    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', -24, 'map'],
+    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', 0, 'map'],
+    ['tidebreaker', 'TIDEBREAKER', 0x35b9d0, 'w', -24, 'map'],
+    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', 24, 'map'],
+    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 0, 'map'],
+    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -24, 'map'],
     ['multiplayer', 'MULTIPLAYER', 0x30e0ff, 's', 0, 'multiplayer'],
   ];
   for (const [id, name, color, wall, off, kind] of bays) {
@@ -7623,10 +8124,12 @@ export function buildAtrium(scene) {
       addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, false);
       addMagicPortal(scene, world, px + sgn * 0.82, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
     }
-    // sign panel flat on the wall above the gate (inner faces: z ±48, x ±32)
-    makeSign(scene, horiz ? px : sgn * 31.9, 10.2, horiz ? sgn * 47.95 : pz, 13,
-      '#' + color.toString(16).padStart(6, '0'), name,
-      horiz ? (sgn === -1 ? 0 : Math.PI) : -sgn * Math.PI / 2);
+    // Oversized attraction marquees echo the original Arena Blast atrium.
+    // Pull them slightly into the room so their transparent wings clear the wall.
+    addAtriumMarquee(scene, id, name, color,
+      horiz ? px : sgn * 31.86, 10.45, horiz ? sgn * 47.9 : pz,
+      horiz ? (sgn === -1 ? 0 : Math.PI) : -sgn * Math.PI / 2,
+      horiz ? 16.5 : 15.5);
     const L = new THREE.PointLight(color, 26, 20);
     L.position.set(horiz ? px : px - sgn * 2.5, 4.5, horiz ? pz - sgn * 2.5 : pz);
     scene.add(L);
@@ -7635,12 +8138,14 @@ export function buildAtrium(scene) {
     else if (kind === 'multiplayer') world.multiplayerPortal = trigger;
     else world.portals.push({ ...trigger, map: id, name });
   }
-  world.portals.push({ x: 44, z: 11.5, map: 'prism', name: '???' });
-  world.portals.push({ x: 46.7, z: 27.2, radius: 1.35, map: 'bloom', name: '???' });
+  addAtriumSecretObservatory(scene, world, fountain);
 
-  // flower borders flanking the boulevard
-  addBox(scene, world, -8.5, 0.036, 14, 5, 0.07, 52, 0xd8a8c8, { tex: 'flowers', repeat: [1, 10] });
-  addBox(scene, world, 8.5, 0.036, 14, 5, 0.07, 52, 0xd8a8c8, { tex: 'flowers', repeat: [1, 10] });
+  // Flower borders flank both halves of the boulevard without running beneath
+  // the centered fountain.
+  for (const x of [-8.5, 8.5]) {
+    addBox(scene, world, x, 0.036, 25, 5, 0.07, 30, 0xd8a8c8, { tex: 'flowers', repeat: [1, 5] });
+    addBox(scene, world, x, 0.036, -25, 5, 0.07, 30, 0xd8a8c8, { tex: 'flowers', repeat: [1, 5] });
+  }
 
   // controls board to the left of spawn (replaces the old overlay text)
   {
@@ -7678,16 +8183,8 @@ export function buildAtrium(scene) {
   addBox(scene, world, 11, 1.6, 36.6, 0.3, 3.2, 0.3, 0x3a3452); // sign post at the pad's back edge
   world.setModeSign = makeSign(scene, 11, 3.6, 36.8, 9, '#30e0ff', 'MODE: FREE FOR ALL', 0, true);
 
-  // a little clutter so it feels lived-in
-  addBox(scene, world, -14, 1.2, 30, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
-  addBox(scene, world, -16.6, 1.2, 31, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
-  addBox(scene, world, -15, 3.6, 30.4, 2.4, 2.4, 2.4, 0xb0763a, { tex: 'crate' });
   addDecal(scene, 'poster1', -24, 6, -47.94, 8, 0);
   addDecal(scene, 'target', 27, 6, -47.94, 8, 0);
-  // Keep the side posters in the open end bays rather than behind the newly
-  // relocated Fortress and Blast gates.
-  addDecal(scene, 'hazard', -31.94, 6, 38, 8, Math.PI / 2);
-  addDecal(scene, 'hazard', 31.94, 6, -38, 8, -Math.PI / 2);
   // Mount the north-wall glow strips above the poster line, close to the wall,
   // so they frame the Hall of Fame without washing across either poster.
   for (const [x, z, c] of [[-19, -47.78, 0xff40a0], [19, -47.78, 0x30e0ff]]) {
@@ -7709,6 +8206,7 @@ const HALL_MAP_NAMES = {
   canopy: 'CANOPY',
   city: 'NEON HEIGHTS',
   sanctum: 'THE LABYRINTH',
+  tidebreaker: 'TIDEBREAKER',
   prism: 'PRISM RUN',
   olympus: 'OLYMPUS MONS',
 };
@@ -7911,6 +8409,76 @@ function addHallColumn(scene, world, x, z, height = 84) {
   world.colliders.push({ type: 'box', min: V(x - 1.05, 0, z - 1.05), max: V(x + 1.05, height + 0.6, z + 1.05) });
 }
 
+function addHallPoolFountain(scene, world, x, z, scale = 1, phase = 0) {
+  const root = new THREE.Group();
+  root.position.set(x, 0, z);
+  root.scale.setScalar(scale);
+  root.name = 'hall-of-fame-fountain';
+  scene.add(root);
+
+  const marble = new THREE.MeshStandardMaterial({ color: 0xfff1cf, roughness: 0.42, metalness: 0.05 });
+  const gold = new THREE.MeshStandardMaterial({
+    color: 0xd5a72f, emissive: 0x5b3500, emissiveIntensity: 0.24,
+    roughness: 0.26, metalness: 0.7,
+  });
+  const waterSurface = new THREE.MeshStandardMaterial({
+    color: 0x87e9ff, emissive: 0x0b6f98, emissiveIntensity: 0.5,
+    transparent: true, opacity: 0.82, roughness: 0.08, depthWrite: false,
+  });
+  const waterJets = [];
+  const add = (geometry, material, y, rotateX = 0) => {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.y = y;
+    mesh.rotation.x = rotateX;
+    mesh.castShadow = mesh.receiveShadow = true;
+    root.add(mesh);
+    return mesh;
+  };
+
+  add(new THREE.CylinderGeometry(0.78, 0.98, 0.32, 16), gold, 0.42);
+  add(new THREE.CylinderGeometry(0.3, 0.46, 1.18, 14), marble, 1.12);
+  add(new THREE.CylinderGeometry(1.02, 0.34, 0.34, 24), gold, 1.86);
+  add(new THREE.TorusGeometry(0.95, 0.1, 7, 28), gold, 2.04, Math.PI / 2);
+  add(new THREE.CylinderGeometry(0.82, 0.82, 0.045, 24), waterSurface, 2.05);
+  add(new THREE.CylinderGeometry(0.16, 0.24, 0.72, 12), marble, 2.38);
+  const finial = add(new THREE.OctahedronGeometry(0.27, 0), gold, 2.82);
+
+  const jetMaterial = () => new THREE.MeshBasicMaterial({
+    color: 0xc8f5ff, transparent: true, opacity: 0.78,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + Math.PI / 4;
+    const radial = V(Math.cos(a), 0, Math.sin(a));
+    const curve = new THREE.QuadraticBezierCurve3(
+      radial.clone().multiplyScalar(0.7).setY(2.14),
+      radial.clone().multiplyScalar(1.12).setY(2.9),
+      radial.clone().multiplyScalar(1.65).setY(0.35),
+    );
+    const jet = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.045, 6, false), jetMaterial());
+    jet.renderOrder = 4;
+    root.add(jet);
+    waterJets.push(jet);
+  }
+  const plumeCurve = new THREE.CatmullRomCurve3([
+    V(0, 2.95, 0), V(0.035, 3.48, 0), V(-0.025, 3.95, 0), V(0, 4.26, 0),
+  ]);
+  const plume = new THREE.Mesh(new THREE.TubeGeometry(plumeCurve, 18, 0.06, 6, false), jetMaterial());
+  plume.renderOrder = 4;
+  root.add(plume);
+  waterJets.push(plume);
+
+  const light = new THREE.PointLight(0x8de8ff, 8, 16);
+  light.position.set(0, 2.4, 0);
+  root.add(light);
+  world.anim.push((dt, t) => {
+    finial.rotation.y += dt * 0.55;
+    waterJets.forEach((jet, i) => {
+      jet.material.opacity = 0.68 + Math.sin(t * 3.1 + phase + i * 0.7) * 0.1;
+    });
+  });
+}
+
 function addHallReflectingPool(scene, world, x, z, w, d) {
   addBox(scene, world, x, 0.06, z, w + 0.8, 0.12, d + 0.8, 0xb88b2c, { collide: false, emissive: 0x543500, emissiveIntensity: 0.12 });
   addBox(scene, world, x, 0.13, z, w, 0.16, d, 0x173e55, { collide: false, emissive: 0x08263a, emissiveIntensity: 0.22 });
@@ -7923,22 +8491,9 @@ function addHallReflectingPool(scene, world, x, z, w, d) {
   for (const end of [-1, 1]) {
     addBox(scene, world, x, 0.24, z + end * (d / 2 + 0.24), w + 0.96, 0.48, 0.48, 0xd5a72f, { collide: false });
   }
-  for (const [offset, height] of [[-50, 3.2], [0, 4.2], [50, 3.2]]) {
-    const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.16, height, 10), new THREE.MeshBasicMaterial({
-      color: 0xc8f5ff,
-      transparent: true,
-      opacity: 0.76,
-    }));
-    jet.position.set(x, 0.24 + height / 2, z + offset);
-    scene.add(jet);
-    const light = new THREE.PointLight(0x8de8ff, 9, 18);
-    light.position.set(x, 1.2, z + offset);
-    scene.add(light);
-    world.anim.push((dt, t) => {
-      jet.scale.y = 0.84 + Math.sin(t * 2.2 + offset) * 0.12;
-      jet.material.opacity = 0.64 + Math.sin(t * 3.1 + offset) * 0.12;
-    });
-  }
+  addHallPoolFountain(scene, world, x, z - 50, 0.92, 0);
+  addHallPoolFountain(scene, world, x, z, 1.16, 2.1);
+  addHallPoolFountain(scene, world, x, z + 50, 0.92, 4.2);
 }
 
 function addHallGoldPowerupOrnament(scene) {
@@ -8064,9 +8619,12 @@ export function buildHallOfFame(scene) {
   });
 
   // Return portal at the entrance, behind the player when they arrive.
-  addBox(scene, world, 0, 5.2, 110.8, 15, 10.4, 1.1, 0xd0a338, { emissive: 0x6b4700, emissiveIntensity: 0.22 });
-  addMagicPortal(scene, world, 0, 5.2, 110.15, 11.2, 8.8, 0x73dcff, Math.PI);
-  makeSign(scene, 0, 14.5, 110.1, 22, '#73dcff', 'RETURN TO THE ATRIUM', Math.PI);
+  // Match the atrium-side Hall of Fame entrance while retaining the blue
+  // return portal, so both ends read as the same doorway.
+  addAtriumGateBrickFrame(scene, world, 'arena', 0xffd45a, 0, 110.8, true);
+  addMagicPortal(scene, world, 0, 3.7, 110.15, 7.8, 7.8, 0x73dcff, Math.PI);
+  addAtriumMarquee(scene, 'hall', 'RETURN TO ATRIUM', 0xffd45a,
+    0, 10.45, 110.1, Math.PI, 16.5);
   addHallGoldPowerupOrnament(scene);
   world.hallExitPortal = { x: 0, z: 106.5 };
 
@@ -9288,6 +9846,722 @@ function addOlympusMountain(scene, world) {
 // Meteors need the highest walkable surface under a random X/Z position. The
 // Olympus palace has a large collider set, so indexing those static colliders
 // at map build time avoids a full-map scan when a meteor is launched.
+/* ================= MAP 7 — TIDEBREAKER (storm-lashed offshore platform) =================
+   A low processing deck sits between two raised evacuation routes. The warning
+   sirens are gameplay: a modeled surge crosses south-to-north, floods the low
+   deck, and then drains back into the sea. Ocean, flood, rain, spray, crane,
+   and beacon animation all scale through the map's visual-quality hook. */
+function buildTidebreaker(scene) {
+  const world = newWorld({
+    killY: -18,
+    waypointLinkDist: 23,
+    waypointLinkDy: 4.8,
+    waypointLinkClearance: 0.45,
+    toneMappingExposure: 0.94,
+  });
+  scene.background = new THREE.Color(0x172531);
+  scene.fog = new THREE.Fog(0x172531, 88, 330);
+
+  const sky = addStormCloudDome(scene);
+  sky.material.opacity = 0.96;
+  scene.add(new THREE.HemisphereLight(0xa7c8d7, 0x101820, 1.55));
+  scene.add(new THREE.AmbientLight(0xb8cad2, 0.24));
+  const stormLight = new THREE.DirectionalLight(0xd9e7ec, 2.25);
+  stormLight.position.set(-72, 115, -48);
+  stormLight.castShadow = true;
+  stormLight.shadow.mapSize.set(1024, 1024);
+  Object.assign(stormLight.shadow.camera, {
+    left: -105, right: 105, top: 105, bottom: -105, near: 18, far: 300,
+  });
+  stormLight.shadow.bias = -0.0002;
+  stormLight.shadow.normalBias = 0.6;
+  scene.add(stormLight, stormLight.target);
+
+  const essential = new THREE.Group();
+  const standard = new THREE.Group();
+  const high = new THREE.Group();
+  essential.name = 'tidebreaker-essential-presentation';
+  standard.name = 'tidebreaker-standard-presentation';
+  high.name = 'tidebreaker-high-presentation';
+  scene.add(essential, standard, high);
+
+  const steel = 0xffffff;
+  const darkSteel = 0x26323a;
+  const railSteel = 0xb5c2c7;
+  const emergencyOrange = 0xffffff;
+  const wetDeck = { tex: 'tidebreaker-deck', roughness: 0.43, metalness: 0.38, envMapIntensity: 0.92 };
+  const orangeSteel = { tex: 'tidebreaker-orange-steel', roughness: 0.58, metalness: 0.32, envMapIntensity: 0.72 };
+
+  // The ocean is three interchangeable meshes, never three simultaneous draw
+  // calls. Vertex displacement combines directional swells with short chop;
+  // the fragment normal comes from the deformed surface itself.
+  const waterVertex = `
+    #include <fog_pars_vertex>
+    uniform float uTime;
+    uniform float uAmplitude;
+    uniform float uChop;
+    varying vec3 vWorldPosition;
+    varying float vElevation;
+    void main() {
+      vec3 p = position;
+      float h = sin(p.x * 0.038 + p.y * 0.021 + uTime * 0.92) * uAmplitude;
+      h += sin(p.x * -0.021 + p.y * 0.054 + uTime * 1.28) * uAmplitude * 0.54;
+      h += sin(p.x * 0.112 + p.y * -0.083 + uTime * 2.05) * uChop;
+      h += sin((p.x + p.y) * 0.19 - uTime * 2.75) * uChop * 0.34;
+      p.z += h;
+      vec4 worldPosition = modelMatrix * vec4(p, 1.0);
+      vWorldPosition = worldPosition.xyz;
+      vElevation = h;
+      vec4 mvPosition = viewMatrix * worldPosition;
+      gl_Position = projectionMatrix * mvPosition;
+      #include <fog_vertex>
+    }
+  `;
+  const waterFragment = `
+    #include <fog_pars_fragment>
+    uniform vec3 uDeep;
+    uniform vec3 uShallow;
+    uniform float uOpacity;
+    uniform float uFoamLine;
+    varying vec3 vWorldPosition;
+    varying float vElevation;
+    void main() {
+      vec3 dx = dFdx(vWorldPosition);
+      vec3 dy = dFdy(vWorldPosition);
+      vec3 normal = normalize(cross(dx, dy));
+      if (normal.y < 0.0) normal *= -1.0;
+      vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+      float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.35);
+      float light = max(dot(normal, normalize(vec3(-0.35, 0.86, -0.22))), 0.0);
+      vec3 color = mix(uDeep, uShallow, 0.24 + light * 0.4 + fresnel * 0.28);
+      float foamBreakup = sin(vWorldPosition.x * 0.63 + vWorldPosition.z * 0.27) * 0.11
+        + sin(vWorldPosition.x * -0.31 + vWorldPosition.z * 0.74) * 0.07;
+      float foam = smoothstep(uFoamLine + foamBreakup, uFoamLine + 0.18 + foamBreakup, vElevation);
+      color = mix(color, vec3(0.72, 0.88, 0.91), foam * 0.1);
+      gl_FragColor = vec4(color, uOpacity);
+      #include <fog_fragment>
+    }
+  `;
+  const waterMaterial = (deep, shallow, amplitude, chop, opacity, foamLine) => new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.fog,
+      {
+        uTime: { value: 0 },
+        uAmplitude: { value: amplitude },
+        uChop: { value: chop },
+        uDeep: { value: new THREE.Color(deep) },
+        uShallow: { value: new THREE.Color(shallow) },
+        uOpacity: { value: opacity },
+        uFoamLine: { value: foamLine },
+      },
+    ]),
+    vertexShader: waterVertex,
+    fragmentShader: waterFragment,
+    transparent: opacity < 1,
+    depthWrite: opacity >= 0.95,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+
+  const oceanMat = waterMaterial(0x061c29, 0x1b5a6c, 1.42, 0.34, 1, 1.72);
+  const oceanMeshes = [
+    new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 38, 38), oceanMat),
+    new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 72, 72), oceanMat),
+    new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 124, 124), oceanMat),
+  ];
+  for (const mesh of oceanMeshes) {
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = -7.25;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
+
+  // Heavy legs, diagonal braces, and caissons establish the platform above the
+  // animated sea without turning under-map decoration into collision clutter.
+  const supportMat = mat(0x56636a, { roughness: 0.64, metalness: 0.52 });
+  const supportGeometries = [];
+  const cylinderBetween = (start, end, radius, radial = 8) => {
+    const delta = end.clone().sub(start);
+    const geo = new THREE.CylinderGeometry(radius, radius, delta.length(), radial, 1);
+    geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), delta.clone().normalize()));
+    geo.translate((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+    return geo;
+  };
+  for (const x of [-58, -20, 20, 58]) for (const z of [-26, 26]) {
+    supportGeometries.push(cylinderBetween(V(x, -13, z), V(x, 0, z), 1.1, 10));
+    const braceX = x < 0 ? x + 9 : x - 9;
+    supportGeometries.push(cylinderBetween(V(x, -11.5, z), V(braceX, -0.6, z), 0.34, 6));
+  }
+  const supports = new THREE.Mesh(mergeGeometries(supportGeometries, false), supportMat);
+  supports.castShadow = supports.receiveShadow = true;
+  essential.add(supports);
+  supportGeometries.forEach(g => g.dispose());
+
+  // Main low deck, evacuation catwalks, east operations roof, and west helipad.
+  addBox(scene, world, 0, -0.55, 0, 124, 1.1, 66, steel, { ...wetDeck, debugName: 'processing deck' });
+  addBox(scene, world, 0, 7.5, -35, 132, 1, 8, steel, { ...wetDeck, debugName: 'north evacuation deck' });
+  addBox(scene, world, 0, 7.5, 35, 132, 1, 8, steel, { ...wetDeck, debugName: 'south evacuation deck' });
+  addBox(scene, world, 49, 7.5, 0, 30, 1, 62, steel, { ...wetDeck, debugName: 'operations roof' });
+  addBox(scene, world, -49, 13.5, 0, 34, 1, 34, steel, { ...wetDeck, debugName: 'helipad deck' });
+
+  // Broad, honest ramps make every tier navigable by players and bots.
+  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: -30, maxZ: -18, h0: 8, h1: 0,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
+  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: 18, maxZ: 30, h0: 0, h1: 8,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
+  addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: -31, maxZ: -17, h0: 8, h1: 14,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
+  addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: 17, maxZ: 31, h0: 14, h1: 8,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
+
+  // Rail runs have actual posts and two rails, but share the merged static
+  // steel material. Openings line up with ramps rather than being decorative.
+  const addRailRun = (axis, fixed, y, start, end, openings = []) => {
+    const openAt = u => openings.some(([a, b]) => u >= a && u <= b);
+    for (let u = start; u <= end + 0.01; u += 4) {
+      if (openAt(u)) continue;
+      const x = axis === 'x' ? u : fixed;
+      const z = axis === 'x' ? fixed : u;
+      addBox(scene, world, x, y + 1.05, z, 0.16, 2.1, 0.16, railSteel, {
+        roughness: 0.42, metalness: 0.62, debugName: 'rail post',
+      });
+    }
+    let runStart = start;
+    const segments = [...openings].sort((a, b) => a[0] - b[0]);
+    for (const [a, b] of [...segments, [end, end]]) {
+      const stop = Math.min(end, a);
+      const len = stop - runStart;
+      if (len > 0.3) for (const h of [0.72, 1.65]) {
+        addBox(scene, world,
+          axis === 'x' ? (runStart + stop) / 2 : fixed,
+          y + h,
+          axis === 'x' ? fixed : (runStart + stop) / 2,
+          axis === 'x' ? len : 0.13, 0.13, axis === 'x' ? 0.13 : len,
+          railSteel, { roughness: 0.42, metalness: 0.62, debugName: 'rail beam' });
+      }
+      runStart = Math.max(runStart, b);
+    }
+  };
+  addRailRun('x', -38.65, 8, -66, 66, [[-59, -47], [-7, 7]]);
+  addRailRun('x', 38.65, 8, -66, 66, [[-59, -47], [-7, 7]]);
+  addRailRun('z', -66.2, 8, -38, 38, [[-31, 31]]);
+  addRailRun('z', 64.2, 8, -38, 38, [[-29, 29]]);
+  addRailRun('x', -17.4, 14, -66, -32, []);
+  addRailRun('x', 17.4, 14, -66, -32, []);
+  addRailRun('z', -66.4, 14, -17, 17, []);
+
+  // Operations block: floodable machinery rooms below, a protected combat
+  // roof above, and a glazed control cabin instead of an empty box landmark.
+  addBox(scene, world, 63.4, 3.8, 0, 1.2, 7.6, 62, emergencyOrange, { ...orangeSteel, debugName: 'east outer wall' });
+  for (const z of [-25, 25]) {
+    addBox(scene, world, 49, 3.8, z, 28, 7.6, 1.2, emergencyOrange, { ...orangeSteel, debugName: 'operations end wall' });
+  }
+  for (const z of [-14.5, 14.5]) {
+    addBox(scene, world, 35.2, 3.8, z, 1.2, 7.6, 19, emergencyOrange, { ...orangeSteel, debugName: 'operations doorway wall' });
+  }
+  // A painted fascia and external stiffeners keep the broad roof silhouette
+  // from reading as a featureless dark slab when viewed from the ocean.
+  for (const z of [-31.06, 31.06]) addBox(scene, world, 49, 7.48, z, 30, 0.9, 0.12, emergencyOrange, {
+    ...orangeSteel, collide: false, shadow: false, debugName: 'operations roof fascia',
+  });
+  for (const x of [33.94, 64.06]) addBox(scene, world, x, 7.48, 0, 0.12, 0.9, 62, emergencyOrange, {
+    ...orangeSteel, collide: false, shadow: false, debugName: 'operations roof fascia',
+  });
+  for (let z = -27; z <= 27; z += 6) addBox(scene, world, 64.03, 3.8, z, 0.14, 6.5, 0.32, railSteel, {
+    collide: false, roughness: 0.42, metalness: 0.62, debugName: 'operations wall stiffener',
+  });
+  addBox(scene, world, 52, 11.2, 0, 18, 6.4, 15, emergencyOrange, { ...orangeSteel, debugName: 'control cabin' });
+  const windowMaterial = new THREE.MeshStandardMaterial({
+    color: 0x244b5f, emissive: 0x0c3146, emissiveIntensity: 0.42,
+    roughness: 0.12, metalness: 0.12, transparent: true, opacity: 0.78,
+  });
+  for (const z of [-7.56, 7.56]) {
+    const windows = new THREE.Mesh(new THREE.PlaneGeometry(12, 2.6), windowMaterial);
+    windows.position.set(52, 11.7, z);
+    windows.rotation.y = z > 0 ? 0 : Math.PI;
+    essential.add(windows);
+  }
+  addArenaSign(essential, 'TIDEBREAKER // OPS', 52, 15.1, 7.62, 13, 2.2, 0, '#ff7a2d');
+
+  // Cargo containers use corrugated ribs, end doors, locking bars, and corner
+  // castings. Colliders remain a single box apiece; the visible detail merges.
+  const addContainer = (x, y, z, yaw = 0, color = 0xffffff) => {
+    const alongX = Math.abs(Math.sin(yaw)) < 0.5;
+    const w = alongX ? 12 : 3.4;
+    const d = alongX ? 3.4 : 12;
+    addBox(scene, world, x, y + 1.55, z, w, 3.1, d, color, { ...orangeSteel, debugName: 'cargo container' });
+    const ribColor = 0x35434a;
+    for (let u = -5; u <= 5; u += 1.25) {
+      addBox(scene, world,
+        x + (alongX ? u : -1.74), y + 1.55, z + (alongX ? -1.74 : u),
+        alongX ? 0.12 : 0.11, 2.65, alongX ? 0.11 : 0.12,
+        ribColor, { collide: false, shadow: false, roughness: 0.55, metalness: 0.48, debugName: 'container rib' });
+    }
+    const end = alongX ? x + 6.04 : z + 6.04;
+    for (const side of [-0.72, 0.72]) {
+      addBox(scene, world,
+        alongX ? end : x + side, y + 1.55, alongX ? z + side : end,
+        alongX ? 0.1 : 0.09, 2.7, alongX ? 0.09 : 0.1,
+        railSteel, { collide: false, shadow: false, metalness: 0.62, debugName: 'container locking bar' });
+    }
+  };
+  addContainer(-23, 0, -12, 0);
+  addContainer(-28, 0, 9, 0);
+  addContainer(-8, 0, 10, Math.PI / 2);
+  addContainer(12, 0, -11, Math.PI / 2);
+  addContainer(22, 0, 11, 0);
+
+  // Cylindrical separators, pressure rings, manifolds, and bent pipe runs sell
+  // the processing deck while keeping the center lanes readable.
+  const tankMat = mat(0xaebbc0, { roughness: 0.38, metalness: 0.62 });
+  for (const [x, z, r, h] of [[48, -14, 2.7, 5.2], [55, -14, 2.2, 4.2], [49, 14, 2.4, 4.8]]) {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.03, h, 18, 1), tankMat);
+    tank.position.set(x, h / 2, z);
+    tank.castShadow = tank.receiveShadow = true;
+    standard.add(tank);
+    world.colliders.push({ type: 'box', min: V(x - r, 0, z - r), max: V(x + r, h, z + r) });
+    for (const ringY of [0.65, h - 0.65]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r + 0.06, 0.11, 6, 24), tankMat);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(x, ringY, z);
+      standard.add(ring);
+    }
+  }
+  const pipeGeometries = [];
+  for (const points of [
+    [V(41, 1.0, -18), V(41, 2.2, -8), V(34, 2.2, -2), V(26, 1.0, -2)],
+    [V(42, 0.8, 18), V(36, 2.8, 18), V(30, 2.8, 13), V(26, 1.1, 13)],
+  ]) pipeGeometries.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 28, 0.32, 7, false));
+  const pipes = new THREE.Mesh(mergeGeometries(pipeGeometries, false), mat(0xe5c15a, {
+    roughness: 0.42, metalness: 0.58,
+  }));
+  pipes.castShadow = true;
+  standard.add(pipes);
+  pipeGeometries.forEach(g => g.dispose());
+
+  // The crane is a real truss silhouette with braced tower, operator cab,
+  // trolley, cable, hook, and a suspended rescue pallet that moves subtly.
+  const craneGeometries = [];
+  const craneBeam = (a, b, r = 0.22) => craneGeometries.push(cylinderBetween(a, b, r, 6));
+  const craneX = 6, craneZ = 5;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) craneBeam(V(craneX + sx * 1.5, 0, craneZ + sz * 1.5), V(craneX + sx * 1.05, 24, craneZ + sz * 1.05), 0.34);
+  for (let y = 2; y <= 22; y += 4) {
+    craneBeam(V(craneX - 1.4 + y * 0.015, y, craneZ - 1.4 + y * 0.015), V(craneX + 1.4 - y * 0.015, y + 3.2, craneZ - 1.4 + y * 0.015), 0.16);
+    craneBeam(V(craneX + 1.4 - y * 0.015, y, craneZ + 1.4 - y * 0.015), V(craneX - 1.4 + y * 0.015, y + 3.2, craneZ + 1.4 - y * 0.015), 0.16);
+  }
+  for (const zOff of [-1.05, 1.05]) {
+    craneBeam(V(craneX - 19, 24, craneZ + zOff), V(craneX + 31, 24, craneZ + zOff), 0.3);
+    craneBeam(V(craneX - 19, 24, craneZ + zOff), V(craneX + 9, 31, craneZ + zOff), 0.24);
+    craneBeam(V(craneX + 9, 31, craneZ + zOff), V(craneX + 31, 24, craneZ + zOff), 0.24);
+    for (let x = craneX - 17; x < craneX + 30; x += 5) {
+      craneBeam(V(x, 24, craneZ + zOff), V(x + 5, 25.25 + Math.sin((x - craneX) * 0.1) * 1.8, craneZ + zOff), 0.12);
+    }
+  }
+  const crane = new THREE.Mesh(mergeGeometries(craneGeometries, false), mat(0xffffff, orangeSteel));
+  crane.castShadow = crane.receiveShadow = true;
+  essential.add(crane);
+  craneGeometries.forEach(g => g.dispose());
+  const craneCab = new THREE.Mesh(new THREE.BoxGeometry(5.2, 3.8, 4.4), mat(0xffffff, orangeSteel));
+  craneCab.position.set(craneX + 4.6, 25.4, craneZ);
+  essential.add(craneCab);
+  const cabGlass = new THREE.Mesh(new THREE.PlaneGeometry(3.1, 1.55), windowMaterial);
+  cabGlass.position.set(craneX + 7.22, 25.7, craneZ);
+  cabGlass.rotation.y = Math.PI / 2;
+  essential.add(cabGlass);
+  const trolley = new THREE.Group();
+  trolley.position.set(craneX + 21, 23.4, craneZ);
+  const trolleyBody = new THREE.Mesh(new THREE.BoxGeometry(2.7, 1.2, 3.2), mat(0x343d42, { metalness: 0.7, roughness: 0.38 }));
+  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 12.5, 6), mat(0x14191c, { metalness: 0.8, roughness: 0.4 }));
+  cable.position.y = -6.6;
+  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.13, 7, 16, Math.PI * 1.55), mat(0xd2a43e, { metalness: 0.62, roughness: 0.42 }));
+  hook.position.y = -13;
+  hook.rotation.z = Math.PI / 2;
+  trolley.add(trolleyBody, cable, hook);
+  high.add(trolley);
+
+  // Enclosed orange lifeboats are layered capsules with glazing, keel, racks,
+  // and davit arms; they read as purpose-built safety equipment at a glance.
+  const lifeboats = [];
+  for (const [x, z, yaw] of [[-26, -30.2, 0], [21, 30.2, Math.PI]]) {
+    const boat = new THREE.Group();
+    boat.position.set(x, 10.7, z);
+    boat.rotation.y = yaw;
+    const hull = new THREE.Mesh(new THREE.CapsuleGeometry(1.75, 6.2, 6, 12), mat(0xffffff, orangeSteel));
+    hull.rotation.z = Math.PI / 2;
+    hull.scale.set(1, 1, 0.82);
+    const keel = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.35, 0.32), mat(0x303a40, { metalness: 0.52, roughness: 0.5 }));
+    keel.position.y = -1.15;
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.72, 2.78), windowMaterial);
+    glass.position.y = 0.72;
+    boat.add(hull, keel, glass);
+    for (const sx of [-4.6, 4.6]) {
+      const davit = new THREE.Mesh(cylinderBetween(V(sx, -2.6, 0), V(sx, 2.8, 0), 0.15, 7), mat(0xb7c2c7, { metalness: 0.62, roughness: 0.42 }));
+      boat.add(davit);
+    }
+    standard.add(boat);
+    lifeboats.push(boat);
+  }
+
+  // Helipad paint is a surface layer above the generated tread, not a second
+  // coplanar slab. Concentric rings and spokes stay crisp at every tier.
+  const helipad = new THREE.Group();
+  helipad.position.set(-49, 14.04, 0);
+  const padDisc = new THREE.Mesh(new THREE.CircleGeometry(14.7, 64), new THREE.MeshBasicMaterial({ color: 0x1e3138, ...DECOR_DEPTH_BIAS }));
+  padDisc.rotation.x = -Math.PI / 2;
+  const padRing = new THREE.Mesh(new THREE.RingGeometry(11.8, 12.45, 64), new THREE.MeshBasicMaterial({ color: 0xffc84a, side: THREE.DoubleSide, ...DECOR_DEPTH_BIAS }));
+  padRing.rotation.x = -Math.PI / 2;
+  padRing.position.y = 0.025;
+  helipad.add(padDisc, padRing);
+  for (const x of [-3.9, 3.9]) {
+    const stroke = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.04, 9.8), new THREE.MeshBasicMaterial({ color: 0xf0eadb }));
+    stroke.position.set(x, 0.06, 0);
+    helipad.add(stroke);
+  }
+  const cross = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.04, 1.25), new THREE.MeshBasicMaterial({ color: 0xf0eadb }));
+  cross.position.y = 0.06;
+  helipad.add(cross);
+  essential.add(helipad);
+
+  // Warning beacons: emissive housings are always present; point-light bloom
+  // and rotating volumetric cones are reserved for medium/high tiers.
+  const beaconLenses = [];
+  const beaconLights = [];
+  const beaconCones = [];
+  for (const [x, y, z] of [[-8, 10.2, -35], [8, 10.2, 35], [34, 10.2, -35], [34, 10.2, 35]]) {
+    addBox(scene, world, x, y - 1.1, z, 0.32, 2.2, 0.32, darkSteel, { collide: false, metalness: 0.62, debugName: 'warning beacon mast' });
+    const lensMat = new THREE.MeshBasicMaterial({ color: 0x280806, toneMapped: false });
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.42, 0.62, 12), lensMat);
+    lens.position.set(x, y + 0.28, z);
+    essential.add(lens);
+    beaconLenses.push(lens);
+    const light = new THREE.PointLight(0xff3c18, 0, 19);
+    light.position.set(x, y + 0.25, z);
+    standard.add(light);
+    beaconLights.push(light);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(2.7, 12, 18, 1, true), new THREE.MeshBasicMaterial({
+      color: 0xff4b26, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+    }));
+    cone.position.set(x, y + 5.8, z);
+    cone.rotation.z = Math.PI / 2;
+    high.add(cone);
+    beaconCones.push(cone);
+  }
+
+  // Flood plane and the breaker are separate animated surfaces. The breaker
+  // curls forward through an actual grid; it is never a translated wall box.
+  const floodMat = waterMaterial(0x0a3242, 0x3e8390, 0.17, 0.065, 0.68, 0.31);
+  floodMat.depthWrite = false;
+  const floodMesh = new THREE.Mesh(new THREE.PlaneGeometry(132, 72, 56, 30), floodMat);
+  floodMesh.rotation.x = -Math.PI / 2;
+  floodMesh.position.y = -4.8;
+  floodMesh.renderOrder = 3;
+  essential.add(floodMesh);
+  const floodZone = {
+    minX: -62, maxX: 62, minZ: -33, maxZ: 33,
+    surfaceY: -4.8, bottomY: -2.4,
+  };
+  world.waterZones = [floodZone];
+
+  const breakerCols = 88;
+  const breakerRows = 12;
+  const breakerGeometry = new THREE.PlaneGeometry(1, 1, breakerCols, breakerRows);
+  const breakerPositions = breakerGeometry.attributes.position;
+  const breakerMaterial = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uOpacity;
+      varying vec2 vUv;
+      void main() {
+        float waveHeight = 1.0 - vUv.y;
+        float crest = smoothstep(0.67, 0.96, waveHeight);
+        float ribbons = sin(vUv.x * 105.0 + uTime * 4.2) * 0.06 + sin(vUv.y * 31.0 - uTime * 3.0) * 0.05;
+        vec3 deep = vec3(0.025, 0.22, 0.29);
+        vec3 pale = vec3(0.68, 0.9, 0.93);
+        float foamRag = sin(vUv.x * 147.0 - uTime * 5.1) * 0.045 + sin(vUv.x * 61.0 + uTime * 2.8) * 0.035;
+        float foam = smoothstep(0.86 + foamRag, 0.97 + foamRag, waveHeight);
+        vec3 color = mix(deep, pale, crest * 0.3 + foam * 0.76 + ribbons);
+        gl_FragColor = vec4(color, uOpacity * (0.58 + crest * 0.34));
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const breaker = new THREE.Mesh(breakerGeometry, breakerMaterial);
+  breaker.frustumCulled = false;
+  breaker.renderOrder = 4;
+  essential.add(breaker);
+
+  const sprayCount = 260;
+  const sprayPositions = new Float32Array(sprayCount * 3);
+  const sprayVelocity = Array.from({ length: sprayCount }, () => V(0, 0, 0));
+  const sprayLife = new Float32Array(sprayCount);
+  const sprayGeo = new THREE.BufferGeometry();
+  sprayGeo.setAttribute('position', new THREE.BufferAttribute(sprayPositions, 3));
+  const sprayMaterial = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: `
+      void main() {
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = clamp(96.0 / max(1.0, -mvPosition.z), 1.8, 7.0);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform float uOpacity;
+      void main() {
+        vec2 p = gl_PointCoord - vec2(0.5);
+        float d = length(p);
+        float alpha = 1.0 - smoothstep(0.26, 0.5, d);
+        gl_FragColor = vec4(0.78, 0.95, 1.0, alpha * uOpacity);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const spray = new THREE.Points(sprayGeo, sprayMaterial);
+  spray.frustumCulled = false;
+  essential.add(spray);
+
+  // Permanent slanted rain uses one line-segment buffer. Draw range and update
+  // work both follow visual quality; low still keeps enough rain for identity.
+  const rainCount = 980;
+  const rainPositions = new Float32Array(rainCount * 6);
+  const resetRain = (i, y = rand(5, 55)) => {
+    const j = i * 6;
+    const x = rand(-92, 92), z = rand(-72, 72);
+    rainPositions[j] = x; rainPositions[j + 1] = y; rainPositions[j + 2] = z;
+    rainPositions[j + 3] = x - 0.75; rainPositions[j + 4] = y - 3.4; rainPositions[j + 5] = z + 0.34;
+  };
+  for (let i = 0; i < rainCount; i++) resetRain(i);
+  const rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({
+    color: 0xaed9e9, transparent: true, opacity: 0.54, depthWrite: false,
+  }));
+  rain.frustumCulled = false;
+  essential.add(rain);
+
+  // Gameplay cycle: 26s calm, 8s siren, 8s modeled surge, 16s high tide,
+  // 12s drain, then a final 12s calm. The low deck floods to waist height.
+  const CYCLE = 82;
+  let visualTier = 'high';
+  let activeRainCount = rainCount;
+  let previousPhase = 'calm';
+  world.tide = { phase: 'calm', level: -4.8, warningMix: 0, surgeMix: 0, frontZ: -56 };
+  world.storm = { mix: 0.78 };
+  world.anim.push((dt, t, characters = []) => {
+    oceanMat.uniforms.uTime.value = t;
+    floodMat.uniforms.uTime.value = t;
+    breakerMaterial.uniforms.uTime.value = t;
+    const cycleTime = t % CYCLE;
+    const cycleId = Math.floor(t / CYCLE);
+    let phase = 'calm';
+    let level = -4.8;
+    let warningMix = 0;
+    let surgeMix = 0;
+    let frontZ = -56;
+    if (cycleTime >= 26 && cycleTime < 34) {
+      phase = 'warning';
+      warningMix = THREE.MathUtils.smoothstep(cycleTime, 26, 27.5);
+    } else if (cycleTime >= 34 && cycleTime < 42) {
+      phase = 'surge';
+      warningMix = 1;
+      surgeMix = Math.sin((cycleTime - 34) / 8 * Math.PI);
+      const p = (cycleTime - 34) / 8;
+      frontZ = THREE.MathUtils.lerp(-56, 56, p * p * (3 - 2 * p));
+      level = THREE.MathUtils.lerp(-4.8, 1.35, THREE.MathUtils.smoothstep(cycleTime, 34, 39));
+    } else if (cycleTime >= 42 && cycleTime < 58) {
+      phase = 'high';
+      level = 1.35;
+      warningMix = 0.5;
+    } else if (cycleTime >= 58 && cycleTime < 70) {
+      phase = 'draining';
+      level = THREE.MathUtils.lerp(1.35, -4.8, THREE.MathUtils.smoothstep(cycleTime, 58, 70));
+      warningMix = 0.22 * (1 - (cycleTime - 58) / 12);
+    }
+    if (phase === 'warning' && previousPhase !== 'warning') world.onTideWarning?.();
+    previousPhase = phase;
+    Object.assign(world.tide, { phase, level, warningMix, surgeMix, frontZ });
+    floodZone.surfaceY = level;
+    floodMesh.position.y = level;
+    floodMesh.visible = level > -1.2;
+    floodMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.48, 0.72, Math.max(0, (level + 1.2) / 2.55));
+
+    const pulse = warningMix * (0.5 + 0.5 * Math.sin(t * 9.2));
+    for (let i = 0; i < beaconLenses.length; i++) {
+      beaconLenses[i].material.color.setRGB(0.18 + pulse * 1.8, 0.025 + pulse * 0.11, 0.012);
+      beaconLights[i].intensity = pulse * 34;
+      beaconCones[i].material.opacity = pulse * 0.045;
+      beaconCones[i].rotation.y = t * 2.6 + i * Math.PI * 0.5;
+    }
+
+    if (phase === 'surge') {
+      breaker.visible = true;
+      breakerMaterial.uniforms.uOpacity.value = 0.9 * Math.min(1, surgeMix * 2.4);
+      for (let row = 0; row <= breakerRows; row++) {
+        const v = row / breakerRows;
+        const curl = THREE.MathUtils.smoothstep(v, 0.68, 1) * Math.sin(THREE.MathUtils.clamp((v - 0.68) / 0.32, 0, 1) * Math.PI) * 3.8;
+        for (let col = 0; col <= breakerCols; col++) {
+          const u = col / breakerCols;
+          const x = THREE.MathUtils.lerp(-65, 65, u);
+          const chop = Math.sin(x * 0.12 + t * 2.4 + v * 6.0) * (0.18 + v * 0.38);
+          const z = frontZ - Math.pow(v, 1.55) * 3.2 + curl + chop;
+          const crestVariation = Math.sin(x * 0.09 + t * 2.1) * (0.16 + v * 0.58)
+            + Math.sin(x * 0.23 - t * 1.7) * v * 0.24;
+          const y = level - 0.4 + v * 5.7 - THREE.MathUtils.smoothstep(v, 0.84, 1) * 0.95 + crestVariation;
+          breakerPositions.setXYZ(row * (breakerCols + 1) + col, x, y, z);
+        }
+      }
+      breakerPositions.needsUpdate = true;
+      for (const ch of characters) {
+        if (!ch?.alive || ch.pos.y > 4.6 || Math.abs(ch.pos.x) > 65) continue;
+        if (ch._tidebreakerWaveCycle === cycleId || frontZ < ch.pos.z - 0.8) continue;
+        ch._tidebreakerWaveCycle = cycleId;
+        ch.vel.z = Math.max(ch.vel.z, 15.5);
+        ch.vel.y = Math.max(ch.vel.y, 5.8);
+        ch.grounded = false;
+        world.onSurgeHit?.(ch);
+      }
+    } else {
+      breakerMaterial.uniforms.uOpacity.value = 0;
+      breaker.visible = false;
+    }
+
+    // A broad post-break current makes the flooded deck tactically different
+    // without stun-locking anyone. Elevated routes are completely unaffected.
+    if (level > 0.2) for (const ch of characters) {
+      if (!ch?.alive || ch.pos.y > 2.2 || Math.abs(ch.pos.x) > 62 || Math.abs(ch.pos.z) > 33) continue;
+      ch.vel.z += (phase === 'surge' ? 2.8 : 0.7) * dt;
+    }
+
+    const sprayOpacity = phase === 'surge' ? Math.min(1, surgeMix * 2.6) : 0;
+    sprayMaterial.uniforms.uOpacity.value = 0.82 * sprayOpacity;
+    const liveSpray = visualTier === 'high' ? 260 : visualTier === 'standard' ? 150 : 70;
+    sprayGeo.setDrawRange(0, liveSpray);
+    for (let i = 0; i < liveSpray; i++) {
+      sprayLife[i] -= dt;
+      const j = i * 3;
+      if (sprayLife[i] <= 0 && phase === 'surge') {
+        sprayPositions[j] = rand(-65, 65);
+        sprayPositions[j + 1] = level + rand(3.5, 6.3);
+        sprayPositions[j + 2] = frontZ + rand(-1.8, 2.2);
+        sprayVelocity[i].set(rand(-0.9, 0.9), rand(2.2, 6.2), rand(0.8, 4.2));
+        sprayLife[i] = rand(0.35, 1.05);
+      } else if (sprayLife[i] > 0) {
+        sprayPositions[j] += sprayVelocity[i].x * dt;
+        sprayPositions[j + 1] += sprayVelocity[i].y * dt;
+        sprayPositions[j + 2] += sprayVelocity[i].z * dt;
+        sprayVelocity[i].y -= 10.5 * dt;
+      }
+    }
+    sprayGeo.attributes.position.needsUpdate = true;
+
+    const rainFall = 51 * dt;
+    for (let i = 0; i < activeRainCount; i++) {
+      const j = i * 6;
+      for (const end of [0, 3]) {
+        rainPositions[j + end] -= 0.22 * rainFall;
+        rainPositions[j + end + 1] -= rainFall;
+        rainPositions[j + end + 2] += 0.1 * rainFall;
+      }
+      if (rainPositions[j + 4] < -9 || Math.abs(rainPositions[j]) > 100 || Math.abs(rainPositions[j + 2]) > 80) resetRain(i, rand(36, 58));
+    }
+    rainGeo.attributes.position.needsUpdate = true;
+    for (let i = 0; i < lifeboats.length; i++) {
+      lifeboats[i].rotation.z = Math.sin(t * 0.72 + i * 2.2) * 0.018;
+    }
+    trolley.position.x = craneX + 21 + Math.sin(t * 0.11) * 5.5;
+    trolley.rotation.z = Math.sin(t * 0.63) * 0.012;
+  });
+
+  // Public-map weapon distribution. The riskiest rewards stay on the flooded
+  // low deck; long-range power sits on exposed high routes.
+  pk(world, 'weapon', -48, 14.2, 0, { weapon: 'hyper' });
+  pk(world, 'weapon', -20, 0.2, -20, { weapon: 'scatter' });
+  pk(world, 'weapon', -8, 0.2, 20, { weapon: 'pulsar' });
+  pk(world, 'weapon', 18, 0.2, -20, { weapon: 'sidewinder' });
+  pk(world, 'weapon', 47, 0.2, 0, { weapon: 'zooka' });
+  pk(world, 'weapon', 10, 8.2, -35, { weapon: 'parasite' });
+  pk(world, 'weapon', 56, 8.2, 12, { weapon: 'whomper' });
+  pk(world, 'ammo', -42, 14.2, 0, { weapon: 'hyper' });
+  pk(world, 'ammo', -19, 8.2, 35, { weapon: 'scatter' });
+  pk(world, 'ammo', 30, 0.2, 18, { weapon: 'sidewinder' });
+  pk(world, 'ammo', 38, 8.2, -22, { weapon: 'parasite' });
+  pk(world, 'health', -46, 8.2, -35);
+  pk(world, 'health', 5, 0.2, 13);
+  pk(world, 'health', 51, 0.2, -18);
+  pk(world, 'shield', 0, 8.2, 35);
+  pk(world, 'speed', 0, 8.2, -35);
+  pk(world, 'silver', 29, 8.2, 35);
+  pk(world, 'gold', -60, 14.2, -8);
+  pk(world, 'star', -60, 14.2, 10, { hidden: true });
+  pk(world, 'star', 60, 0.2, -21, { hidden: true });
+  pk(world, 'star', 7, 0.2, 6, { hidden: true });
+
+  const ffaSpawns = [
+    [-50, 14.2, -8], [-50, 14.2, 8], [-35, 8.2, -34], [-12, 8.2, 34],
+    [18, 8.2, -34], [38, 8.2, 34], [49, 8.2, -18], [49, 8.2, 18],
+  ];
+  for (const [x, y, z] of ffaSpawns) world.spawns.ffa.push(V(x, y, z));
+  for (const p of [[-54, 14.2, -8], [-54, 14.2, 8], [-35, 8.2, -34], [-35, 8.2, 34]]) world.spawns.blue.push(V(...p));
+  for (const p of [[50, 8.2, -18], [50, 8.2, 18], [35, 8.2, -34], [35, 8.2, 34]]) world.spawns.red.push(V(...p));
+
+  const waypoints = [
+    // low processing deck and open container lanes
+    [-54, 0, -22], [-54, 0, 0], [-54, 0, 22], [-38, 0, -18], [-38, 0, 0], [-38, 0, 18],
+    [-22, 0, -24], [-22, 0, 0], [-22, 0, 24], [-8, 0, -14], [-13, 0, 20],
+    [8, 0, -18], [8, 0, 18], [24, 0, -22], [24, 0, 0], [24, 0, 22],
+    [40, 0, -18], [40, 0, 0], [40, 0, 18], [55, 0, -18], [55, 0, 0], [55, 0, 18],
+    // north access ramp and deck
+    [0, 2.7, -22], [0, 5.3, -26], [0, 8, -31], [-20, 8, -35], [-40, 8, -35], [-58, 8, -35],
+    [20, 8, -35], [40, 8, -35], [58, 8, -35],
+    // south access ramp and deck
+    [0, 2.7, 22], [0, 5.3, 26], [0, 8, 31], [-20, 8, 35], [-40, 8, 35], [-58, 8, 35],
+    [20, 8, 35], [40, 8, 35], [58, 8, 35],
+    // helipad ramps and deck
+    [-53, 10, -26], [-53, 12, -21], [-53, 14, -15], [-49, 14, 0], [-58, 14, 10], [-40, 14, 10],
+    [-53, 10, 26], [-53, 12, 21], [-53, 14, 15],
+    // operations roof
+    [38, 8, -20], [50, 8, -18], [40, 8, 0], [50, 8, 18], [38, 8, 20],
+  ];
+  for (const [x, y, z] of waypoints) wp(world, x, y, z);
+  world.manualLinks.push(
+    [0, 0, -18, 0, 2.7, -22, false],
+    [0, 5.3, -26, 0, 8, -31, false],
+    [0, 0, 18, 0, 2.7, 22, false],
+    [0, 5.3, 26, 0, 8, 31, false],
+    [-58, 8, -35, -53, 10, -26, false],
+    [-53, 12, -21, -53, 14, -15, false],
+    [-58, 8, 35, -53, 10, 26, false],
+    [-53, 12, 21, -53, 14, 15, false],
+    [40, 8, -35, 38, 8, -20, false],
+    [40, 8, 35, 38, 8, 20, false],
+  );
+
+  world.podiumSpot = V(-49, 14.2, 0);
+  world.setVisualQuality = tier => {
+    visualTier = tier;
+    oceanMeshes[0].visible = tier === 'low';
+    oceanMeshes[1].visible = tier === 'standard';
+    oceanMeshes[2].visible = tier === 'high';
+    standard.visible = tier !== 'low';
+    high.visible = tier === 'high';
+    activeRainCount = tier === 'high' ? 980 : tier === 'standard' ? 620 : 300;
+    rainGeo.setDrawRange(0, activeRainCount * 2);
+  };
+  world.setVisualQuality('high');
+  mergeStatic(scene, world);
+  return world;
+}
+
 function buildMeteorSurfaceIndex(world, cellSize = 16) {
   const cells = new Map();
   const add = (kind, item, minX, maxX, minZ, maxZ) => {
@@ -10236,6 +11510,9 @@ export const MAPS = [
   { id: 'sanctum', name: 'THE LABYRINTH', emoji: '🔮',
     desc: 'A deliberately disorienting rune maze: four deceptively identical wings fold around a crypt lift, upper gallery, roof loops, and concealed shortcuts.',
     thumb: 'linear-gradient(135deg,#14101f,#8a5fff)', build: buildSanctum },
+  { id: 'tidebreaker', name: 'TIDEBREAKER', emoji: '🌊',
+    desc: 'A storm-lashed offshore platform: floodable processing deck, evacuation catwalks, operations roof, crane lanes, and a siren-warned breaker that reshapes the fight.',
+    thumb: 'linear-gradient(135deg,#071b28,#23788d 58%,#e86e2d)', build: buildTidebreaker },
   { id: 'prism', name: 'PRISM RUN', emoji: '🌈', secret: true,
     desc: 'Inside a neon tesseract in deep space: walk every wall, floor and ceiling. Gravity always pulls to the nearest surface — you never fall out.',
     thumb: 'linear-gradient(135deg,#0b0518,#ff40e0)', build: buildPrism },

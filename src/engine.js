@@ -337,6 +337,7 @@ function moveCharacterStep(char, world, dt) {
   // Jump pads: {x, y, z, r, vy, vx?, vz?}
   if (grounded && world.jumpPads) {
     for (const pad of world.jumpPads) {
+      if (pad.disabled) continue;
       if (pad.playersOnly && !char.isPlayer) continue;
       if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
           Math.abs(char.pos.y - pad.y) < 1.2) {
@@ -419,6 +420,7 @@ export function moveCharacterUp(char, world, dt, nOut) {
   // Jump pads still fire when you're stood on a +Y surface (the arena floor)
   if (grounded && up.y > 0.9 && world.jumpPads) {
     for (const pad of world.jumpPads) {
+      if (pad.disabled) continue;
       if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
           Math.abs(char.pos.y - pad.y) < 1.2) {
         char.vel.y = pad.vy;

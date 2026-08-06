@@ -204,6 +204,118 @@ renderer.toneMappingExposure = 1.02;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 900);
 
+// Full-screen magical transit used by the atrium's hidden orbital launcher.
+// The procedural canvas keeps the destination fully concealed while clouds
+// stretch into star trails, and can run backward for the return trip.
+const secretTransitCanvas = document.createElement('canvas');
+Object.assign(secretTransitCanvas.style, {
+  position: 'fixed', inset: '0', width: '100%', height: '100%',
+  display: 'none', pointerEvents: 'none', zIndex: '30', opacity: '0',
+});
+document.body.appendChild(secretTransitCanvas);
+const secretTransitCtx = secretTransitCanvas.getContext('2d');
+const transitStreaks = Array.from({ length: 150 }, (_, i) => ({
+  a: (i * 2.399963229728653) % (Math.PI * 2),
+  phase: ((i * 73) % 149) / 149,
+  length: 0.35 + ((i * 29) % 71) / 71,
+  bright: 0.45 + ((i * 41) % 53) / 95,
+}));
+const transitClouds = Array.from({ length: 42 }, (_, i) => ({
+  a: (i * 2.17) % (Math.PI * 2),
+  phase: ((i * 31) % 43) / 43,
+  size: 0.65 + ((i * 17) % 29) / 18,
+}));
+let secretTransitToken = 0;
+
+function sizeSecretTransitCanvas() {
+  const ratio = Math.min(devicePixelRatio || 1, 1.5);
+  secretTransitCanvas.width = Math.max(1, Math.floor(innerWidth * ratio));
+  secretTransitCanvas.height = Math.max(1, Math.floor(innerHeight * ratio));
+}
+
+function playSecretTransit(direction, onTransfer) {
+  const token = ++secretTransitToken;
+  sizeSecretTransitCanvas();
+  secretTransitCanvas.style.display = 'block';
+  const start = performance.now();
+  const duration = 2650;
+  let transferred = false;
+  const smooth = (edge0, edge1, value) => {
+    const x = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+    return x * x * (3 - 2 * x);
+  };
+  const frame = (now) => {
+    if (token !== secretTransitToken) return;
+    const p = Math.min(1, (now - start) / duration);
+    const travel = direction === 'outbound' ? p : 1 - p;
+    if (!transferred && p >= 0.7) {
+      transferred = true;
+      onTransfer?.();
+    }
+
+    const w = secretTransitCanvas.width;
+    const h = secretTransitCanvas.height;
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const maxR = Math.hypot(w, h) * 0.62;
+    const cloudMix = 1 - smooth(0.28, 0.68, travel);
+    const spaceMix = smooth(0.34, 0.72, travel);
+    const bg = secretTransitCtx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+    bg.addColorStop(0, `rgba(${Math.round(145 - spaceMix * 124)},${Math.round(190 - spaceMix * 174)},${Math.round(235 - spaceMix * 199)},1)`);
+    bg.addColorStop(0.55, `rgba(${Math.round(105 - spaceMix * 96)},${Math.round(125 - spaceMix * 114)},${Math.round(190 - spaceMix * 163)},1)`);
+    bg.addColorStop(1, `rgba(${Math.round(54 - spaceMix * 50)},${Math.round(42 - spaceMix * 38)},${Math.round(94 - spaceMix * 80)},1)`);
+    secretTransitCtx.fillStyle = bg;
+    secretTransitCtx.fillRect(0, 0, w, h);
+
+    secretTransitCtx.save();
+    secretTransitCtx.globalCompositeOperation = 'screen';
+    for (const cloud of transitClouds) {
+      const r = ((travel * 1.7 + cloud.phase) % 1) * maxR;
+      const x = cx + Math.cos(cloud.a) * r;
+      const y = cy + Math.sin(cloud.a) * r * 0.72;
+      const size = (28 + r * 0.14) * cloud.size;
+      const grad = secretTransitCtx.createRadialGradient(x, y, 0, x, y, size);
+      grad.addColorStop(0, `rgba(255,255,255,${0.5 * cloudMix})`);
+      grad.addColorStop(0.45, `rgba(220,239,255,${0.24 * cloudMix})`);
+      grad.addColorStop(1, 'rgba(200,225,255,0)');
+      secretTransitCtx.fillStyle = grad;
+      secretTransitCtx.beginPath();
+      secretTransitCtx.arc(x, y, size, 0, Math.PI * 2);
+      secretTransitCtx.fill();
+    }
+    secretTransitCtx.lineCap = 'round';
+    for (const streak of transitStreaks) {
+      const r = (0.05 + ((travel * 2.8 + streak.phase) % 1)) * maxR;
+      const trail = (18 + r * 0.2) * streak.length * spaceMix;
+      const cos = Math.cos(streak.a), sin = Math.sin(streak.a);
+      secretTransitCtx.strokeStyle = `rgba(210,239,255,${streak.bright * spaceMix})`;
+      secretTransitCtx.lineWidth = 1.2 + spaceMix * 2.2;
+      secretTransitCtx.beginPath();
+      secretTransitCtx.moveTo(cx + cos * Math.max(0, r - trail), cy + sin * Math.max(0, r - trail));
+      secretTransitCtx.lineTo(cx + cos * r, cy + sin * r);
+      secretTransitCtx.stroke();
+    }
+    const core = secretTransitCtx.createRadialGradient(cx, cy, 0, cx, cy, Math.min(w, h) * 0.24);
+    core.addColorStop(0, `rgba(255,255,255,${0.78 - spaceMix * 0.42})`);
+    core.addColorStop(0.2, `rgba(115,225,255,${0.35 + spaceMix * 0.2})`);
+    core.addColorStop(1, 'rgba(70,130,255,0)');
+    secretTransitCtx.fillStyle = core;
+    secretTransitCtx.fillRect(0, 0, w, h);
+    secretTransitCtx.restore();
+
+    const fadeIn = smooth(0, 0.08, p);
+    const fadeOut = 1 - smooth(0.82, 1, p);
+    secretTransitCanvas.style.opacity = String(fadeIn * fadeOut);
+    if (p < 1) requestAnimationFrame(frame);
+    else {
+      if (!transferred) onTransfer?.();
+      secretTransitCanvas.style.display = 'none';
+      secretTransitCanvas.style.opacity = '0';
+    }
+  };
+  requestAnimationFrame(frame);
+}
+
 // Post-processing: MSAA render target → bloom on emissives → tonemap/output
 const composer = new EffectComposer(renderer,
   new THREE.WebGLRenderTarget(1, 1, {
@@ -226,6 +338,7 @@ function resize() {
   composer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
+  if (secretTransitCanvas.style.display !== 'none') sizeSecretTransitCanvas();
 }
 addEventListener('resize', resize);
 resize();
@@ -722,6 +835,22 @@ function startAtrium() {
   });
   const pickups = new PickupManager(scene, [], { onPickup });
   world.onPad = () => {};
+  world.onSecretFountainReveal = () => {
+    sfx('powerup');
+    hud.message('SECRET LAUNCH CHAMBER REVEALED', '#65e8ff');
+  };
+  world.onSecretObservatoryArrival = () => {
+    sfx('pickup');
+    hud.message('SECRET ORBITAL HUB', '#c8f5ff');
+  };
+  world.onSecretAtriumReturn = () => {
+    sfx('pickup');
+    hud.message('RETURNED TO THE ATRIUM', '#c8f5ff');
+  };
+  world.onSecretTransit = (direction) => {
+    sfx('powerup');
+    playSecretTransit(direction, () => world.finishSecretTransit?.(direction));
+  };
   world.getPickups = () => pickups.items;
 
   G = {
@@ -934,6 +1063,14 @@ function startMatch(mapDef, mode = 'ffa') {
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
   };
+  world.onTideWarning = () => {
+    sfx('siren');
+    hud.message('SURGE INBOUND — GET TO HIGH GROUND', '#ff8a3d');
+  };
+  world.onSurgeHit = (ch) => {
+    sfx('wave', ch?.isPlayer ? null : ch?.pos);
+    if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
+  };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
 
   G = {
@@ -1061,6 +1198,14 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     applyDamage(ch, 35, GATOR, { environmental: true, silentImpact: true });
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('GATOR BITE -35', '#b8e35b');
+  };
+  world.onTideWarning = () => {
+    sfx('siren');
+    hud.message('SURGE INBOUND — GET TO HIGH GROUND', '#ff8a3d');
+  };
+  world.onSurgeHit = (ch) => {
+    sfx('wave', ch?.isPlayer ? null : ch?.pos);
+    if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
   };
   world.getPickups = () => pickups.items;
 
@@ -3426,7 +3571,8 @@ function stepAtrium(dt) {
     return;
   }
   for (const p of G.world.portals) {
-    if (Math.hypot(G.player.pos.x - p.x, G.player.pos.z - p.z) < (p.radius ?? 2.6)) {
+    const withinHeight = p.y == null || Math.abs(G.player.pos.y - p.y) < (p.heightRadius ?? 3.2);
+    if (withinHeight && Math.hypot(G.player.pos.x - p.x, G.player.pos.z - p.z) < (p.radius ?? 2.6)) {
       G.pendingMap = MAPS.find(m => m.id === p.map);
       if (G.pendingMap?.secret) unlockSecretMap(G.pendingMap.id);
       sfx('powerup');

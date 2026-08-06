@@ -208,6 +208,16 @@ const SFX = {
   powerup:  () => { for (let i = 0; i < 5; i++) blip({ freq: 400 + i * 180, dur: 0.12, vol: 0.14, type: 'square', delay: i * 0.08 }); },
   kill:     () => { blip({ freq: 500, end: 800, dur: 0.1, vol: 0.14 }); blip({ freq: 800, end: 1100, dur: 0.12, vol: 0.14, delay: 0.09 }); },
   death:    () => blip({ freq: 400, end: 60, dur: 0.5, vol: 0.2, type: 'sawtooth' }),
+  siren:    () => {
+    for (let i = 0; i < 4; i++) {
+      blip({ freq: i % 2 ? 510 : 340, end: i % 2 ? 340 : 510, dur: 0.72,
+        vol: 0.105, type: 'sawtooth', delay: i * 0.68 });
+    }
+  },
+  wave:     () => {
+    noiseBurst({ dur: 0.9, vol: 0.2, low: 45, high: 2100 });
+    blip({ freq: 82, end: 34, dur: 0.78, vol: 0.18, type: 'sine' });
+  },
   explode:  () => { sample('explosion', { vol: 0.22, rate: 0.82 });
                     blip({ freq: 150, end: 30, dur: 0.4, vol: 0.25, type: 'sawtooth' });
                     blip({ freq: 90, end: 25, dur: 0.5, vol: 0.2, type: 'square', delay: 0.03 }); },
