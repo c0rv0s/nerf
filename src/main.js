@@ -63,6 +63,7 @@ const LIGHTNING = { name: 'Lightning', color: '#dff7ff', isPlayer: false, kills:
 const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, team: 'meteor' };
 const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
 const GATOR = { name: 'Canal Gator', color: '#8fbd45', isPlayer: false, kills: 0, team: 'gator' };
+const SOLAR_FLARE = { name: 'Solar Flare', color: '#ff4b24', isPlayer: false, kills: 0, team: 'solar' };
 const EVENT_BLAST_RADIUS = 10;
 const EVENT_BLAST_DAMAGE = 50;
 
@@ -837,7 +838,6 @@ function startAtrium() {
   world.onPad = () => {};
   world.onSecretFountainReveal = () => {
     sfx('powerup');
-    hud.message('SECRET LAUNCH CHAMBER REVEALED', '#65e8ff');
   };
   world.onSecretObservatoryArrival = () => {
     sfx('pickup');
@@ -1071,6 +1071,16 @@ function startMatch(mapDef, mode = 'ffa') {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
     if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
   };
+  world.onSolarFlareWarning = () => {
+    sfx('siren');
+    hud.message('SOLAR FLARE INBOUND — GET INSIDE', '#ff5638');
+  };
+  world.onSolarFlareStrike = () => sfx('thunder');
+  world.onSolarFlareHit = (ch) => {
+    if (!ch?.alive) return;
+    applyDamage(ch, 33, SOLAR_FLARE, { environmental: true });
+    if (ch.isPlayer) hud.message('SOLAR FLARE -33', '#ff5638');
+  };
   world.getPickups = () => pickups.items; // bots window-shop the pickups
 
   G = {
@@ -1206,6 +1216,16 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   world.onSurgeHit = (ch) => {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
     if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
+  };
+  world.onSolarFlareWarning = () => {
+    sfx('siren');
+    hud.message('SOLAR FLARE INBOUND — GET INSIDE', '#ff5638');
+  };
+  world.onSolarFlareStrike = () => sfx('thunder');
+  world.onSolarFlareHit = (ch) => {
+    if (!ch?.alive || !G?.multiplayerHost) return;
+    applyDamage(ch, 33, SOLAR_FLARE, { environmental: true });
+    if (ch.isPlayer) hud.message('SOLAR FLARE -33', '#ff5638');
   };
   world.getPickups = () => pickups.items;
 
@@ -3544,8 +3564,24 @@ function renderFrame() {
     pickups: G.pickups?.items,
     lowQuality: usesLightRenderPath(),
   });
+  const shake = G.world.cameraShake || 0;
+  const savedPosition = shake > 0 ? camera.position.clone() : null;
+  const savedQuaternion = shake > 0 ? camera.quaternion.clone() : null;
+  if (shake > 0) {
+    const strength = shake * shake;
+    camera.position.add(new THREE.Vector3(
+      (Math.random() - 0.5) * strength * 0.85,
+      (Math.random() - 0.5) * strength * 0.58,
+      (Math.random() - 0.5) * strength * 0.85,
+    ));
+    camera.rotateZ((Math.random() - 0.5) * strength * 0.028);
+  }
   if (!usesLightRenderPath()) composer.render();
   else renderer.render(renderPass.scene, camera);
+  if (savedPosition) {
+    camera.position.copy(savedPosition);
+    camera.quaternion.copy(savedQuaternion);
+  }
 }
 
 // Lobby-only logic: gate triggers and the mode toggle pad

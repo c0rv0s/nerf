@@ -233,6 +233,25 @@ function texFortressDeck() {
   });
 }
 
+function texSolarHull() {
+  return canvasTex('solar-hull', (g) => {
+    g.fillStyle = '#d8d6ca'; g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = 'rgba(31,45,62,.42)'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(0, 34); g.lineTo(128, 34); g.stroke();
+    g.beginPath(); g.moveTo(0, 96); g.lineTo(128, 96); g.stroke();
+    g.beginPath(); g.moveTo(31, 0); g.lineTo(31, 34); g.stroke();
+    g.beginPath(); g.moveTo(87, 34); g.lineTo(87, 96); g.stroke();
+    g.beginPath(); g.moveTo(54, 96); g.lineTo(54, 128); g.stroke();
+    g.fillStyle = '#26394d'; g.fillRect(6, 7, 54, 7);
+    g.fillStyle = '#38cde7'; g.fillRect(9, 9, 31, 3);
+    g.fillStyle = '#9e402a'; g.fillRect(67, 108, 45, 5);
+    g.fillStyle = 'rgba(255,255,255,.35)'; g.fillRect(0, 36, 128, 3);
+    for (const [x, y] of [[8, 26], [119, 26], [8, 88], [119, 88], [47, 119]]) {
+      g.fillStyle = '#65717c'; g.beginPath(); g.arc(x, y, 1.7, 0, Math.PI * 2); g.fill();
+    }
+  });
+}
+
 const TEXES = {
   checker: texChecker,
   panel: texPanel,
@@ -244,6 +263,7 @@ const TEXES = {
   'fortress-stone': texFortressStone,
   'fortress-floor': texFortressFloor,
   'fortress-deck': texFortressDeck,
+  'solar-hull': texSolarHull,
 };
 
 // ---- Web-optimized AI texture set (textures/*.webp) — canvas fallback if absent ----
@@ -1149,12 +1169,12 @@ function addAtriumSecretObservatory(scene, world, fountain) {
     orbitRoot.add(orbit);
   }
 
-  // Keep the asteroid dressing behind the player and above the rear edge so
-  // every destination marquee has a permanently clear sightline.
+  // Keep the asteroid dressing high above the whole station so all four
+  // destination marquees retain permanently clear sightlines.
   for (let i = 0; i < 12; i++) {
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + rnd() * 1.7, 0),
       mat(0x34334f, { roughness: 0.9, metalness: 0.04 }));
-    rock.position.set(-18 + rnd() * 36, floorY + 13 + rnd() * 18, 23 + rnd() * 15);
+    rock.position.set(-46 + rnd() * 92, floorY + 38 + rnd() * 28, -46 + rnd() * 92);
     rock.rotation.set(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
     observatory.add(rock);
   }
@@ -1172,6 +1192,11 @@ function addAtriumSecretObservatory(scene, world, fountain) {
       id: 'bloom', name: 'INFINITE BLOOM', color: 0xcfff2c, frame: 'canopy', marquee: 'canopy',
       x: 19.2, z: 0, horiz: false, yaw: -Math.PI / 2,
       portalX: 19.02, portalZ: 0, triggerX: 17.7, triggerZ: 0,
+    },
+    {
+      id: 'solar', name: 'SOLAR FLARE', color: 0xff8a24, frame: 'arena', marquee: 'solar',
+      x: 0, z: 19.2, horiz: true, yaw: Math.PI,
+      portalX: 0, portalZ: 19.02, triggerX: 0, triggerZ: 17.7,
     },
   ];
   for (const door of doorSpecs) {
@@ -7079,6 +7104,11 @@ function addAtriumMarquee(scene, id, text, color, x, y, z, yaw, width = 15.5) {
     g.moveTo(58, 122); g.lineTo(156, 122); g.lineTo(218, 54); g.lineTo(806, 54);
     g.lineTo(868, 122); g.lineTo(966, 122); g.lineTo(906, 192); g.lineTo(966, 262);
     g.lineTo(868, 262); g.lineTo(806, 330); g.lineTo(218, 330); g.lineTo(156, 262); g.lineTo(58, 262); g.lineTo(118, 192);
+  } else if (id === 'solar') {
+    g.moveTo(92, 192); g.lineTo(154, 148); g.lineTo(128, 82); g.lineTo(210, 102);
+    g.lineTo(258, 38); g.lineTo(304, 94); g.lineTo(864, 74); g.lineTo(936, 138);
+    g.lineTo(910, 192); g.lineTo(936, 246); g.lineTo(864, 310); g.lineTo(304, 290);
+    g.lineTo(258, 346); g.lineTo(210, 282); g.lineTo(128, 302); g.lineTo(154, 236);
   } else { // Hall of Fame: a medal/crest rather than another storefront banner.
     g.moveTo(138, 64); g.lineTo(886, 64); g.lineTo(950, 192); g.lineTo(886, 320);
     g.lineTo(650, 320); g.lineTo(610, 354); g.lineTo(512, 318); g.lineTo(414, 354);
@@ -7110,6 +7140,13 @@ function addAtriumMarquee(scene, id, text, color, x, y, z, yaw, width = 15.5) {
     for (const by of [118, 272]) { g.beginPath(); g.moveTo(150, by); g.lineTo(874, by); g.stroke(); }
     g.beginPath(); g.moveTo(112, 238); g.bezierCurveTo(228, 152, 324, 284, 438, 196);
     g.bezierCurveTo(558, 108, 674, 278, 906, 174); g.stroke();
+  } else if (id === 'solar') {
+    g.beginPath(); g.arc(512, 192, 114, 0, Math.PI * 2); g.stroke();
+    for (let i = 0; i < 16; i++) {
+      const a = i * Math.PI / 8;
+      g.beginPath(); g.moveTo(512 + Math.cos(a) * 126, 192 + Math.sin(a) * 126);
+      g.lineTo(512 + Math.cos(a) * 156, 192 + Math.sin(a) * 156); g.stroke();
+    }
   } else if (id === 'multiplayer') {
     for (let bx = 190; bx <= 834; bx += 54) { g.beginPath(); g.arc(bx, 92, 5, 0, Math.PI * 2); g.fill(); }
   } else if (id === 'hall') {
@@ -7146,6 +7183,11 @@ function addAtriumMarquee(scene, id, text, color, x, y, z, yaw, width = 15.5) {
     g.beginPath(); g.arc(137, 192, 45, 0, Math.PI * 2); g.stroke();
     g.beginPath(); g.moveTo(91, 201); g.bezierCurveTo(111, 166, 130, 224, 151, 183);
     g.bezierCurveTo(165, 158, 178, 194, 190, 178); g.stroke();
+  } else if (id === 'solar') {
+    g.beginPath(); g.arc(137, 192, 31, 0, Math.PI * 2); g.fill();
+    for (let i = 0; i < 12; i++) {
+      g.save(); g.translate(137, 192); g.rotate(i * Math.PI / 6); g.fillRect(43, -5, 28, 10); g.restore();
+    }
   } else if (id === 'multiplayer') {
     g.beginPath(); g.arc(119, 176, 26, 0, Math.PI * 2); g.arc(163, 176, 26, 0, Math.PI * 2); g.fill();
     g.beginPath(); g.arc(119, 229, 38, Math.PI, 0); g.arc(163, 229, 38, Math.PI, 0); g.fill();
@@ -8010,6 +8052,19 @@ function addAtriumSkyDome(scene) {
 }
 
 function gateBrickMaterial(id, color) {
+  if (id === 'tidebreaker') {
+    // Tidebreaker was added after the original six-tile gate atlas. Tint its
+    // generated wet deck texture aqua so the frame keeps real storm-worn metal
+    // detail while reading immediately as the ocean arena.
+    if (AI_TEX['tidebreaker-deck']) return mat(0x62dce2, {
+      tex: 'tidebreaker-deck', repeat: [0.9, 1.1],
+      roughness: 0.48, metalness: 0.38, envMapIntensity: 0.78,
+      emissive: 0x0b6875, emissiveIntensity: 0.16,
+    });
+    // The normal boot waits for AI textures, but retain a textured fallback if
+    // a slow or failed request reaches the three-second startup cap.
+    return mat(color, { tex: 'panel', repeat: [0.9, 1.1], roughness: 0.62, metalness: 0.2 });
+  }
   const tex = gateFrameTex(GATE_FRAME_INDEX[id]);
   if (!tex) return mat(color, { tex: 'neonwall' });
   const map = tex.clone();
@@ -10005,14 +10060,59 @@ function buildTidebreaker(scene) {
   addBox(scene, world, -49, 13.5, 0, 34, 1, 34, steel, { ...wetDeck, debugName: 'helipad deck' });
 
   // Broad, honest ramps make every tier navigable by players and bots.
-  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: -30, maxZ: -18, h0: 8, h1: 0,
+  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: -31, maxZ: -18, h0: 8, h1: 0,
     color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
-  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: 18, maxZ: 30, h0: 0, h1: 8,
+  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: 18, maxZ: 31, h0: 0, h1: 8,
     color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
   addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: -31, maxZ: -17, h0: 8, h1: 14,
     color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
   addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: 17, maxZ: 31, h0: 14, h1: 8,
     color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
+
+  // A four-metre service deck interrupts the low floor's longest sightlines
+  // without sealing the arena into rooms. Two arrivals keep it useful for
+  // circulation rather than turning it into a one-way sniper perch.
+  addBox(scene, world, -7, 3.5, -4, 18, 1, 12, steel, {
+    ...wetDeck, debugName: 'surge winch service platform',
+  });
+  addRamp(scene, world, { axis: 'x', minX: -22, maxX: -16, minZ: -8, maxZ: -2, h0: 0, h1: 4,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.35, supportPad1: 0.35 });
+  addRamp(scene, world, { axis: 'z', minX: -4, maxX: 2, minZ: 2, maxZ: 12, h0: 4, h1: 0,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.35, supportPad1: 0.35 });
+
+  // The winch's pump cabinet fills only the middle of the undercroft, creating
+  // real eye-level cover while preserving two generous routes around it.
+  addBox(scene, world, -8, 1.4, -4, 7.2, 2.8, 3.8, emergencyOrange, {
+    ...orangeSteel, debugName: 'surge winch pump cabinet',
+  });
+  for (const x of [-11.64, -4.36]) addBox(scene, world, x, 1.48, -4, 0.08, 1.9, 2.55, darkSteel, {
+    collide: false, shadow: false, roughness: 0.62, metalness: 0.5,
+    debugName: 'pump cabinet louver panel',
+  });
+  for (const x of [-10.4, -8.8, -7.2, -5.6]) {
+    for (const z of [-5.94, -2.06]) addBox(scene, world, x, 1.42, z, 0.13, 2.25, 0.08, railSteel, {
+      collide: false, shadow: false, roughness: 0.44, metalness: 0.62,
+      debugName: 'pump cabinet rib',
+    });
+  }
+  for (const [x, z] of [[-15.35, -9.35], [1.35, -9.35], [-15.35, 1.35]]) {
+    addBox(scene, world, x, 1.5, z, 0.62, 3, 0.62, darkSteel, {
+      roughness: 0.58, metalness: 0.62, debugName: 'service platform leg',
+    });
+  }
+  const platformBraceGeometries = [];
+  for (const [x, z, sx, sz] of [
+    [-15.35, -9.35, 1, 1], [1.35, -9.35, -1, 1],
+    [-15.35, 1.35, 1, -1],
+  ]) platformBraceGeometries.push(cylinderBetween(
+    V(x, 0.25, z), V(x + sx * 2.4, 2.95, z + sz * 1.7), 0.13, 7,
+  ));
+  const platformBraces = new THREE.Mesh(mergeGeometries(platformBraceGeometries, false), mat(railSteel, {
+    roughness: 0.46, metalness: 0.64,
+  }));
+  platformBraces.castShadow = true;
+  essential.add(platformBraces);
+  platformBraceGeometries.forEach(g => g.dispose());
 
   // Rail runs have actual posts and two rails, but share the merged static
   // steel material. Openings line up with ramps rather than being decorative.
@@ -10046,9 +10146,103 @@ function buildTidebreaker(scene) {
   addRailRun('x', 38.65, 8, -66, 66, [[-59, -47], [-7, 7]]);
   addRailRun('z', -66.2, 8, -38, 38, [[-31, 31]]);
   addRailRun('z', 64.2, 8, -38, 38, [[-29, 29]]);
-  addRailRun('x', -17.4, 14, -66, -32, []);
-  addRailRun('x', 17.4, 14, -66, -32, []);
+  // Leave the helipad's north and south ramp landings unobstructed. These
+  // openings match the full ramp width with a little shoulder clearance so a
+  // player cannot clip the end of a beam while stepping onto the pad.
+  addRailRun('x', -17.4, 14, -66, -32, [[-58, -48]]);
+  addRailRun('x', 17.4, 14, -66, -32, [[-58, -48]]);
   addRailRun('z', -66.4, 14, -17, 17, []);
+
+  // Partial rails make the new mid deck readable while leaving both ramp
+  // landings generously open. The south edge stays open on its east half so
+  // players can drop back into the center lane during a surge.
+  addRailRun('x', -10.35, 4, -16, 2, [[-5.1, -1.9]]);
+  addRailRun('x', 2.35, 4, -16, 2, [[-4.5, 2]]);
+  addRailRun('z', -16.35, 4, -10, 2, [[-8.5, -1.5]]);
+  addRailRun('z', 2.35, 4, -10, 2, []);
+
+  // Third approach: a proper climbable maintenance ladder on the north face.
+  // It reuses the established climb-zone physics (Space climbs, S descends)
+  // while the merged steel rails and rungs provide an honest visual surface.
+  const ladderX = -3.5, ladderZ = -10.52;
+  const ladderGeometries = [];
+  for (const x of [ladderX - 0.72, ladderX + 0.72]) {
+    ladderGeometries.push(cylinderBetween(V(x, 0.15, ladderZ), V(x, 5.25, ladderZ), 0.09, 7));
+  }
+  for (let y = 0.45; y <= 4.35; y += 0.48) {
+    ladderGeometries.push(cylinderBetween(V(ladderX - 0.72, y, ladderZ), V(ladderX + 0.72, y, ladderZ), 0.075, 7));
+  }
+  const ladder = new THREE.Mesh(mergeGeometries(ladderGeometries, false), mat(railSteel, {
+    roughness: 0.42, metalness: 0.66,
+  }));
+  ladder.castShadow = true;
+  essential.add(ladder);
+  ladderGeometries.forEach(g => g.dispose());
+  (world.vineZones ||= []).push({
+    x: ladderX, z: ladderZ - 0.08, minY: 0.1, maxY: 4.15,
+    r: 0.82, grabR: 1.18, exitX: 0, exitZ: 1,
+  });
+
+  // A cable-loaded surge winch supplies a broad rounded occluder instead of a
+  // plain cover cube. Braced A-frames, bearing flanges, axle, and rope bands
+  // keep the silhouette legible from both floor level and the high catwalks.
+  addBox(scene, world, -8, 4.35, -4, 9.8, 0.7, 6.6, darkSteel, {
+    roughness: 0.55, metalness: 0.58, debugName: 'surge winch plinth',
+  });
+  const winchDrumMaterial = mat(0x323a3c, { roughness: 0.68, metalness: 0.42 });
+  const winchOrangeMaterial = mat(0xffffff, orangeSteel);
+  const winchDrum = new THREE.Mesh(new THREE.CylinderGeometry(1.85, 1.85, 4.6, 24, 1), winchDrumMaterial);
+  winchDrum.rotation.x = Math.PI / 2;
+  winchDrum.position.set(-8, 6.45, -4);
+  winchDrum.castShadow = winchDrum.receiveShadow = true;
+  essential.add(winchDrum);
+  for (const z of [-6.42, -1.58]) {
+    const flange = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.24, 22, 1), winchOrangeMaterial);
+    flange.rotation.x = Math.PI / 2;
+    flange.position.set(-8, 6.45, z);
+    flange.castShadow = true;
+    essential.add(flange);
+  }
+  const cableGeometries = [];
+  for (const z of [-5.62, -4.82, -4.02, -3.22, -2.42]) {
+    const cableRing = new THREE.TorusGeometry(1.9, 0.12, 7, 24);
+    cableRing.translate(-8, 6.45, z);
+    cableGeometries.push(cableRing);
+  }
+  const winchCable = new THREE.Mesh(mergeGeometries(cableGeometries, false), mat(0x171a18, {
+    roughness: 0.92, metalness: 0.08,
+  }));
+  winchCable.castShadow = true;
+  essential.add(winchCable);
+  cableGeometries.forEach(g => g.dispose());
+  const winchBraceGeometries = [];
+  for (const z of [-6.55, -1.45]) {
+    winchBraceGeometries.push(cylinderBetween(V(-12.1, 4.65, z), V(-8, 6.45, z), 0.22, 7));
+    winchBraceGeometries.push(cylinderBetween(V(-3.9, 4.65, z), V(-8, 6.45, z), 0.22, 7));
+  }
+  const winchBraces = new THREE.Mesh(mergeGeometries(winchBraceGeometries, false), winchOrangeMaterial);
+  winchBraces.castShadow = true;
+  essential.add(winchBraces);
+  winchBraceGeometries.forEach(g => g.dispose());
+  const winchAxle = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 5.5, 10), mat(0xc99c3f, {
+    roughness: 0.34, metalness: 0.72,
+  }));
+  winchAxle.rotation.x = Math.PI / 2;
+  winchAxle.position.set(-8, 6.45, -4);
+  essential.add(winchAxle);
+  world.colliders.push({
+    type: 'box', min: V(-10.2, 4.55, -6.55), max: V(-5.8, 8.65, -1.45),
+  });
+
+  // A compact local control stand adds close cover without hiding a ramp or
+  // widening the main winch collider beyond its visible machinery.
+  addBox(scene, world, -13.3, 4.9, -7.3, 2.2, 1.8, 1.7, emergencyOrange, {
+    ...orangeSteel, debugName: 'surge winch control stand',
+  });
+  addBox(scene, world, -13.3, 5.35, -6.42, 1.45, 0.52, 0.08, 0x5be7d0, {
+    collide: false, shadow: false, emissive: 0x2ccbb9, emissiveIntensity: 1.1,
+    debugName: 'surge winch control screen',
+  });
 
   // Operations block: floodable machinery rooms below, a protected combat
   // roof above, and a glazed control cabin instead of an empty box landmark.
@@ -10127,17 +10321,141 @@ function buildTidebreaker(scene) {
       standard.add(ring);
     }
   }
-  const pipeGeometries = [];
-  for (const points of [
+  const pipePaths = [
     [V(41, 1.0, -18), V(41, 2.2, -8), V(34, 2.2, -2), V(26, 1.0, -2)],
     [V(42, 0.8, 18), V(36, 2.8, 18), V(30, 2.8, 13), V(26, 1.1, 13)],
-  ]) pipeGeometries.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 28, 0.32, 7, false));
+  ];
+  const pipeGeometries = [];
+  for (const points of pipePaths) {
+    const curve = new THREE.CatmullRomCurve3(points);
+    pipeGeometries.push(new THREE.TubeGeometry(curve, 28, 0.32, 7, false));
+    // Closely spaced sphere colliders follow the actual bends instead of using
+    // one oversized box that would invisibly block the open diagonal lanes.
+    const collisionSamples = curve.getSpacedPoints(Math.ceil(curve.getLength() / 1.05));
+    for (const center of collisionSamples) world.colliders.push({
+      type: 'sphere', center: center.clone(), radius: 0.38,
+    });
+  }
   const pipes = new THREE.Mesh(mergeGeometries(pipeGeometries, false), mat(0xe5c15a, {
     roughness: 0.42, metalness: 0.58,
   }));
   pipes.castShadow = true;
-  standard.add(pipes);
+  // Gameplay collision remains active on low quality, so the pipe silhouette
+  // must remain visible there as well.
+  essential.add(pipes);
   pipeGeometries.forEach(g => g.dispose());
+
+  // Both low open pipe mouths now leak. Curved falling streams make the oil
+  // visibly leave the actual pipe ends instead of appearing beneath a made-up
+  // drain halfway along one run.
+  const oilStreamMaterial = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 1 } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uOpacity;
+      varying vec2 vUv;
+      void main() {
+        float flow = sin((vUv.x - uTime * 1.35) * 42.0 + sin(vUv.y * 13.0) * 1.7);
+        float glint = smoothstep(0.52, 1.0, flow) * 0.12;
+        vec3 oil = mix(vec3(0.055, 0.045, 0.025), vec3(0.20, 0.14, 0.035), glint);
+        gl_FragColor = vec4(oil, uOpacity * (0.84 + glint));
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+  });
+  const oilStreams = [];
+  for (const [mouthY, z, bendZ] of [[1.0, -2, -2.15], [1.1, 13, 12.8]]) {
+    const streamCurve = new THREE.CatmullRomCurve3([
+      V(25.78, mouthY, z), V(25.15, mouthY * 0.78, bendZ), V(24.45, 0.09, bendZ),
+    ]);
+    const stream = new THREE.Mesh(new THREE.TubeGeometry(streamCurve, 12, 0.13, 7, false), oilStreamMaterial);
+    stream.renderOrder = 5;
+    essential.add(stream);
+    oilStreams.push(stream);
+  }
+
+  // One connected, concave shoreline forms two source branches that converge
+  // into a broad center-lane pool. Shape coordinates use -Z because the mesh
+  // is rotated onto the deck with its front face pointing upward.
+  const oilCenter = V(5.5, 0.045, 4.1);
+  const oilShape = new THREE.Shape();
+  const oilOutline = [
+    [25.2, -4.0], [22.0, -3.8], [18.1, -2.8], [14.2, -1.0], [10.4, 0.9],
+    [8.0, -0.5], [4.2, -1.2], [1.0, 0.1], [-0.8, 2.6], [-0.2, 6.1],
+    [2.0, 8.8], [5.7, 10.1], [8.9, 9.0], [12.0, 9.8], [16.0, 12.0],
+    [20.6, 14.7], [24.7, 15.4], [26.0, 13.2], [24.6, 10.8], [20.2, 10.1],
+    [16.2, 7.8], [12.1, 5.5], [10.9, 3.9], [14.2, 3.3], [18.2, 1.8],
+    [22.1, 0.4], [25.5, 0.2], [26.1, -1.9],
+  ];
+  for (let i = 0; i < oilOutline.length; i++) {
+    const [x, z] = oilOutline[i];
+    const ragX = x + Math.sin(i * 2.17) * 0.16;
+    const ragZ = z + Math.cos(i * 1.73) * 0.14;
+    if (i === 0) oilShape.moveTo(ragX, -ragZ); else oilShape.lineTo(ragX, -ragZ);
+  }
+  oilShape.closePath();
+  const oilPuddleMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uOpacity: { value: 0.86 }, uFill: { value: 1 },
+    },
+    vertexShader: `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uOpacity;
+      uniform float uFill;
+      varying vec3 vWorldPosition;
+      void main() {
+        float fillFront = mix(24.8, -1.5, uFill);
+        float revealed = smoothstep(fillFront - 0.8, fillFront + 1.1, vWorldPosition.x);
+        float longFlow = sin(vWorldPosition.x * 1.42 + vWorldPosition.z * 0.23 + uTime * 2.5);
+        float crossFlow = sin(vWorldPosition.x * 0.38 - vWorldPosition.z * 1.9 + uTime * 1.15);
+        float sheen = smoothstep(0.58, 1.0, longFlow * 0.72 + crossFlow * 0.28) * 0.16;
+        vec3 base = vec3(0.035, 0.031, 0.022);
+        vec3 amber = vec3(0.22, 0.15, 0.035);
+        gl_FragColor = vec4(mix(base, amber, sheen), uOpacity * revealed * (0.82 + sheen));
+      }
+    `,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -10,
+  });
+  const oilPuddle = new THREE.Mesh(new THREE.ShapeGeometry(oilShape, 1), oilPuddleMaterial);
+  oilPuddle.rotation.x = -Math.PI / 2;
+  oilPuddle.position.y = oilCenter.y;
+  oilPuddle.receiveShadow = true;
+  oilPuddle.renderOrder = 4;
+  essential.add(oilPuddle);
+
+  let oilFill = 1;
+  let oilWashedCycle = -1;
+  world.oilSlick = { center: oilCenter, get fill() { return oilFill; } };
+  world.characterTraction = character => {
+    if (oilFill < 0.08 || !character?.pos || character.pos.y > 1.25) return 1;
+    const fillFront = THREE.MathUtils.lerp(24.8, -1.5, oilFill);
+    if (character.pos.x < fillFront - 1.2) return 1;
+    const distanceToSegment = (ax, az, bx, bz) => {
+      const abx = bx - ax, abz = bz - az;
+      const t = THREE.MathUtils.clamp(((character.pos.x - ax) * abx + (character.pos.z - az) * abz) / (abx * abx + abz * abz), 0, 1);
+      return Math.hypot(character.pos.x - (ax + abx * t), character.pos.z - (az + abz * t));
+    };
+    const sourceA = 1 - distanceToSegment(24.7, -2, 7.5, 3.5) / 2.65;
+    const sourceB = 1 - distanceToSegment(24.7, 13, 7.5, 4.8) / 2.8;
+    const pool = 1 - Math.hypot((character.pos.x - oilCenter.x) / 6.8, (character.pos.z - oilCenter.z) / 5.7);
+    const depth = Math.max(sourceA, sourceB, pool);
+    if (depth <= 0) return 1;
+    return THREE.MathUtils.lerp(0.28, 0.045, THREE.MathUtils.smoothstep(depth, 0, 0.72));
+  };
 
   // The crane is a real truss silhouette with braced tower, operator cab,
   // trolley, cable, hook, and a suspended rescue pallet that moves subtly.
@@ -10198,7 +10516,18 @@ function buildTidebreaker(scene) {
       const davit = new THREE.Mesh(cylinderBetween(V(sx, -2.6, 0), V(sx, 2.8, 0), 0.15, 7), mat(0xb7c2c7, { metalness: 0.62, roughness: 0.42 }));
       boat.add(davit);
     }
-    standard.add(boat);
+    // Five overlapping spheres follow the capsule hull closely enough to keep
+    // its rounded ends and curved top, unlike one oversized invisible box.
+    // Lifeboats remain visible on low quality because they are now gameplay
+    // geometry rather than presentation-only dressing.
+    for (const localX of [-3.4, -1.7, 0, 1.7, 3.4]) {
+      const rotatedX = Math.cos(yaw) * localX;
+      const rotatedZ = -Math.sin(yaw) * localX;
+      world.colliders.push({
+        type: 'sphere', center: V(x + rotatedX, 10.7, z + rotatedZ), radius: 1.65,
+      });
+    }
+    essential.add(boat);
     lifeboats.push(boat);
   }
 
@@ -10355,7 +10684,25 @@ function buildTidebreaker(scene) {
   let visualTier = 'high';
   let activeRainCount = rainCount;
   let previousPhase = 'calm';
-  world.tide = { phase: 'calm', level: -4.8, warningMix: 0, surgeMix: 0, frontZ: -56 };
+  let activeWaveCycle = -1;
+  let waveAngle = 0;
+  const waveDirection = V(0, 0, 1);
+  const waveTangent = V(-1, 0, 0);
+  let waveReach = 76;
+  let waveHalfSpan = 76;
+  const randomWaveAngle = cycleId => {
+    // A deterministic integer hash keeps the apparently random direction in
+    // sync for every client that is on the same tide cycle.
+    let h = Math.imul((cycleId + 1) ^ 0x9e3779b9, 0x85ebca6b);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35);
+    h ^= h >>> 16;
+    return (h >>> 0) / 0x100000000 * Math.PI * 2;
+  };
+  world.tide = {
+    phase: 'calm', level: -4.8, warningMix: 0, surgeMix: 0,
+    front: -waveReach, directionX: waveDirection.x, directionZ: waveDirection.z,
+  };
   world.storm = { mix: 0.78 };
   world.anim.push((dt, t, characters = []) => {
     oceanMat.uniforms.uTime.value = t;
@@ -10363,11 +10710,27 @@ function buildTidebreaker(scene) {
     breakerMaterial.uniforms.uTime.value = t;
     const cycleTime = t % CYCLE;
     const cycleId = Math.floor(t / CYCLE);
+    if (cycleId !== activeWaveCycle) {
+      let nextAngle = randomWaveAngle(cycleId);
+      if (activeWaveCycle >= 0) {
+        const delta = Math.atan2(Math.sin(nextAngle - waveAngle), Math.cos(nextAngle - waveAngle));
+        // Avoid a technically-random but visually repetitive follow-up wave.
+        if (Math.abs(delta) < Math.PI / 4) nextAngle += delta < 0 ? -Math.PI / 2 : Math.PI / 2;
+      }
+      waveAngle = nextAngle;
+      activeWaveCycle = cycleId;
+      waveDirection.set(Math.cos(waveAngle), 0, Math.sin(waveAngle));
+      waveTangent.set(-waveDirection.z, 0, waveDirection.x);
+      // Project the arena bounds onto the travel and cross-wave axes. This
+      // keeps diagonal breakers long enough to cross every playable corner.
+      waveReach = Math.abs(waveDirection.x) * 68 + Math.abs(waveDirection.z) * 39 + 8;
+      waveHalfSpan = Math.abs(waveTangent.x) * 68 + Math.abs(waveTangent.z) * 39 + 8;
+    }
     let phase = 'calm';
     let level = -4.8;
     let warningMix = 0;
     let surgeMix = 0;
-    let frontZ = -56;
+    let waveFront = -waveReach;
     if (cycleTime >= 26 && cycleTime < 34) {
       phase = 'warning';
       warningMix = THREE.MathUtils.smoothstep(cycleTime, 26, 27.5);
@@ -10376,7 +10739,7 @@ function buildTidebreaker(scene) {
       warningMix = 1;
       surgeMix = Math.sin((cycleTime - 34) / 8 * Math.PI);
       const p = (cycleTime - 34) / 8;
-      frontZ = THREE.MathUtils.lerp(-56, 56, p * p * (3 - 2 * p));
+      waveFront = THREE.MathUtils.lerp(-waveReach, waveReach, p * p * (3 - 2 * p));
       level = THREE.MathUtils.lerp(-4.8, 1.35, THREE.MathUtils.smoothstep(cycleTime, 34, 39));
     } else if (cycleTime >= 42 && cycleTime < 58) {
       phase = 'high';
@@ -10389,11 +10752,32 @@ function buildTidebreaker(scene) {
     }
     if (phase === 'warning' && previousPhase !== 'warning') world.onTideWarning?.();
     previousPhase = phase;
-    Object.assign(world.tide, { phase, level, warningMix, surgeMix, frontZ });
+    Object.assign(world.tide, {
+      phase, level, warningMix, surgeMix, front: waveFront,
+      directionX: waveDirection.x, directionZ: waveDirection.z,
+    });
     floodZone.surfaceY = level;
     floodMesh.position.y = level;
     floodMesh.visible = level > -1.2;
     floodMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.48, 0.72, Math.max(0, (level + 1.2) / 2.55));
+
+    // The breaker removes the slick only when its advancing front actually
+    // reaches the merged slick. It stays gone through high tide and drainage,
+    // then the two running pipe mouths push fresh oil inward during calm.
+    const oilProgress = oilCenter.x * waveDirection.x + oilCenter.z * waveDirection.z;
+    if (phase === 'surge' && waveFront >= oilProgress - 2.2) oilWashedCycle = cycleId;
+    const keepingOilClear = oilWashedCycle === cycleId && cycleTime < 70;
+    if (keepingOilClear || level > 0.18) oilFill = Math.max(0, oilFill - dt * 2.5);
+    else oilFill = Math.min(1, oilFill + dt / 16);
+    const oilVisibility = THREE.MathUtils.smoothstep(oilFill, 0.025, 0.24);
+    oilPuddleMaterial.uniforms.uTime.value = t;
+    oilPuddleMaterial.uniforms.uFill.value = oilFill;
+    oilPuddleMaterial.uniforms.uOpacity.value = 0.86 * oilVisibility * (1 - THREE.MathUtils.smoothstep(level, 0.15, 1.05) * 0.5);
+    oilPuddle.visible = oilVisibility > 0.01;
+    oilStreamMaterial.uniforms.uTime.value = t;
+    const leakVisibility = 1 - THREE.MathUtils.smoothstep(level, 0.05, 0.92);
+    oilStreamMaterial.uniforms.uOpacity.value = leakVisibility;
+    for (const stream of oilStreams) stream.visible = leakVisibility > 0.015;
 
     const pulse = warningMix * (0.5 + 0.5 * Math.sin(t * 9.2));
     for (let i = 0; i < beaconLenses.length; i++) {
@@ -10411,21 +10795,27 @@ function buildTidebreaker(scene) {
         const curl = THREE.MathUtils.smoothstep(v, 0.68, 1) * Math.sin(THREE.MathUtils.clamp((v - 0.68) / 0.32, 0, 1) * Math.PI) * 3.8;
         for (let col = 0; col <= breakerCols; col++) {
           const u = col / breakerCols;
-          const x = THREE.MathUtils.lerp(-65, 65, u);
-          const chop = Math.sin(x * 0.12 + t * 2.4 + v * 6.0) * (0.18 + v * 0.38);
-          const z = frontZ - Math.pow(v, 1.55) * 3.2 + curl + chop;
-          const crestVariation = Math.sin(x * 0.09 + t * 2.1) * (0.16 + v * 0.58)
-            + Math.sin(x * 0.23 - t * 1.7) * v * 0.24;
+          const across = THREE.MathUtils.lerp(-waveHalfSpan, waveHalfSpan, u);
+          const chop = Math.sin(across * 0.12 + t * 2.4 + v * 6.0) * (0.18 + v * 0.38);
+          const along = waveFront - Math.pow(v, 1.55) * 3.2 + curl + chop;
+          const x = waveDirection.x * along + waveTangent.x * across;
+          const z = waveDirection.z * along + waveTangent.z * across;
+          const crestVariation = Math.sin(across * 0.09 + t * 2.1) * (0.16 + v * 0.58)
+            + Math.sin(across * 0.23 - t * 1.7) * v * 0.24;
           const y = level - 0.4 + v * 5.7 - THREE.MathUtils.smoothstep(v, 0.84, 1) * 0.95 + crestVariation;
           breakerPositions.setXYZ(row * (breakerCols + 1) + col, x, y, z);
         }
       }
       breakerPositions.needsUpdate = true;
       for (const ch of characters) {
-        if (!ch?.alive || ch.pos.y > 4.6 || Math.abs(ch.pos.x) > 65) continue;
-        if (ch._tidebreakerWaveCycle === cycleId || frontZ < ch.pos.z - 0.8) continue;
+        if (!ch?.alive || ch.pos.y > 4.6 || Math.abs(ch.pos.x) > 65 || Math.abs(ch.pos.z) > 35) continue;
+        const characterProgress = ch.pos.x * waveDirection.x + ch.pos.z * waveDirection.z;
+        if (ch._tidebreakerWaveCycle === cycleId || waveFront < characterProgress - 0.8) continue;
         ch._tidebreakerWaveCycle = cycleId;
-        ch.vel.z = Math.max(ch.vel.z, 15.5);
+        const currentForwardSpeed = ch.vel.x * waveDirection.x + ch.vel.z * waveDirection.z;
+        const impulse = Math.max(0, 15.5 - currentForwardSpeed);
+        ch.vel.x += waveDirection.x * impulse;
+        ch.vel.z += waveDirection.z * impulse;
         ch.vel.y = Math.max(ch.vel.y, 5.8);
         ch.grounded = false;
         world.onSurgeHit?.(ch);
@@ -10439,7 +10829,9 @@ function buildTidebreaker(scene) {
     // without stun-locking anyone. Elevated routes are completely unaffected.
     if (level > 0.2) for (const ch of characters) {
       if (!ch?.alive || ch.pos.y > 2.2 || Math.abs(ch.pos.x) > 62 || Math.abs(ch.pos.z) > 33) continue;
-      ch.vel.z += (phase === 'surge' ? 2.8 : 0.7) * dt;
+      const currentStrength = (phase === 'surge' ? 2.8 : 0.7) * dt;
+      ch.vel.x += waveDirection.x * currentStrength;
+      ch.vel.z += waveDirection.z * currentStrength;
     }
 
     const sprayOpacity = phase === 'surge' ? Math.min(1, surgeMix * 2.6) : 0;
@@ -10450,10 +10842,18 @@ function buildTidebreaker(scene) {
       sprayLife[i] -= dt;
       const j = i * 3;
       if (sprayLife[i] <= 0 && phase === 'surge') {
-        sprayPositions[j] = rand(-65, 65);
+        const across = rand(-waveHalfSpan, waveHalfSpan);
+        const along = waveFront + rand(-1.8, 2.2);
+        sprayPositions[j] = waveDirection.x * along + waveTangent.x * across;
         sprayPositions[j + 1] = level + rand(3.5, 6.3);
-        sprayPositions[j + 2] = frontZ + rand(-1.8, 2.2);
-        sprayVelocity[i].set(rand(-0.9, 0.9), rand(2.2, 6.2), rand(0.8, 4.2));
+        sprayPositions[j + 2] = waveDirection.z * along + waveTangent.z * across;
+        const lateralVelocity = rand(-0.9, 0.9);
+        const forwardVelocity = rand(0.8, 4.2);
+        sprayVelocity[i].set(
+          waveTangent.x * lateralVelocity + waveDirection.x * forwardVelocity,
+          rand(2.2, 6.2),
+          waveTangent.z * lateralVelocity + waveDirection.z * forwardVelocity,
+        );
         sprayLife[i] = rand(0.35, 1.05);
       } else if (sprayLife[i] > 0) {
         sprayPositions[j] += sprayVelocity[i].x * dt;
@@ -10519,7 +10919,11 @@ function buildTidebreaker(scene) {
     [-54, 0, -22], [-54, 0, 0], [-54, 0, 22], [-38, 0, -18], [-38, 0, 0], [-38, 0, 18],
     [-22, 0, -24], [-22, 0, 0], [-22, 0, 24], [-8, 0, -14], [-13, 0, 20],
     [8, 0, -18], [8, 0, 18], [24, 0, -22], [24, 0, 0], [24, 0, 22],
-    [40, 0, -18], [40, 0, 0], [40, 0, 18], [55, 0, -18], [55, 0, 0], [55, 0, 18],
+    [40, 0, -22], [40, 0, 0], [40, 0, 18], [55, 0, -22], [55, 0, 0], [55, 0, 18],
+    // surge winch platform: west ramp, two paths around the drum, south ramp
+    [-20, 0, -5], [-18, 2, -5], [-15, 4, -5], [-13, 4, 0], [-4, 4, 0],
+    [-15, 4, -9], [-11, 4, -9], [-3, 4, -8], [-1, 4, 2], [-1, 2, 7], [-1, 0, 12],
+    [-3.5, 0, -12.5], [-3.5, 2, -10.7], [-3.5, 4, -9.2],
     // north access ramp and deck
     [0, 2.7, -22], [0, 5.3, -26], [0, 8, -31], [-20, 8, -35], [-40, 8, -35], [-58, 8, -35],
     [20, 8, -35], [40, 8, -35], [58, 8, -35],
@@ -10538,6 +10942,20 @@ function buildTidebreaker(scene) {
     [0, 5.3, -26, 0, 8, -31, false],
     [0, 0, 18, 0, 2.7, 22, false],
     [0, 5.3, 26, 0, 8, 31, false],
+    [-20, 0, -5, -18, 2, -5, false],
+    [-18, 2, -5, -15, 4, -5, false],
+    [-15, 4, -5, -13, 4, 0, false],
+    [-15, 4, -5, -15, 4, -9, false],
+    [-15, 4, -9, -11, 4, -9, false],
+    [-11, 4, -9, -3, 4, -8, false],
+    [-13, 4, 0, -4, 4, 0, false],
+    [-3, 4, -8, -4, 4, 0, false],
+    [-4, 4, 0, -1, 4, 2, false],
+    [-1, 4, 2, -1, 2, 7, false],
+    [-1, 2, 7, -1, 0, 12, false],
+    [-3.5, 0, -12.5, -3.5, 2, -10.7, false],
+    [-3.5, 2, -10.7, -3.5, 4, -9.2, false],
+    [-3.5, 4, -9.2, -3, 4, -8, false],
     [-58, 8, -35, -53, 10, -26, false],
     [-53, 12, -21, -53, 14, -15, false],
     [-58, 8, 35, -53, 10, 26, false],
@@ -11491,6 +11909,375 @@ function buildOlympusMons(scene) {
   return world;
 }
 
+/* ============== SECRET MAP — SOLAR FLARE (orbital power station) ============== */
+function buildSolarFlare(scene) {
+  const world = newWorld({
+    gravity: 8, jumpVel: 8.6, killY: -70, playerSpeed: 11.5,
+    waypointLinkDist: 19, waypointLinkDy: 5,
+    availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper'],
+  });
+  scene.background = new THREE.Color(0x03040b);
+  baseLighting(scene, 0xffb85a, 0x120b18, [70, 110, -55], 100);
+
+  // Deep star field with a hot red corona behind the station.
+  const starGeo = new THREE.BufferGeometry();
+  const starPos = new Float32Array(1300 * 3);
+  for (let i = 0; i < 1300; i++) {
+    const p = V(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(260, 430));
+    starPos.set([p.x, p.y, p.z], i * 3);
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+    color: 0xfff4dc, size: 1.35, sizeAttenuation: false, fog: false,
+  })));
+
+  const hot = 0xff7a18;
+  const cool = 0x36d8ff;
+  const hull = 0xd8d6ca;
+  const inner = 0x26384a;
+  const floor = 0x5d6872;
+
+  const addModuleShell = (cx, baseY, cz, w, d, openings = {}) => {
+    const wallH = 6.2;
+    addBox(scene, world, cx, baseY - 0.55, cz, w, 1.1, d, floor, { tex: 'solar-hull' });
+    addBox(scene, world, cx, baseY + wallH + 0.35, cz, w, 0.7, d, hull, { tex: 'solar-hull' });
+    const sideWall = (side, openCenter = null) => {
+      const alongZ = side === 'west' || side === 'east';
+      const length = alongZ ? d : w;
+      const gap = openCenter == null ? 0 : 5.4;
+      const wallX = side === 'west' ? cx - w / 2 : side === 'east' ? cx + w / 2 : cx;
+      const wallZ = side === 'north' ? cz - d / 2 : side === 'south' ? cz + d / 2 : cz;
+      if (openCenter == null) {
+        addBox(scene, world, wallX, baseY + wallH / 2, wallZ,
+          alongZ ? 1 : length, wallH, alongZ ? length : 1, hull, { tex: 'solar-hull' });
+        return;
+      }
+      const local = openCenter - (alongZ ? cz : cx);
+      const before = local - gap / 2 + length / 2;
+      const after = length / 2 - local - gap / 2;
+      if (before > 0.1) addBox(scene, world,
+        alongZ ? wallX : cx - length / 2 + before / 2,
+        baseY + wallH / 2,
+        alongZ ? cz - length / 2 + before / 2 : wallZ,
+        alongZ ? 1 : before, wallH, alongZ ? before : 1, hull, { tex: 'solar-hull' });
+      if (after > 0.1) addBox(scene, world,
+        alongZ ? wallX : cx + length / 2 - after / 2,
+        baseY + wallH / 2,
+        alongZ ? cz + length / 2 - after / 2 : wallZ,
+        alongZ ? 1 : after, wallH, alongZ ? after : 1, hull, { tex: 'solar-hull' });
+    };
+    for (const side of ['west', 'east', 'north', 'south']) sideWall(side, openings[side]);
+  };
+  const addPassage = (x, baseY, z, w, d, axis = 'x') => {
+    addBox(scene, world, x, baseY - 0.45, z, w, 0.9, d, floor, { tex: 'solar-hull' });
+    addBox(scene, world, x, baseY + 4.8, z, w, 0.55, d, hull, { tex: 'solar-hull' });
+    if (axis === 'x') for (const sz of [-1, 1])
+      addBox(scene, world, x, baseY + 2.35, z + sz * d / 2, w, 4.7, 0.7, inner, { tex: 'solar-hull' });
+    else for (const sx of [-1, 1])
+      addBox(scene, world, x + sx * w / 2, baseY + 2.35, z, 0.7, 4.7, d, inner, { tex: 'solar-hull' });
+  };
+
+  // Four readable modules. Interiors are intentionally open rooms; geometry
+  // inside them stays waist-high so the hull boundaries and exits remain clear.
+  addModuleShell(-42, 0, 0, 28, 24, { east: 0 });                   // engineering
+  addModuleShell(0, 0, 0, 32, 28, { west: 0, south: 8 });           // central lower
+  addModuleShell(12, 0, 38, 24, 22, { north: 12 });                 // science
+  addModuleShell(42, 7, 0, 26, 24, { west: 0, east: 0 });           // elevated bridge
+
+  // Ground engineering tube, one deliberate L-bend to science, and one upper
+  // bridge. Each connection has a single obvious direction of travel.
+  addPassage(-22, 0, 0, 12, 6, 'x');
+  addPassage(8, 0, 19.5, 6, 11, 'z');
+  addPassage(10, 0, 25, 10, 6, 'x');
+  addPassage(12, 0, 29, 6, 8, 'z');
+  addPassage(22.5, 7, 0, 13, 6, 'x');
+  addPassage(29, 7, 0, 6, 6, 'x');
+
+  // Central upper storey with a large ramp opening. No partitions are placed
+  // around the landing, so players immediately understand the floor change.
+  addBox(scene, world, -11, 7.1, 0, 10, 0.6, 28, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 11, 7.1, 0, 10, 0.6, 28, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 0, 7.1, 10, 12, 0.6, 8, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 0, 7.1, -10, 12, 0.6, 8, hull, { tex: 'solar-hull' });
+  for (const [x, z, w, d] of [[-16, 0, 1, 28], [16, -7, 1, 14], [16, 11, 1, 6], [0, -14, 32, 1], [0, 14, 32, 1]])
+    addBox(scene, world, x, 10.1, z, w, 6.2, d, hull, { tex: 'solar-hull' });
+  addBox(scene, world, 0, 13.55, 0, 32, 0.7, 28, hull, { tex: 'solar-hull' });
+  addRamp(scene, world, {
+    axis: 'z', minX: -5, maxX: 5, minZ: -8, maxZ: 8,
+    h0: 0, h1: 7.4, color: 0xc7c9c3, tex: 'solar-hull',
+  });
+  addJumpPad(scene, world, 10, 0.2, -9, 12.5, 0, 0, cool);
+
+  // Purposeful room furniture: one reactor island, one map table, one lab
+  // bench, and one bridge console. Nothing is tall enough to become a maze.
+  for (const [x, y, z, w, d, color] of [
+    [-42, 1.15, 0, 10, 5, 0x344b5c], [2, 1.05, 5, 8, 4, 0x4b5965],
+    [12, 1.05, 38, 9, 3, 0x365266], [42, 8.05, 3, 11, 3, 0x394f62],
+  ]) addBox(scene, world, x, y, z, w, 2.1, d, color, { tex: 'solar-hull' });
+
+  // Star windows give every major room an exterior orientation cue.
+  const windowCanvas = document.createElement('canvas');
+  windowCanvas.width = 512; windowCanvas.height = 128;
+  const wg = windowCanvas.getContext('2d');
+  wg.fillStyle = '#020714'; wg.fillRect(0, 0, 512, 128);
+  const windowRnd = seededRandom(0x5701a55);
+  for (let i = 0; i < 115; i++) {
+    wg.fillStyle = windowRnd() > 0.9 ? '#8edfff' : '#ffffff';
+    const s = windowRnd() > 0.94 ? 2 : 1;
+    wg.fillRect(windowRnd() * 512, windowRnd() * 128, s, s);
+  }
+  const windowTex = new THREE.CanvasTexture(windowCanvas);
+  windowTex.colorSpace = THREE.SRGBColorSpace;
+  const addWindow = (x, y, z, w, h, yaw = 0) => {
+    const frame = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.8, h + 0.8),
+      new THREE.MeshBasicMaterial({ color: 0x26394a, side: THREE.DoubleSide }));
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ map: windowTex, color: 0xbdeaff, side: THREE.DoubleSide, toneMapped: false }));
+    frame.position.set(x, y, z); glass.position.set(x, y, z);
+    frame.rotation.y = glass.rotation.y = yaw;
+    const nx = Math.sin(yaw), nz = Math.cos(yaw);
+    glass.position.x += nx * 0.03; glass.position.z += nz * 0.03;
+    scene.add(frame, glass);
+  };
+  addWindow(-42, 3.3, -11.48, 15, 3.1, 0);
+  addWindow(0, 10.4, -13.48, 18, 3.4, 0);
+  addWindow(12, 3.3, 48.48, 13, 3.1, Math.PI);
+  addWindow(54.48, 10.4, 0, 15, 3.4, Math.PI / 2);
+  addWindow(-22, 2.8, -2.97, 6.5, 2.2, 0);
+
+  // Shuttle-bay-style atmospheric curtain: completely non-solid, luminous,
+  // and placed in the upper aft opening leading directly onto the outer hull.
+  const fieldCanvas = document.createElement('canvas');
+  fieldCanvas.width = fieldCanvas.height = 256;
+  const fg = fieldCanvas.getContext('2d');
+  const fieldGrad = fg.createLinearGradient(0, 0, 0, 256);
+  fieldGrad.addColorStop(0, 'rgba(175,250,255,.35)');
+  fieldGrad.addColorStop(0.5, 'rgba(45,215,255,.68)');
+  fieldGrad.addColorStop(1, 'rgba(95,125,255,.38)');
+  fg.fillStyle = fieldGrad; fg.fillRect(0, 0, 256, 256);
+  fg.strokeStyle = 'rgba(225,255,255,.48)'; fg.lineWidth = 2;
+  for (let y = 12; y < 256; y += 20) { fg.beginPath(); fg.moveTo(0, y); fg.lineTo(256, y + 5); fg.stroke(); }
+  const fieldTex = new THREE.CanvasTexture(fieldCanvas);
+  fieldTex.wrapS = fieldTex.wrapT = THREE.RepeatWrapping;
+  const energyField = new THREE.Mesh(new THREE.PlaneGeometry(16, 7.2),
+    new THREE.MeshBasicMaterial({ map: fieldTex, transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+  energyField.rotation.y = Math.PI / 2;
+  energyField.position.set(55.08, 10.35, 0);
+  scene.add(energyField);
+  const fieldLight = new THREE.PointLight(cool, 12, 24);
+  fieldLight.position.set(53, 10.5, 0);
+  scene.add(fieldLight);
+  for (const [x, y, z, color] of [
+    [-42, 5.7, 0, 0x58ddff], [0, 5.7, 0, 0xffb34c],
+    [12, 5.7, 38, 0x58ddff], [0, 12.7, 0, 0x58ddff],
+    [42, 12.7, 0, 0xffa63d],
+  ]) {
+    addBox(scene, world, x, y, z, 5.5, 0.12, 0.28, color, {
+      collide: false, shadow: false, emissive: color, emissiveIntensity: 1.5,
+    });
+    const light = new THREE.PointLight(color, 5.5, 15);
+    light.position.set(x, y - 0.8, z);
+    scene.add(light);
+  }
+
+  // The end module opens through its air curtain onto an irregular exterior
+  // hull chain rather than the roof of one giant rectangle.
+  const solarExteriorZones = [
+    { minX: 54, maxX: 72, minZ: -6, maxZ: 6 },
+    { minX: 66, maxX: 84, minZ: 0, maxZ: 16 },
+    { minX: 78, maxX: 98, minZ: -9, maxZ: 9 },
+  ];
+  for (const [x, z, w, d] of [[63, 0, 18, 12], [75, 8, 18, 16], [88, 0, 20, 18]])
+    addBox(scene, world, x, 7.45, z, w, 0.9, d, hull, { tex: 'solar-hull' });
+  const sensorDish = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.35, 8, 48, Math.PI * 1.35),
+    mat(0xb6c9d1, { metalness: 0.55, roughness: 0.28 }));
+  sensorDish.position.set(88, 13.2, 0);
+  sensorDish.rotation.set(0.4, -0.7, 0.3);
+  scene.add(sensorDish);
+
+  // The center is only the station's flare emitter. The actual sun is a
+  // colossal environmental body off the port side, large enough to dominate
+  // the skyline and silhouette whole station wings against its surface.
+  addBox(scene, world, 0, 1.6, 0, 8, 3.2, 8, 0x34384a, { tex: 'panel' });
+  const solarCanvas = document.createElement('canvas');
+  solarCanvas.width = 1024;
+  solarCanvas.height = 512;
+  const sg = solarCanvas.getContext('2d');
+  const solarGradient = sg.createLinearGradient(0, 0, 0, 512);
+  solarGradient.addColorStop(0, '#ffbd35');
+  solarGradient.addColorStop(0.48, '#ff7a12');
+  solarGradient.addColorStop(1, '#c93a05');
+  sg.fillStyle = solarGradient;
+  sg.fillRect(0, 0, 1024, 512);
+  const solarRnd = seededRandom(0x501af1a7);
+  sg.lineCap = 'round';
+  for (let i = 0; i < 1350; i++) {
+    const x = solarRnd() * 1024;
+    const y = solarRnd() * 512;
+    const len = 10 + solarRnd() * 48;
+    const bend = (solarRnd() - 0.5) * 28;
+    sg.strokeStyle = solarRnd() > 0.5
+      ? `rgba(255,244,154,${0.08 + solarRnd() * 0.3})`
+      : `rgba(105,18,0,${0.05 + solarRnd() * 0.18})`;
+    sg.lineWidth = 0.6 + solarRnd() * 2.2;
+    sg.beginPath();
+    sg.moveTo(x, y);
+    sg.quadraticCurveTo(x + len * 0.48, y + bend, x + len, y + bend * 0.25);
+    sg.stroke();
+  }
+  for (let i = 0; i < 18; i++) {
+    const x = solarRnd() * 1024;
+    const y = 55 + solarRnd() * 402;
+    const rx = 5 + solarRnd() * 18;
+    const spot = sg.createRadialGradient(x, y, 0, x, y, rx);
+    spot.addColorStop(0, 'rgba(45,4,0,.82)');
+    spot.addColorStop(0.5, 'rgba(105,18,0,.5)');
+    spot.addColorStop(1, 'rgba(125,22,0,0)');
+    sg.fillStyle = spot;
+    sg.beginPath(); sg.ellipse(x, y, rx, rx * 0.48, solarRnd() * Math.PI, 0, Math.PI * 2); sg.fill();
+  }
+  const solarTexture = new THREE.CanvasTexture(solarCanvas);
+  solarTexture.colorSpace = THREE.SRGBColorSpace;
+  const sunCore = new THREE.Mesh(new THREE.SphereGeometry(315, 64, 40),
+    new THREE.MeshBasicMaterial({ map: solarTexture, color: 0xffffff, toneMapped: false }));
+  sunCore.position.set(-300, 75, -340);
+  scene.add(sunCore);
+  const corona = new THREE.Mesh(new THREE.SphereGeometry(342, 48, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0xff6818, transparent: true, opacity: 0.16, side: THREE.FrontSide,
+      depthWrite: false, toneMapped: false,
+    }));
+  corona.position.copy(sunCore.position);
+  scene.add(corona);
+  const sunLight = new THREE.DirectionalLight(0xff8a32, 4.8);
+  sunLight.position.set(-300, 110, -340);
+  sunLight.target.position.set(0, 0, 0);
+  scene.add(sunLight);
+  scene.add(sunLight.target);
+
+  // Solar-panel wings sit on the exposed lower-hull shoulders.
+  for (const [x, z] of [[63, 0], [75, 8], [88, 0]]) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(7, 0.3, 10),
+      mat(0x173c71, { emissive: 0x092050, emissiveIntensity: 0.65, metalness: 0.65, roughness: 0.28 }));
+    panel.position.set(x, 8.25, z);
+    scene.add(panel);
+    world.colliders.push({ type: 'box', min: V(x - 3.5, 7.9, z - 5), max: V(x + 3.5, 8.4, z + 5) });
+  }
+  for (const [x, y, z, w, d] of [
+    [-47, 1.3, 6, 5, 3], [6, 1.3, -7, 5, 3], [16, 1.3, 42, 4, 5],
+    [-7, 8.6, 7, 4, 5], [45, 8.6, 4, 3, 4], [88, 8.8, 4, 4, 4],
+  ]) addBox(scene, world, x, y, z, w, 2.6, d, 0x425468, { tex: 'solar-hull' });
+
+  // The flare is a physical-looking plasma tentacle from the nearby sun, not
+  // a rotating arena laser. It snakes across the void and terminates at the
+  // exterior hull's aft emitter.
+  const strikePoint = V(75, 9.2, 8);
+  const towardStation = strikePoint.clone().sub(sunCore.position).normalize();
+  const flareStart = sunCore.position.clone().addScaledVector(towardStation, 305);
+  const flareCurve = new THREE.CatmullRomCurve3([
+    flareStart,
+    flareStart.clone().lerp(strikePoint, 0.24).add(V(12, 24, -8)),
+    flareStart.clone().lerp(strikePoint, 0.48).add(V(-18, -12, 20)),
+    flareStart.clone().lerp(strikePoint, 0.72).add(V(15, 16, -12)),
+    strikePoint,
+  ]);
+  const flareGlowMat = new THREE.MeshBasicMaterial({
+    color: 0xff2108, transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const flareCoreMat = new THREE.MeshBasicMaterial({
+    color: 0xffc04a, transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+  });
+  const flareGlow = new THREE.Mesh(new THREE.TubeGeometry(flareCurve, 72, 7.5, 8, false), flareGlowMat);
+  const flareCore = new THREE.Mesh(new THREE.TubeGeometry(flareCurve, 72, 2.8, 8, false), flareCoreMat);
+  scene.add(flareGlow, flareCore);
+  const flareBranches = [];
+  for (const [offset, bend] of [[V(8, 0, 7), V(14, 10, -2)], [V(-9, 2, 5), V(-12, -4, 9)], [V(5, 5, -8), V(8, 13, -10)]]) {
+    const end = strikePoint.clone().add(offset);
+    const curve = new THREE.CatmullRomCurve3([
+      flareCurve.getPoint(0.68), flareCurve.getPoint(0.83).add(bend), end,
+    ]);
+    const branch = new THREE.Mesh(new THREE.TubeGeometry(curve, 28, 1.25, 6, false), flareCoreMat.clone());
+    scene.add(branch);
+    flareBranches.push(branch);
+  }
+  const impactLight = new THREE.PointLight(0xff3518, 0, 180);
+  impactLight.position.copy(strikePoint).add(V(0, 5, 0));
+  scene.add(impactLight);
+  const baseBackground = scene.background.clone();
+  const flashBackground = new THREE.Color(0xffd0a8);
+  let previousPhase = 'calm';
+  let struckCycle = -1;
+  world.anim.push((dt, t, characters) => {
+    const CYCLE = 70;
+    const cycle = Math.floor(t / CYCLE);
+    const local = t % CYCLE;
+    const warning = local >= 26 && local < 34;
+    const striking = local >= 32 && local < 36;
+    const impact = local >= 34 && local < 35.2;
+    const phase = impact ? 'impact' : warning ? 'warning' : 'calm';
+    if (phase === 'warning' && previousPhase === 'calm') world.onSolarFlareWarning?.();
+    previousPhase = phase;
+    sunCore.rotation.y += dt * 0.007;
+    sunCore.rotation.x = Math.sin(t * 0.05) * 0.025;
+    corona.scale.setScalar(1.01 + Math.sin(t * 1.7) * 0.025);
+    corona.material.opacity = 0.13 + Math.sin(t * 2.1) * 0.035 + (warning ? 0.08 : 0);
+    fieldTex.offset.y = (t * 0.13) % 1;
+    energyField.material.opacity = 0.62 + Math.sin(t * 5.5) * 0.1;
+    const charge = striking ? THREE.MathUtils.smoothstep(local, 32, 34) : 0;
+    const fade = local >= 34 ? 1 - THREE.MathUtils.smoothstep(local, 34.3, 36) : 1;
+    flareGlowMat.opacity = striking ? (0.16 + charge * 0.5) * fade : 0;
+    flareCoreMat.opacity = striking ? (0.3 + charge * 0.7) * fade : 0;
+    for (const branch of flareBranches) branch.material.opacity = striking ? charge * 0.72 * fade : 0;
+    const flash = impact ? 1 - THREE.MathUtils.smoothstep(local, 34, 35.2) : 0;
+    impactLight.intensity = flash * 520;
+    scene.background.copy(baseBackground).lerp(flashBackground, flash * 0.72);
+    world.cameraShake = impact ? Math.max(world.cameraShake || 0, flash) : Math.max(0, (world.cameraShake || 0) - dt * 2.2);
+    if (local >= 34 && struckCycle !== cycle) {
+      struckCycle = cycle;
+      world.cameraShake = 1;
+      world.onSolarFlareStrike?.();
+      for (const ch of characters) {
+        if (!ch?.alive) continue;
+        const onExterior = solarExteriorZones.some(zone =>
+          ch.pos.x >= zone.minX && ch.pos.x <= zone.maxX &&
+          ch.pos.z >= zone.minZ && ch.pos.z <= zone.maxZ && ch.pos.y >= 7.4);
+        const onRoof = ch.pos.y > 13.7;
+        const outside = onExterior || onRoof;
+        if (!outside) continue;
+        ch.vel.y = Math.max(ch.vel.y, 3.8);
+        ch.grounded = false;
+        world.onSolarFlareHit?.(ch);
+      }
+    }
+  });
+
+  world.spawns.blue.push(V(-48, 0.1, -6), V(-48, 0.1, 6), V(-8, 7.4, 8));
+  world.spawns.red.push(V(12, 0.1, 34), V(12, 0.1, 42), V(45, 7.4, 4));
+  world.spawns.ffa.push(...world.spawns.blue, ...world.spawns.red, V(0, 0.1, 8), V(5, 7.4, -8), V(75, 8.1, 8));
+  for (const [x, y, z] of [
+    [-48, 0.1, -6], [-48, 0.1, 6], [-36, 0.1, 0],
+    [-28, 0.1, 0], [-22, 0.1, 0], [-16, 0.1, 0],
+    [-8, 0.1, -8], [-8, 0.1, 8], [0, 0.1, 0], [8, 0.1, 8],
+    [8, 0.1, 14], [8, 0.1, 20], [10, 0.1, 25], [12, 0.1, 29],
+    [12, 0.1, 34], [12, 0.1, 42],
+    [0, 7.4, 0], [8, 7.4, 0], [16, 7.4, 0], [22, 7.4, 0],
+    [29, 7.4, 0], [38, 7.4, 0], [46, 7.4, 0],
+    [63, 8.1, 0], [75, 8.1, 8], [88, 8.1, 0],
+  ]) wp(world, x, y, z);
+  world.manualLinks.push([0, 0.1, 0, 0, 7.4, 0], [10, 0.1, -9, 8, 7.4, -8]);
+  pk(world, 'health', -48, 0.2, 6);
+  pk(world, 'shield', 45, 7.5, 4);
+  pk(world, 'ammo', 12, 0.2, 42, { weapon: 'scatter' });
+  // The premium arsenal is deliberately exposed to the flare cycle.
+  pk(world, 'weapon', 63, 8.5, 0, { weapon: 'hyper' });
+  pk(world, 'weapon', 75, 8.5, 8, { weapon: 'whomper' });
+  pk(world, 'weapon', 88, 8.5, 0, { weapon: 'zooka' });
+  mergeStatic(scene, world);
+  return world;
+}
+
 export const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', emoji: '🏟️',
     desc: 'Indoor labyrinth: crate maze, mezzanine, grand atrium with a floating gold platform, sunken basement.',
@@ -11519,6 +12306,9 @@ export const MAPS = [
   { id: 'bloom', name: 'INFINITE BLOOM', emoji: '👁️', secret: true,
     desc: 'A sentient machine realm recursively contains itself. Fall or fire into the living miniature and emerge above the full-size arena at the same point.',
     thumb: 'linear-gradient(135deg,#101600,#b7ed1c 52%,#e43814)', build: buildInfiniteBloom },
+  { id: 'solar', name: 'SOLAR FLARE', emoji: '☀️', secret: true,
+    desc: 'A compact two-deck starship beside a colossal sun: tight maintenance tunnels, bridge rooms, a permeable air curtain, and low-gravity combat across the outer hull.',
+    thumb: 'linear-gradient(135deg,#080611,#ff5a18 48%,#ffd45a)', build: buildSolarFlare },
   { id: 'olympus', name: 'OLYMPUS MONS', emoji: '🔴', secret: true,
     desc: 'A Greco-futurist cliff-temple on Mars: stepped golden palaces, Olympian statues, an ornate Aether Crown, connected roof arenas, a mountain-sized Hades cavern, and waterfall caves.',
     thumb: 'linear-gradient(135deg,#351a24,#c75b36)', build: buildOlympusMons },

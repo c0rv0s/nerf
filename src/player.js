@@ -340,6 +340,7 @@ export class Player {
     }
     const env = this._environmentState();
     const moveScale = this.world.characterMoveScale?.(this) || 1;
+    const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
     const speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * env.speedMult;
     const f = paralyzed ? 0 : (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
     const s = paralyzed ? 0 : (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
@@ -349,14 +350,14 @@ export class Player {
     if (wl > 0) { wx /= wl; wz /= wl; }
 
     const prevHs = Math.hypot(this.vel.x, this.vel.z);
-    const accel = this.grounded ? 60 : 18;
+    const accel = this.grounded ? 60 * traction : 18;
     this.vel.x += wx * speed * accel * dt * 0.12;
     this.vel.z += wz * speed * accel * dt * 0.12;
-    const damp = this.grounded ? Math.exp(-8 * dt) : Math.exp(-0.4 * dt);
+    const damp = this.grounded ? Math.exp(-8 * traction * dt) : Math.exp(-0.4 * dt);
     if (wl === 0 && this.grounded) { this.vel.x *= damp; this.vel.z *= damp; }
     if (paralyzed) { this.vel.x *= Math.exp(-12 * dt); this.vel.z *= Math.exp(-12 * dt); }
     const hs = Math.hypot(this.vel.x, this.vel.z);
-    const cap = this.grounded ? speed : Math.max(speed, prevHs);
+    const cap = this.grounded && traction >= 0.98 ? speed : Math.max(speed, prevHs);
     if (hs > cap) { this.vel.x *= cap / hs; this.vel.z *= cap / hs; }
     this._speedRatio = Math.min(hs / speed, 1);
 

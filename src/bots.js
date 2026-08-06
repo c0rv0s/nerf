@@ -851,7 +851,8 @@ export class Bot {
         moveZ = away.z;
         if (this.grounded) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.35);
       }
-      const accel = this.grounded ? 8 : 1.5;
+      const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
+      const accel = this.grounded ? 8 * traction : 1.5;
       this.vel.x += (moveX * speed - this.vel.x) * Math.min(1, accel * dt);
       this.vel.z += (moveZ * speed - this.vel.z) * Math.min(1, accel * dt);
     }
