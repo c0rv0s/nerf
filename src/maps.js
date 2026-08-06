@@ -7900,34 +7900,46 @@ function addCanopyStorm(scene, world) {
 
   const cloudDome = addStormCloudDome(scene);
 
+  // Viewer-centered rain: a fixed arena box + one shared slant made streaks
+  // disappear when facing away from the volume or lining up with the wind.
   const rainCount = 1900;
   const rainPositions = new Float32Array(rainCount * 6);
+  const rainOrigin = { x: 0, z: 0 };
+  const rainHalfX = 40;
+  const rainHalfZ = 40;
   const rainWindX = -0.42;
   const rainWindZ = 0.18;
   const rainLenY = 3.2;
   const rainLenScale = 1.65;
   const resetDrop = (i, y = rand(8, 44)) => {
     const j = i * 6;
-    const x = rand(-92, 92);
-    const z = rand(-92, 92);
+    const x = rainOrigin.x + rand(-rainHalfX, rainHalfX);
+    const z = rainOrigin.z + rand(-rainHalfZ, rainHalfZ);
+    // Keep the prevailing wind, but jitter each streak so one camera yaw cannot
+    // collapse the whole field to near-zero screen width.
+    const slantX = (rainWindX + rand(-0.18, 0.18)) * rainLenScale;
+    const slantZ = (rainWindZ + rand(-0.14, 0.14)) * rainLenScale;
     rainPositions[j] = x;
     rainPositions[j + 1] = y;
     rainPositions[j + 2] = z;
-    rainPositions[j + 3] = x + rainWindX * rainLenScale;
+    rainPositions[j + 3] = x + slantX;
     rainPositions[j + 4] = y - rainLenY;
-    rainPositions[j + 5] = z + rainWindZ * rainLenScale;
+    rainPositions[j + 5] = z + slantZ;
   };
   for (let i = 0; i < rainCount; i++) resetDrop(i);
   const rainGeo = new THREE.BufferGeometry();
   rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  rainGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 24, 0), 110);
   const rainMat = new THREE.LineBasicMaterial({
     color: 0xb4ddff,
     transparent: true,
     opacity: 0,
     depthWrite: false,
+    fog: false,
   });
   const rain = new THREE.LineSegments(rainGeo, rainMat);
   rain.frustumCulled = false;
+  rain.renderOrder = 3;
   scene.add(rain);
 
   const boltPoints = 11;
@@ -8040,9 +8052,17 @@ function addCanopyStorm(scene, world) {
     }
 
     if (mix > 0.01) {
+      const viewer = characters.find(ch => ch?.isPlayer && ch.alive) || characters.find(ch => ch?.alive);
+      if (viewer) {
+        rainOrigin.x = viewer.pos.x;
+        rainOrigin.z = viewer.pos.z;
+        rainGeo.boundingSphere.center.set(rainOrigin.x, viewer.pos.y + 18, rainOrigin.z);
+      }
       const fall = 55 * dt;
       const windX = rainWindX * fall / rainLenY;
       const windZ = rainWindZ * fall / rainLenY;
+      const wrapX = rainHalfX * 2;
+      const wrapZ = rainHalfZ * 2;
       for (let i = 0; i < rainCount; i++) {
         const j = i * 6;
         rainPositions[j] += windX;
@@ -8051,7 +8071,21 @@ function addCanopyStorm(scene, world) {
         rainPositions[j + 3] += windX;
         rainPositions[j + 4] -= fall;
         rainPositions[j + 5] += windZ;
-        if (rainPositions[j + 4] < -4 || Math.abs(rainPositions[j]) > 96 || Math.abs(rainPositions[j + 2]) > 96) resetDrop(i, rand(40, 56));
+        let dx = rainPositions[j] - rainOrigin.x;
+        while (dx > rainHalfX) {
+          rainPositions[j] -= wrapX; rainPositions[j + 3] -= wrapX; dx -= wrapX;
+        }
+        while (dx < -rainHalfX) {
+          rainPositions[j] += wrapX; rainPositions[j + 3] += wrapX; dx += wrapX;
+        }
+        let dz = rainPositions[j + 2] - rainOrigin.z;
+        while (dz > rainHalfZ) {
+          rainPositions[j + 2] -= wrapZ; rainPositions[j + 5] -= wrapZ; dz -= wrapZ;
+        }
+        while (dz < -rainHalfZ) {
+          rainPositions[j + 2] += wrapZ; rainPositions[j + 5] += wrapZ; dz += wrapZ;
+        }
+        if (rainPositions[j + 4] < -4) resetDrop(i, rand(40, 56));
       }
       rainGeo.attributes.position.needsUpdate = true;
     }
@@ -10074,7 +10108,9 @@ function buildTidebreaker(scene) {
     toneMappingExposure: 0.94,
   });
   scene.background = new THREE.Color(0x172531);
-  scene.fog = new THREE.Fog(0x172531, 88, 330);
+  // Fog far sits inside the ocean extent so the horizon reads as open water
+  // instead of a hard plane edge from the ops roof or crane.
+  scene.fog = new THREE.Fog(0x172531, 96, 560);
 
   const sky = addStormCloudDome(scene);
   sky.material.opacity = 0.96;
@@ -10179,20 +10215,26 @@ function buildTidebreaker(scene) {
 
   const oceanSurfaceY = -7.25;
   const oceanBottomY = -240;
+  const oceanSize = 1600;
+  const oceanHalf = oceanSize * 0.5;
   const oceanMat = waterMaterial(0x061c29, 0x1b5a6c, 1.42, 0.34, 1, 1.72);
+  // One shared material, three LOD meshes. Size clears fog + camera far so the
+  // sea never ends in a visible cliff; segment counts stay modest because fog
+  // already softens distant chop.
   const oceanMeshes = [
-    new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 38, 38), oceanMat),
-    new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 72, 72), oceanMat),
-    new THREE.Mesh(new THREE.PlaneGeometry(430, 430, 124, 124), oceanMat),
+    new THREE.Mesh(new THREE.PlaneGeometry(oceanSize, oceanSize, 48, 48), oceanMat),
+    new THREE.Mesh(new THREE.PlaneGeometry(oceanSize, oceanSize, 84, 84), oceanMat),
+    new THREE.Mesh(new THREE.PlaneGeometry(oceanSize, oceanSize, 140, 140), oceanMat),
   ];
   for (const mesh of oceanMeshes) {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = oceanSurfaceY;
     mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
     scene.add(mesh);
   }
   const oceanZone = {
-    minX: -214, maxX: 214, minZ: -214, maxZ: 214,
+    minX: -oceanHalf, maxX: oceanHalf, minZ: -oceanHalf, maxZ: oceanHalf,
     surfaceY: oceanSurfaceY, bottomY: oceanBottomY,
     openOcean: true,
   };
@@ -10652,9 +10694,11 @@ function buildTidebreaker(scene) {
       standard.add(ring);
     }
   }
+  // Building-side termini seat inside the separator tanks so the runs read as
+  // hard-piped into the vessels instead of stopping a few feet short.
   const pipePaths = [
-    [V(41, 1.0, -18), V(41, 2.2, -8), V(34, 2.2, -2), V(26, 1.0, -2)],
-    [V(42, 0.8, 18), V(36, 2.8, 18), V(30, 2.8, 13), V(26, 1.1, 13)],
+    [V(47.6, 1.55, -14.15), V(43.2, 1.85, -16.4), V(41, 2.2, -8), V(34, 2.2, -2), V(26, 1.0, -2)],
+    [V(47.9, 1.45, 14.2), V(43.4, 1.7, 16.6), V(36, 2.8, 18), V(30, 2.8, 13), V(26, 1.1, 13)],
   ];
   const pipeGeometries = [];
   for (const points of pipePaths) {
@@ -10990,23 +11034,36 @@ function buildTidebreaker(scene) {
   spray.frustumCulled = false;
   essential.add(spray);
 
-  // Permanent slanted rain uses one line-segment buffer. Draw range and update
-  // work both follow visual quality; low still keeps enough rain for identity.
+  // Permanent slanted rain uses one line-segment buffer centered on the local
+  // viewer. A fixed arena box made rain vanish when facing open water, and a
+  // single shared slant collapsed every streak when the camera lined up with it.
+  // Draw range and update work both follow visual quality; low still keeps
+  // enough rain for identity.
   const rainCount = 980;
   const rainPositions = new Float32Array(rainCount * 6);
+  const rainOrigin = { x: 0, z: 0 };
+  const rainHalfX = 36;
+  const rainHalfZ = 36;
+  const rainLenY = 3.4;
   const resetRain = (i, y = rand(5, 55)) => {
     const j = i * 6;
-    const x = rand(-92, 92), z = rand(-72, 72);
+    const x = rainOrigin.x + rand(-rainHalfX, rainHalfX);
+    const z = rainOrigin.z + rand(-rainHalfZ, rainHalfZ);
+    // Per-drop slant variance keeps streaks from disappearing at one camera yaw.
+    const slantX = -0.45 - Math.random() * 0.7;
+    const slantZ = 0.12 + Math.random() * 0.45;
     rainPositions[j] = x; rainPositions[j + 1] = y; rainPositions[j + 2] = z;
-    rainPositions[j + 3] = x - 0.75; rainPositions[j + 4] = y - 3.4; rainPositions[j + 5] = z + 0.34;
+    rainPositions[j + 3] = x + slantX; rainPositions[j + 4] = y - rainLenY; rainPositions[j + 5] = z + slantZ;
   };
   for (let i = 0; i < rainCount; i++) resetRain(i);
   const rainGeo = new THREE.BufferGeometry();
   rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  rainGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 24, 0), 96);
   const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({
-    color: 0xaed9e9, transparent: true, opacity: 0.54, depthWrite: false,
+    color: 0xaed9e9, transparent: true, opacity: 0.58, depthWrite: false, fog: false,
   }));
   rain.frustumCulled = false;
+  rain.renderOrder = 3;
   essential.add(rain);
 
   // Gameplay cycle: 26s calm, 8s siren, 8s modeled surge, 16s high tide,
@@ -11143,11 +11200,14 @@ function buildTidebreaker(scene) {
         const characterProgress = ch.pos.x * waveDirection.x + ch.pos.z * waveDirection.z;
         if (ch._tidebreakerWaveCycle === cycleId || waveFront < characterProgress - 0.8) continue;
         ch._tidebreakerWaveCycle = cycleId;
+        // Carry timer: a one-frame shove dies to grounded friction/speed clamp
+        // before the next pose reads, so the breaker owns movement for a beat.
+        ch._tidebreakerWavePush = 2.4;
         const currentForwardSpeed = ch.vel.x * waveDirection.x + ch.vel.z * waveDirection.z;
-        const impulse = Math.max(0, 15.5 - currentForwardSpeed);
+        const impulse = Math.max(0, 13.5 - currentForwardSpeed);
         ch.vel.x += waveDirection.x * impulse;
         ch.vel.z += waveDirection.z * impulse;
-        ch.vel.y = Math.max(ch.vel.y, 5.8);
+        ch.vel.y = Math.max(ch.vel.y, 6.6);
         ch.grounded = false;
         world.onSurgeHit?.(ch);
       }
@@ -11156,11 +11216,38 @@ function buildTidebreaker(scene) {
       breaker.visible = false;
     }
 
+    // Decaying wash after impact. Stay lofted while the shove is strong so the
+    // walk-speed cap cannot cancel it, then ease into the flooded current.
+    const WAVE_PUSH_DUR = 2.4;
+    for (const ch of characters) {
+      const pushT = ch._tidebreakerWavePush || 0;
+      if (!ch?.alive || pushT <= 0) continue;
+      ch._tidebreakerWavePush = Math.max(0, pushT - dt);
+      if (ch.pos.y > 6.5 || Math.abs(ch.pos.x) > 70 || Math.abs(ch.pos.z) > 40) {
+        ch._tidebreakerWavePush = 0;
+        continue;
+      }
+      const fade = pushT / WAVE_PUSH_DUR;
+      const targetSpeed = 6 + 14 * fade;
+      const forward = ch.vel.x * waveDirection.x + ch.vel.z * waveDirection.z;
+      if (forward < targetSpeed) {
+        const add = targetSpeed - forward;
+        ch.vel.x += waveDirection.x * add;
+        ch.vel.z += waveDirection.z * add;
+      }
+      if (fade > 0.25) {
+        ch.vel.y = Math.max(ch.vel.y, 1.2 + 4.2 * fade);
+        ch.grounded = false;
+      }
+    }
+
     // A broad post-break current makes the flooded deck tactically different
     // without stun-locking anyone. Elevated routes are completely unaffected.
     if (level > 0.2) for (const ch of characters) {
       if (!ch?.alive || ch.pos.y > 2.2 || Math.abs(ch.pos.x) > 62 || Math.abs(ch.pos.z) > 33) continue;
-      const currentStrength = (phase === 'surge' ? 2.8 : 0.7) * dt;
+      // Skip the gentle current while the breaker carry is still owning them.
+      if ((ch._tidebreakerWavePush || 0) > 0.2) continue;
+      const currentStrength = (phase === 'surge' ? 4.8 : 1.4) * dt;
       ch.vel.x += waveDirection.x * currentStrength;
       ch.vel.z += waveDirection.z * currentStrength;
     }
@@ -11195,7 +11282,15 @@ function buildTidebreaker(scene) {
     }
     sprayGeo.attributes.position.needsUpdate = true;
 
+    const viewer = characters.find(ch => ch?.isPlayer && ch.alive) || characters.find(ch => ch?.alive);
+    if (viewer) {
+      rainOrigin.x = viewer.pos.x;
+      rainOrigin.z = viewer.pos.z;
+      rainGeo.boundingSphere.center.set(rainOrigin.x, viewer.pos.y + 18, rainOrigin.z);
+    }
     const rainFall = 51 * dt;
+    const wrapX = rainHalfX * 2;
+    const wrapZ = rainHalfZ * 2;
     for (let i = 0; i < activeRainCount; i++) {
       const j = i * 6;
       for (const end of [0, 3]) {
@@ -11203,7 +11298,23 @@ function buildTidebreaker(scene) {
         rainPositions[j + end + 1] -= rainFall;
         rainPositions[j + end + 2] += 0.1 * rainFall;
       }
-      if (rainPositions[j + 4] < -9 || Math.abs(rainPositions[j]) > 100 || Math.abs(rainPositions[j + 2]) > 80) resetRain(i, rand(36, 58));
+      // Toroidal wrap keeps the storm volume glued to the viewer without a
+      // visible pop when they strafe, turn toward open water, or respawn.
+      let dx = rainPositions[j] - rainOrigin.x;
+      while (dx > rainHalfX) {
+        rainPositions[j] -= wrapX; rainPositions[j + 3] -= wrapX; dx -= wrapX;
+      }
+      while (dx < -rainHalfX) {
+        rainPositions[j] += wrapX; rainPositions[j + 3] += wrapX; dx += wrapX;
+      }
+      let dz = rainPositions[j + 2] - rainOrigin.z;
+      while (dz > rainHalfZ) {
+        rainPositions[j + 2] -= wrapZ; rainPositions[j + 5] -= wrapZ; dz -= wrapZ;
+      }
+      while (dz < -rainHalfZ) {
+        rainPositions[j + 2] += wrapZ; rainPositions[j + 5] += wrapZ; dz += wrapZ;
+      }
+      if (rainPositions[j + 4] < -9) resetRain(i, rand(36, 58));
     }
     rainGeo.attributes.position.needsUpdate = true;
     for (let i = 0; i < lifeboats.length; i++) {
