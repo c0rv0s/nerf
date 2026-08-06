@@ -14,7 +14,7 @@
 // coplanar audit clean. This is a map-wide invariant, not a per-map workaround.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { rand, pointInZoneXZ } from './engine.js';
+import { rand, pointInZoneXZ, pointHitsWorld } from './engine.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SURFACE_LAYER_EPS = 0.04;
@@ -1029,7 +1029,9 @@ function addAtriumFountain(scene, world, x, z) {
 
   // A compact art-deco pedestal and two stepped bowls create a recognizable
   // fountain silhouette without blocking sightlines across the atrium.
-  add(new THREE.CylinderGeometry(1.5, 1.8, 0.42, 12), darkStone, 0.72);
+  // Plinth rises from the pool floor through the water instead of resting on
+  // the surface plane.
+  add(new THREE.CylinderGeometry(1.5, 1.8, 0.9, 12), darkStone, 0.45);
   add(new THREE.CylinderGeometry(0.72, 1.04, 1.65, 12), stone, 1.72);
   add(new THREE.CylinderGeometry(1.78, 0.68, 0.46, 24), stone, 2.67);
   add(new THREE.TorusGeometry(1.67, 0.14, 8, 32), orange, 2.91, { rotateX: Math.PI / 2 });
@@ -1048,7 +1050,8 @@ function addAtriumFountain(scene, world, x, z) {
     const radial = V(Math.cos(a), 0, Math.sin(a));
     const start = radial.clone().multiplyScalar(0.66).setY(4.43);
     const control = radial.clone().multiplyScalar(2.05).setY(5.5);
-    const end = radial.clone().multiplyScalar(3.35).setY(0.82);
+    // Pool water surface sits at y=0.55; land the arcs in the open basin.
+    const end = radial.clone().multiplyScalar(3.35).setY(0.55);
     const curve = new THREE.QuadraticBezierCurve3(start, control, end);
     const jet = new THREE.Mesh(new THREE.TubeGeometry(curve, 28, 0.065, 7, false), water.clone());
     jet.renderOrder = 4;
@@ -3670,7 +3673,7 @@ function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
 
 function buildAsteroids(scene) {
   const world = newWorld({
-    gravity: 5, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
+    gravity: 4, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
     waypointLinkDist: 45, waypointLinkDy: 16,
     availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper'],
     cometField: {
@@ -8680,7 +8683,8 @@ function addHallPoolFountain(scene, world, x, z, scale = 1, phase = 0) {
     return mesh;
   };
 
-  add(new THREE.CylinderGeometry(0.78, 0.98, 0.32, 16), gold, 0.42);
+  // Plinth sits on the pool floor and rises through the reflecting-pool surface.
+  add(new THREE.CylinderGeometry(0.78, 0.98, 0.58, 16), gold, 0.29);
   add(new THREE.CylinderGeometry(0.3, 0.46, 1.18, 14), marble, 1.12);
   add(new THREE.CylinderGeometry(1.02, 0.34, 0.34, 24), gold, 1.86);
   add(new THREE.TorusGeometry(0.95, 0.1, 7, 28), gold, 2.04, Math.PI / 2);
@@ -8695,10 +8699,12 @@ function addHallPoolFountain(scene, world, x, z, scale = 1, phase = 0) {
   for (let i = 0; i < 4; i++) {
     const a = i * Math.PI / 2 + Math.PI / 4;
     const radial = V(Math.cos(a), 0, Math.sin(a));
+    // Reflecting-pool surface is world y=0.24; divide by scale so the
+    // scaled root still lands the arc on the water plane.
     const curve = new THREE.QuadraticBezierCurve3(
       radial.clone().multiplyScalar(0.7).setY(2.14),
       radial.clone().multiplyScalar(1.12).setY(2.9),
-      radial.clone().multiplyScalar(1.65).setY(0.35),
+      radial.clone().multiplyScalar(1.65).setY(0.24 / scale),
     );
     const jet = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.045, 6, false), jetMaterial());
     jet.renderOrder = 4;
@@ -10253,13 +10259,14 @@ function buildTidebreaker(scene) {
     return geo;
   };
   for (const x of [-58, -20, 20, 58]) for (const z of [-26, 26]) {
-    // The primary legs vanish into the blue-black fog rather than ending just
-    // below the surface, selling a rig anchored in genuinely deep water.
-    supportGeometries.push(cylinderBetween(V(x, -210, z), V(x, 0, z), 1.1, 10));
+    // Stop under the processing-deck underside (top is y=0) so the column
+    // caps never sit coplanar with the walkable slab and z-fight.
+    const legTopY = -1.18;
+    supportGeometries.push(cylinderBetween(V(x, -210, z), V(x, legTopY, z), 1.1, 10));
     world.colliders.push({
       type: 'box',
       min: V(x - 0.9, -210, z - 0.9),
-      max: V(x + 0.9, 0, z + 0.9),
+      max: V(x + 0.9, legTopY, z + 0.9),
     });
     const braceX = x < 0 ? x + 9 : x - 9;
     supportGeometries.push(cylinderBetween(V(x, -11.5, z), V(braceX, -0.6, z), 0.34, 6));
@@ -10315,19 +10322,99 @@ function buildTidebreaker(scene) {
     return {
       group, orbitAngle: angle, orbitRadius: 48 + i * 8,
       biteCooldown: 0, retreatT: 0,
+      riding: false, beached: false, falling: false, hopping: false,
+      collide: false,
+      rideAcross: 0, beachDirX: 0, beachDirZ: 1, flopT: 0,
+      fallVx: 0, fallVy: 0, fallVz: 0, stuckT: 0, hopVy: 0, hopCool: 0,
     };
   });
   world.sharks = sharkStates.map(state => state.group);
   let sharkTarget = null;
   let sharkHunter = null;
   let sharkAcquireT = 0;
+  let sharkWashCycle = -1;
+  const sharkProbe = V(0, 0, 0);
+  // Simple wall test — floor slabs are ignored by probing above deck height.
+  // Past the lip counts as open so he can walk off into the sea.
+  const sharkBlockedAt = (x, z) => {
+    if (Math.abs(x) > 60.5 || Math.abs(z) > 31.5) return false;
+    sharkProbe.set(x, 1.55, z);
+    if (pointHitsWorld(sharkProbe, 0.7, world, true)) return true;
+    sharkProbe.set(x, 2.35, z);
+    return pointHitsWorld(sharkProbe, 0.5, world, true);
+  };
+  const nearestEdgeDir = (x, z) => {
+    const options = [
+      [62.8 - x, 0], [-62.8 - x, 0], [0, 33.8 - z], [0, -33.8 - z],
+    ];
+    let best = options[0], bestScore = Infinity;
+    for (const [ex, ez] of options) {
+      const score = ex * ex + ez * ez;
+      if (score < bestScore) { bestScore = score; best = [ex, ez]; }
+    }
+    const len = Math.hypot(best[0], best[1]) || 1;
+    return [best[0] / len, best[1] / len];
+  };
+  const sharkBusy = state => state.riding || state.beached || state.falling;
   const swimmingInOcean = ch => ch?.alive &&
     ch.pos.x >= oceanZone.minX && ch.pos.x <= oceanZone.maxX &&
     ch.pos.z >= oceanZone.minZ && ch.pos.z <= oceanZone.maxZ &&
     ch.pos.y < oceanZone.surfaceY + 0.35 && ch.pos.y > oceanZone.bottomY;
+  const startSharkRide = (cycleId, halfSpan) => {
+    // Some surges carry a shark in the breaker, then drop it on deck.
+    const shark = sharkStates.find(state => !sharkBusy(state) && state !== sharkHunter)
+      || sharkStates.find(state => !sharkBusy(state))
+      || sharkStates[0];
+    if (!shark || sharkBusy(shark)) return;
+    const lane = halfSpan * (2 / 3);
+    shark.rideAcross = THREE.MathUtils.lerp(-lane, lane, Math.random());
+    shark.rideDropAt = THREE.MathUtils.lerp(0.22, 0.72, Math.random());
+    shark.riding = true;
+    shark.beached = false;
+    shark.falling = false;
+    shark.collide = false;
+    shark.flopT = 0;
+    shark.rideDeckT = 0;
+    shark.rideLastOnDeckX = 0;
+    shark.rideLastOnDeckZ = 0;
+    shark.retreatT = 0;
+    shark.stuckT = 0;
+    if (shark === sharkHunter) {
+      sharkHunter = null;
+      sharkTarget = null;
+    }
+  };
+  const dropSharkOnDeck = (state, x, z, dirX, dirZ) => {
+    state.riding = false;
+    state.beached = true;
+    state.falling = false;
+    state.hopping = false;
+    state.collide = true;
+    state.flopT = 0;
+    state.stuckT = 0;
+    state.hopVy = 0;
+    state.hopCool = 0;
+    const dropX = THREE.MathUtils.clamp(x, -56, 56);
+    const dropZ = THREE.MathUtils.clamp(z, -28, 28);
+    state.group.position.set(dropX, 0.9, dropZ);
+    // Prefer the wash direction, but always end up aimed at an ocean lip.
+    const [ex, ez] = nearestEdgeDir(dropX, dropZ);
+    const wx = dirX || 0, wz = dirZ || 0;
+    let aimX = wx * 0.55 + ex, aimZ = wz * 0.55 + ez;
+    const aimLen = Math.hypot(aimX, aimZ) || 1;
+    state.beachDirX = aimX / aimLen;
+    state.beachDirZ = aimZ / aimLen;
+    state.group.rotation.y = Math.atan2(-state.beachDirZ, state.beachDirX);
+    // Planted inside a prop — jump once toward the edge like a player would.
+    if (sharkBlockedAt(dropX, dropZ)) {
+      state.hopping = true;
+      state.hopVy = 5.5;
+    }
+    world.onSharkBeached?.(state.group.position);
+  };
   world.anim.push((dt, t, characters = []) => {
     const swimmers = characters.filter(swimmingInOcean);
-    if (!sharkTarget || !swimmingInOcean(sharkTarget)) {
+    if (!sharkTarget || !swimmingInOcean(sharkTarget) || sharkBusy(sharkHunter || {})) {
       sharkTarget = null;
       sharkHunter = null;
       sharkAcquireT = swimmers.length ? Math.max(0, sharkAcquireT || 0.7) : 0;
@@ -10336,28 +10423,33 @@ function buildTidebreaker(scene) {
       sharkAcquireT -= dt;
       if (sharkAcquireT <= 0) {
         let bestDistance = Infinity;
-        for (const state of sharkStates) for (const swimmer of swimmers) {
-          const distance = state.group.position.distanceToSquared(swimmer.pos);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            sharkHunter = state;
-            sharkTarget = swimmer;
+        for (const state of sharkStates) {
+          if (sharkBusy(state)) continue;
+          for (const swimmer of swimmers) {
+            const distance = state.group.position.distanceToSquared(swimmer.pos);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              sharkHunter = state;
+              sharkTarget = swimmer;
+            }
           }
         }
         // A patrol may be on the far side of the platform. Re-enter near the
         // swimmer's depth at a fair but urgent distance instead of taking ten
         // seconds to cross the whole ocean. Detection itself has no range
         // limit — any living swimmer in the ocean volume is fair game.
-        const toHunter = sharkHunter.group.position.clone().sub(sharkTarget.pos);
-        toHunter.y = 0;
-        if (toHunter.length() > 38) {
-          if (toHunter.lengthSq() < 0.01) toHunter.set(1, 0, 0);
-          toHunter.normalize();
-          sharkHunter.group.position.set(
-            sharkTarget.pos.x + toHunter.x * 34,
-            THREE.MathUtils.clamp(sharkTarget.pos.y + 0.65, oceanBottomY + 2, oceanSurfaceY - 1.15),
-            sharkTarget.pos.z + toHunter.z * 34,
-          );
+        if (sharkHunter && sharkTarget) {
+          const toHunter = sharkHunter.group.position.clone().sub(sharkTarget.pos);
+          toHunter.y = 0;
+          if (toHunter.length() > 38) {
+            if (toHunter.lengthSq() < 0.01) toHunter.set(1, 0, 0);
+            toHunter.normalize();
+            sharkHunter.group.position.set(
+              sharkTarget.pos.x + toHunter.x * 34,
+              THREE.MathUtils.clamp(sharkTarget.pos.y + 0.65, oceanBottomY + 2, oceanSurfaceY - 1.15),
+              sharkTarget.pos.z + toHunter.z * 34,
+            );
+          }
         }
       }
     }
@@ -10367,6 +10459,126 @@ function buildTidebreaker(scene) {
       state.biteCooldown = Math.max(0, state.biteCooldown - dt);
       state.retreatT = Math.max(0, state.retreatT - dt);
       const current = state.group.position;
+
+      if (state.riding) {
+        // Position is owned by the tide surge tick so the shark stays inside the breaker.
+        continue;
+      }
+
+      if (state.falling) {
+        state.flopT += dt;
+        state.fallVy -= 26 * dt;
+        current.x += state.fallVx * dt;
+        current.y += state.fallVy * dt;
+        current.z += state.fallVz * dt;
+        state.group.rotation.x += dt * 2.8;
+        state.group.rotation.z += dt * 1.7;
+        if (current.y <= oceanSurfaceY - 1.6) {
+          state.falling = false;
+          state.beached = false;
+          state.collide = false;
+          state.flopT = 0;
+          current.y = oceanSurfaceY - 2.2;
+          state.group.rotation.x = 0;
+          state.group.rotation.z = 0;
+          state.orbitAngle = Math.atan2(current.z, current.x);
+        }
+        continue;
+      }
+
+      if (state.beached) {
+        // Same idea as a player: walk toward the ocean lip, jump if blocked,
+        // flop animation on top. No special pathfinder / teleport system.
+        state.flopT += dt;
+        state.hopCool = Math.max(0, state.hopCool - dt);
+        const [ex, ez] = nearestEdgeDir(current.x, current.z);
+        let dirX = state.beachDirX * 0.35 + ex;
+        let dirZ = state.beachDirZ * 0.35 + ez;
+        const dirLen = Math.hypot(dirX, dirZ) || 1;
+        dirX /= dirLen; dirZ /= dirLen;
+        state.beachDirX = dirX;
+        state.beachDirZ = dirZ;
+
+        const walkSpeed = 5.6; // ~half of Tidebreaker player walk speed
+        let stepX = dirX, stepZ = dirZ;
+        let moved = false;
+
+        if (state.hopping) {
+          state.hopVy -= 28 * dt;
+          current.y += state.hopVy * dt;
+          current.x += dirX * walkSpeed * 1.15 * dt;
+          current.z += dirZ * walkSpeed * 1.15 * dt;
+          moved = true;
+          if (current.y <= 0.78) {
+            current.y = 0.78;
+            state.hopVy = 0;
+            state.hopping = false;
+          }
+        } else {
+          const trySteps = [
+            [dirX, dirZ],
+            [dirX * 0.7 - dirZ * 0.7, dirZ * 0.7 + dirX * 0.7],
+            [dirX * 0.7 + dirZ * 0.7, dirZ * 0.7 - dirX * 0.7],
+          ];
+          for (const [tx, tz] of trySteps) {
+            const len = Math.hypot(tx, tz) || 1;
+            const nx = current.x + (tx / len) * walkSpeed * dt;
+            const nz = current.z + (tz / len) * walkSpeed * dt;
+            if (sharkBlockedAt(nx, nz)) continue;
+            current.x = nx;
+            current.z = nz;
+            stepX = tx / len;
+            stepZ = tz / len;
+            moved = true;
+            break;
+          }
+          if (!moved && state.hopCool <= 0) {
+            state.hopping = true;
+            state.hopVy = 5.8;
+            state.hopCool = 0.55;
+          }
+          current.y = 0.78 + Math.abs(Math.sin(state.flopT * 9.0)) * 0.28;
+        }
+
+        state.stuckT = moved ? 0 : state.stuckT + dt;
+        const yaw = Math.atan2(-stepZ, stepX) + Math.sin(state.flopT * 6.2) * 0.22;
+        state.group.rotation.y = yaw;
+        state.group.rotation.z = Math.sin(state.flopT * 10.5) * 0.48;
+        state.group.rotation.x = state.hopping
+          ? -0.45 + state.hopVy * 0.035
+          : 0.1 + Math.sin(state.flopT * 7.5) * 0.32;
+
+        if (state.biteCooldown <= 0) {
+          const mouthX = current.x + Math.cos(yaw) * 2.4;
+          const mouthZ = current.z - Math.sin(yaw) * 2.4;
+          for (const ch of characters) {
+            if (!ch?.alive || ch.pos.y > 3.8) continue;
+            const dx = ch.pos.x - mouthX;
+            const dz = ch.pos.z - mouthZ;
+            if (dx * dx + dz * dz <= 2.2 * 2.2 && Math.abs(ch.pos.y - current.y) < 2.4) {
+              state.biteCooldown = 2;
+              world.onSharkBite?.(ch, current);
+              break;
+            }
+          }
+        }
+
+        if (Math.abs(current.x) > 60.8 || Math.abs(current.z) > 31.8) {
+          state.beached = false;
+          state.falling = true;
+          state.collide = false;
+          const outX = Math.abs(current.x) > 60.8 ? Math.sign(current.x) : dirX;
+          const outZ = Math.abs(current.z) > 31.8 ? Math.sign(current.z) : dirZ;
+          const outLen = Math.hypot(outX, outZ) || 1;
+          state.fallVx = (outX / outLen) * 6.5;
+          state.fallVz = (outZ / outLen) * 6.5;
+          state.fallVy = 3.2;
+          current.x += (outX / outLen) * 1.1;
+          current.z += (outZ / outLen) * 1.1;
+        }
+        continue;
+      }
+
       const desired = V(0, 0, 0);
       let speed = 6.5;
       if (state === sharkHunter && sharkTarget) {
@@ -10428,20 +10640,24 @@ function buildTidebreaker(scene) {
 
   // Main low deck, evacuation catwalks, east operations roof, and west helipad.
   addBox(scene, world, 0, -0.55, 0, 124, 1.1, 66, steel, { ...wetDeck, debugName: 'processing deck' });
-  addBox(scene, world, 0, 7.5, -35, 132, 1, 8, steel, { ...wetDeck, debugName: 'north evacuation deck' });
-  addBox(scene, world, 0, 7.5, 35, 132, 1, 8, steel, { ...wetDeck, debugName: 'south evacuation deck' });
-  addBox(scene, world, 49, 7.5, 0, 30, 1, 62, steel, { ...wetDeck, debugName: 'operations roof' });
-  addBox(scene, world, -49, 13.5, 0, 34, 1, 34, steel, { ...wetDeck, debugName: 'helipad deck' });
+  // Evac decks grow 0.65 toward center so their inner faces meet the ramp
+  // crests (full height before the vertical slab face — no jump lip).
+  addBox(scene, world, 0, 7.5, -34.675, 132, 1, 8.65, steel, { ...wetDeck, debugName: 'north evacuation deck' });
+  addBox(scene, world, 0, 7.5, 34.675, 132, 1, 8.65, steel, { ...wetDeck, debugName: 'south evacuation deck' });
+  addBox(scene, world, 49, 7.5, 0, 30, 1, 60.7, steel, { ...wetDeck, debugName: 'operations roof' });
+  addBox(scene, world, -49, 13.5, 0, 34, 1, 35.3, steel, { ...wetDeck, debugName: 'helipad deck' });
 
   // Broad, honest ramps make every tier navigable by players and bots.
-  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: -31, maxZ: -18, h0: 8, h1: 0,
-    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
-  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: 18, maxZ: 31, h0: 0, h1: 8,
-    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
-  addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: -31, maxZ: -17, h0: 8, h1: 14,
-    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
-  addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: 17, maxZ: 31, h0: 14, h1: 8,
-    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 0.4 });
+  // Crests finish ~0.65 short of the destination face so the capsule is already
+  // at deck height before the slab wall; supportPad carries collision under it.
+  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: -30.35, maxZ: -18, h0: 8, h1: 0,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 1.1, supportPad1: 0.4 });
+  addRamp(scene, world, { axis: 'z', minX: -6, maxX: 6, minZ: 18, maxZ: 30.35, h0: 0, h1: 8,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 0.4, supportPad1: 1.1 });
+  addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: -30.35, maxZ: -17.65, h0: 8, h1: 14,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 1.1, supportPad1: 1.1 });
+  addRamp(scene, world, { axis: 'z', minX: -57, maxX: -49, minZ: 17.65, maxZ: 30.35, h0: 14, h1: 8,
+    color: steel, tex: 'tidebreaker-deck', supportPad0: 1.1, supportPad1: 1.1 });
 
   // A four-metre service deck interrupts the low floor's longest sightlines
   // without sealing the arena into rooms. Two arrivals keep it useful for
@@ -10525,7 +10741,7 @@ function buildTidebreaker(scene) {
   // player cannot clip the end of a beam while stepping onto the pad.
   addRailRun('x', -17.4, 14, -66, -32, [[-58, -48]]);
   addRailRun('x', 17.4, 14, -66, -32, [[-58, -48]]);
-  addRailRun('z', -66.4, 14, -17, 17, []);
+  addRailRun('z', -66.4, 14, -17.65, 17.65, []);
 
   // Partial rails make the new mid deck readable while leaving both ramp
   // landings generously open. The south edge stays open on its east half so
@@ -10556,6 +10772,33 @@ function buildTidebreaker(scene) {
     x: ladderX, z: ladderZ - 0.08, minY: 0.1, maxY: 4.15,
     r: 0.82, grabR: 1.18, exitX: 0, exitZ: 1,
   });
+
+  // Ocean recovery ladders on opposite ends of the rig: west face of the
+  // helipad and east face of the ops block. Reachable from the water and
+  // exiting inward onto the nearest high deck.
+  const addOceanLadder = (x, z, y0, y1, exitX, exitZ) => {
+    const geometries = [];
+    const half = 0.72;
+    for (const dz of [-half, half]) {
+      geometries.push(cylinderBetween(V(x, y0, z + dz), V(x, y1, z + dz), 0.1, 7));
+    }
+    for (let y = y0 + 0.4; y <= y1 - 0.3; y += 0.48) {
+      geometries.push(cylinderBetween(V(x, y, z - half), V(x, y, z + half), 0.08, 7));
+    }
+    const mesh = new THREE.Mesh(mergeGeometries(geometries, false), mat(railSteel, {
+      roughness: 0.4, metalness: 0.68,
+    }));
+    mesh.castShadow = true;
+    essential.add(mesh);
+    geometries.forEach(g => g.dispose());
+    (world.vineZones ||= []).push({
+      x: x - exitX * 0.08, z, minY: y0, maxY: y1 - 0.3,
+      r: 0.9, grabR: 1.35, exitX, exitZ,
+    });
+  };
+  // West helipad face → pad deck; east ops outer wall → operations roof.
+  addOceanLadder(-66.3, 0, oceanSurfaceY - 1.2, 14.25, 1, 0);
+  addOceanLadder(64.2, 0, oceanSurfaceY - 1.2, 8.25, -1, 0);
 
   // A cable-loaded surge winch supplies a broad rounded occluder instead of a
   // plain cover cube. Braced A-frames, bearing flanges, axle, and rope bands
@@ -10629,10 +10872,10 @@ function buildTidebreaker(scene) {
   }
   // A painted fascia and external stiffeners keep the broad roof silhouette
   // from reading as a featureless dark slab when viewed from the ocean.
-  for (const z of [-31.06, 31.06]) addBox(scene, world, 49, 7.48, z, 30, 0.9, 0.12, emergencyOrange, {
+  for (const z of [-30.41, 30.41]) addBox(scene, world, 49, 7.48, z, 30, 0.9, 0.12, emergencyOrange, {
     ...orangeSteel, collide: false, shadow: false, debugName: 'operations roof fascia',
   });
-  for (const x of [33.94, 64.06]) addBox(scene, world, x, 7.48, 0, 0.12, 0.9, 62, emergencyOrange, {
+  for (const x of [33.94, 64.06]) addBox(scene, world, x, 7.48, 0, 0.12, 0.9, 60.7, emergencyOrange, {
     ...orangeSteel, collide: false, shadow: false, debugName: 'operations roof fascia',
   });
   for (let z = -27; z <= 27; z += 6) addBox(scene, world, 64.03, 3.8, z, 0.14, 6.5, 0.32, railSteel, {
@@ -10758,7 +11001,8 @@ function buildTidebreaker(scene) {
   // One connected, concave shoreline forms two source branches that converge
   // into a broad center-lane pool. Shape coordinates use -Z because the mesh
   // is rotated onto the deck with its front face pointing upward.
-  const oilCenter = V(5.5, 0.045, 4.1);
+  // Sit above deck tread / surface panels (eps ~0.04) so the slick never z-fights.
+  const oilCenter = V(5.5, 0.09, 4.1);
   const oilShape = new THREE.Shape();
   const oilOutline = [
     [25.2, -4.0], [22.0, -3.8], [18.1, -2.8], [14.2, -1.0], [10.4, 0.9],
@@ -10943,34 +11187,178 @@ function buildTidebreaker(scene) {
     light.position.set(x, y + 0.25, z);
     standard.add(light);
     beaconLights.push(light);
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(2.7, 12, 18, 1, true), new THREE.MeshBasicMaterial({
+    // Pivot at the lens so the volume sweeps out of the lamp instead of
+    // spinning around the cone's geometric center above it.
+    const pivot = new THREE.Group();
+    pivot.position.set(x, y + 0.35, z);
+    const coneLen = 12;
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(2.7, coneLen, 18, 1, true), new THREE.MeshBasicMaterial({
       color: 0xff4b26, transparent: true, opacity: 0, depthWrite: false,
       blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
     }));
-    cone.position.set(x, y + 5.8, z);
     cone.rotation.z = Math.PI / 2;
-    high.add(cone);
-    beaconCones.push(cone);
+    cone.position.set(coneLen * 0.5, 0, 0);
+    pivot.add(cone);
+    high.add(pivot);
+    beaconCones.push({ pivot, cone });
   }
 
   // Flood plane and the breaker are separate animated surfaces. The breaker
   // curls forward through an actual grid; it is never a translated wall box.
-  // Keep the plane inset inside the 124×66 processing deck so the water never
-  // reads as an uncontained slab hanging off the platform lip.
-  const floodMat = waterMaterial(0x0a3242, 0x3e8390, 0.17, 0.065, 0.68, 0.31);
-  floodMat.depthWrite = false;
-  const floodMesh = new THREE.Mesh(new THREE.PlaneGeometry(118, 60, 56, 30), floodMat);
+  // Top sheet covers the full 124×66 processing deck; vertical spill sheets on
+  // each lip sell water pouring off the sides instead of a floating inset slab.
+  // During the surge the sheet is clipped to the wet side of the front so the
+  // breaker reads as bringing the water onto the deck.
+  const DECK_HALF_X = 62;
+  const DECK_HALF_Z = 33;
+  const floodMat = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.fog,
+      {
+        uTime: { value: 0 },
+        uAmplitude: { value: 0.17 },
+        uChop: { value: 0.065 },
+        uDeep: { value: new THREE.Color(0x0a3242) },
+        uShallow: { value: new THREE.Color(0x3e8390) },
+        uOpacity: { value: 0.68 },
+        uFoamLine: { value: 0.31 },
+        uFront: { value: 200 },
+        uDirX: { value: 0 },
+        uDirZ: { value: 1 },
+        uClip: { value: 0 },
+      },
+    ]),
+    vertexShader: waterVertex,
+    fragmentShader: `
+      #include <fog_pars_fragment>
+      uniform vec3 uDeep;
+      uniform vec3 uShallow;
+      uniform float uOpacity;
+      uniform float uFoamLine;
+      uniform float uFront;
+      uniform float uDirX;
+      uniform float uDirZ;
+      uniform float uClip;
+      varying vec3 vWorldPosition;
+      varying float vElevation;
+      void main() {
+        float edge = 1.0;
+        if (uClip > 0.5) {
+          float along = vWorldPosition.x * uDirX + vWorldPosition.z * uDirZ;
+          // Soft foam band just behind the breaker; dry ahead of the crest.
+          edge = smoothstep(uFront + 1.2, uFront - 3.4, along);
+          if (edge <= 0.008) discard;
+        }
+        vec3 dx = dFdx(vWorldPosition);
+        vec3 dy = dFdy(vWorldPosition);
+        vec3 normal = normalize(cross(dx, dy));
+        if (normal.y < 0.0) normal *= -1.0;
+        vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+        float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.35);
+        float light = max(dot(normal, normalize(vec3(-0.35, 0.86, -0.22))), 0.0);
+        vec3 color = mix(uDeep, uShallow, 0.24 + light * 0.4 + fresnel * 0.28);
+        float foamBreakup = sin(vWorldPosition.x * 0.63 + vWorldPosition.z * 0.27) * 0.11
+          + sin(vWorldPosition.x * -0.31 + vWorldPosition.z * 0.74) * 0.07;
+        float foam = smoothstep(uFoamLine + foamBreakup, uFoamLine + 0.18 + foamBreakup, vElevation);
+        // Brighter chop where the flood meets the breaker face.
+        float frontFoam = uClip > 0.5 ? (1.0 - smoothstep(0.15, 0.95, edge)) * 0.55 : 0.0;
+        color = mix(color, vec3(0.78, 0.92, 0.94), foam * 0.1 + frontFoam);
+        gl_FragColor = vec4(color, uOpacity * edge);
+        #include <fog_fragment>
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+  const floodMesh = new THREE.Mesh(new THREE.PlaneGeometry(DECK_HALF_X * 2, DECK_HALF_Z * 2, 60, 34), floodMat);
   floodMesh.rotation.x = -Math.PI / 2;
   floodMesh.position.y = -4.8;
   floodMesh.renderOrder = 3;
   essential.add(floodMesh);
   const floodZone = {
-    minX: -59, maxX: 59, minZ: -30, maxZ: 30,
+    minX: -DECK_HALF_X, maxX: DECK_HALF_X, minZ: -DECK_HALF_Z, maxZ: DECK_HALF_Z,
     surfaceY: -4.8, bottomY: -2.4,
   };
   world.waterZones.push(floodZone);
   const FLOOD_PEAK = 1.95;
   const FLOOD_EMPTY = 0.02;
+  const syncFloodZoneBounds = (clipping, front, dirX, dirZ) => {
+    floodZone.minX = -DECK_HALF_X;
+    floodZone.maxX = DECK_HALF_X;
+    floodZone.minZ = -DECK_HALF_Z;
+    floodZone.maxZ = DECK_HALF_Z;
+    if (!clipping) return;
+    const pad = 2.2;
+    if (dirX > 0.5) floodZone.maxX = Math.min(DECK_HALF_X, front - pad);
+    else if (dirX < -0.5) floodZone.minX = Math.max(-DECK_HALF_X, -(front - pad));
+    else if (dirZ > 0.5) floodZone.maxZ = Math.min(DECK_HALF_Z, front - pad);
+    else if (dirZ < -0.5) floodZone.minZ = Math.max(-DECK_HALF_Z, -(front - pad));
+  };
+
+  const spillMat = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.fog,
+      {
+        uTime: { value: 0 },
+        uOpacity: { value: 0 },
+        uDeep: { value: new THREE.Color(0x0a3242) },
+        uShallow: { value: new THREE.Color(0x4e96a4) },
+      },
+    ]),
+    vertexShader: `
+      #include <fog_pars_vertex>
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: `
+      #include <fog_pars_fragment>
+      uniform float uTime;
+      uniform float uOpacity;
+      uniform vec3 uDeep;
+      uniform vec3 uShallow;
+      varying vec2 vUv;
+      void main() {
+        // Top of the sheet is the flood surface; flow runs downward off the lip.
+        float flow = vUv.y * 5.5 + uTime * 2.4;
+        float streaks = 0.5 + 0.5 * sin(vUv.x * 54.0 - flow * 3.1);
+        streaks *= 0.65 + 0.35 * sin(vUv.x * 17.0 + uTime * 1.3);
+        float curtain = smoothstep(0.0, 0.08, vUv.y) * smoothstep(1.0, 0.42, vUv.y);
+        float lipFoam = smoothstep(0.78, 1.0, vUv.y) * (0.55 + 0.45 * sin(vUv.x * 90.0 - uTime * 10.0));
+        vec3 color = mix(uDeep, uShallow, streaks * 0.55 + lipFoam * 0.35);
+        float alpha = uOpacity * curtain * (0.28 + streaks * 0.55 + lipFoam * 0.3);
+        gl_FragColor = vec4(color, alpha);
+        #include <fog_fragment>
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+  // [width, x, z, yaw] — yaw faces the sheet outward from the deck.
+  const spillDefs = [
+    [DECK_HALF_X * 2, 0, -DECK_HALF_Z - 0.04, Math.PI],
+    [DECK_HALF_X * 2, 0, DECK_HALF_Z + 0.04, 0],
+    [DECK_HALF_Z * 2, -DECK_HALF_X - 0.04, 0, -Math.PI / 2],
+    [DECK_HALF_Z * 2, DECK_HALF_X + 0.04, 0, Math.PI / 2],
+  ];
+  const spillMeshes = spillDefs.map(([width, x, z, yaw]) => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, 1, Math.max(12, Math.round(width / 3)), 14), spillMat);
+    mesh.position.set(x, -4.8, z);
+    mesh.rotation.y = yaw;
+    mesh.renderOrder = 4;
+    mesh.visible = false;
+    essential.add(mesh);
+    return mesh;
+  });
+  const spillBottomY = oceanSurfaceY + 0.65;
 
   const breakerCols = 88;
   const breakerRows = 12;
@@ -11071,8 +11459,17 @@ function buildTidebreaker(scene) {
   rain.renderOrder = 3;
   essential.add(rain);
 
-  // Permanent open-water storm lightning. Strike positions are uniform across
-  // the whole ocean plane, not just the platform footprint.
+  // Permanent storm lightning across the full visible map field (platform +
+  // surrounding ocean still inside fog). Uniform X/Z picks so bolts hit every
+  // side equally — not one corner, and not invisible far-ocean samples.
+  const LIGHTNING_MIN_X = -200;
+  const LIGHTNING_MAX_X = 200;
+  const LIGHTNING_MIN_Z = -160;
+  const LIGHTNING_MAX_Z = 160;
+  const randomLightningCoord = () => [
+    THREE.MathUtils.lerp(LIGHTNING_MIN_X, LIGHTNING_MAX_X, Math.random()),
+    THREE.MathUtils.lerp(LIGHTNING_MIN_Z, LIGHTNING_MAX_Z, Math.random()),
+  ];
   const boltPoints = 11;
   const boltMat = new THREE.MeshBasicMaterial({
     color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
@@ -11099,7 +11496,7 @@ function buildTidebreaker(scene) {
   const forks = new THREE.LineSegments(forkGeo, forkMat);
   forks.frustumCulled = false;
   scene.add(forks);
-  const flashLight = new THREE.PointLight(0xdff7ff, 0, 320);
+  const flashLight = new THREE.PointLight(0xdff7ff, 0, 520);
   scene.add(flashLight);
   const baseBackground = scene.background.clone();
   const baseFogColor = scene.fog.color.clone();
@@ -11171,14 +11568,16 @@ function buildTidebreaker(scene) {
   const waveTangent = V(-1, 0, 0);
   let waveReach = 76;
   let waveHalfSpan = 76;
-  const randomWaveAngle = cycleId => {
-    // A deterministic integer hash keeps the apparently random direction in
-    // sync for every client that is on the same tide cycle.
-    let h = Math.imul((cycleId + 1) ^ 0x9e3779b9, 0x85ebca6b);
-    h ^= h >>> 13;
-    h = Math.imul(h, 0xc2b2ae35);
-    h ^= h >>> 16;
-    return (h >>> 0) / 0x100000000 * Math.PI * 2;
+  const WAVE_SIDES = [0, Math.PI / 2, Math.PI, -Math.PI / 2]; // +X, +Z, -X, -Z
+  let lastWaveSideIndex = -1;
+  const randomWaveAngle = () => {
+    // True random among the four platform sides; never the same side twice in a row.
+    let side = Math.floor(Math.random() * 4);
+    if (side === lastWaveSideIndex) {
+      side = (side + 1 + Math.floor(Math.random() * 3)) % 4;
+    }
+    lastWaveSideIndex = side;
+    return WAVE_SIDES[side];
   };
   world.tide = {
     phase: 'calm', level: -4.8, warningMix: 0, surgeMix: 0,
@@ -11192,13 +11591,7 @@ function buildTidebreaker(scene) {
     const cycleTime = t % CYCLE;
     const cycleId = Math.floor(t / CYCLE);
     if (cycleId !== activeWaveCycle) {
-      let nextAngle = randomWaveAngle(cycleId);
-      if (activeWaveCycle >= 0) {
-        const delta = Math.atan2(Math.sin(nextAngle - waveAngle), Math.cos(nextAngle - waveAngle));
-        // Avoid a technically-random but visually repetitive follow-up wave.
-        if (Math.abs(delta) < Math.PI / 4) nextAngle += delta < 0 ? -Math.PI / 2 : Math.PI / 2;
-      }
-      waveAngle = nextAngle;
+      waveAngle = randomWaveAngle();
       activeWaveCycle = cycleId;
       waveDirection.set(Math.cos(waveAngle), 0, Math.sin(waveAngle));
       waveTangent.set(-waveDirection.z, 0, waveDirection.x);
@@ -11221,9 +11614,15 @@ function buildTidebreaker(scene) {
       surgeMix = Math.sin((cycleTime - 34) / 8 * Math.PI);
       const p = (cycleTime - 34) / 8;
       waveFront = THREE.MathUtils.lerp(-waveReach, waveReach, p * p * (3 - 2 * p));
-      // Fill finishes near the end of the surge so the drain counter can start
-      // as soon as the deck is actually holding water.
-      level = THREE.MathUtils.lerp(-4.8, FLOOD_PEAK, THREE.MathUtils.smoothstep(cycleTime, 34, 40.5));
+      // Flood surface comes up with the breaker — water is already high behind
+      // the crest; the shader/AABB clip reveals it as the front advances.
+      const deckHalfAlong = Math.abs(waveDirection.x) * DECK_HALF_X
+        + Math.abs(waveDirection.z) * DECK_HALF_Z;
+      const boarded = THREE.MathUtils.smoothstep(waveFront, -deckHalfAlong - 6, -deckHalfAlong + 10);
+      level = THREE.MathUtils.lerp(0.55, FLOOD_PEAK, Math.max(
+        boarded,
+        THREE.MathUtils.smoothstep(cycleTime, 34.2, 36.8),
+      ));
     } else if (cycleTime >= DRAIN_START && cycleTime < DRAIN_END) {
       phase = 'draining';
       // Linear continuous empty — no held high-tide slab that then pops away.
@@ -11239,11 +11638,42 @@ function buildTidebreaker(scene) {
     });
     floodZone.surfaceY = level;
     floodMesh.position.y = level;
+    const clippingFlood = phase === 'surge';
+    floodMat.uniforms.uClip.value = clippingFlood ? 1 : 0;
+    floodMat.uniforms.uFront.value = waveFront;
+    floodMat.uniforms.uDirX.value = waveDirection.x;
+    floodMat.uniforms.uDirZ.value = waveDirection.z;
+    syncFloodZoneBounds(clippingFlood, waveFront, waveDirection.x, waveDirection.z);
     // Fade out as the pool empties so the last centimeters dissolve instead of
     // snapping off as a still-thick water block.
     const floodCover = THREE.MathUtils.smoothstep(level, FLOOD_EMPTY, 0.28);
     floodMesh.visible = floodCover > 0.01;
     floodMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.18, 0.76, THREE.MathUtils.smoothstep(level, 0.08, FLOOD_PEAK)) * floodCover;
+    // Spill sheets hang from the live surface to the sea so the pool reads as
+    // water leaving over the lip, strongest while the drain counter is running.
+    const drainT = phase === 'draining'
+      ? (cycleTime - DRAIN_START) / (DRAIN_END - DRAIN_START)
+      : 0;
+    // During surge, wait until the front has wet a lip before spilling — otherwise
+    // sheets pour off dry edges ahead of the water.
+    const deckHalfAlongSpill = Math.abs(waveDirection.x) * DECK_HALF_X
+      + Math.abs(waveDirection.z) * DECK_HALF_Z;
+    const spillUnlocked = phase !== 'surge'
+      || waveFront > -deckHalfAlongSpill * 0.15;
+    const spillLive = floodCover * THREE.MathUtils.smoothstep(level, 0.12, 0.55)
+      * (spillUnlocked ? 1 : 0);
+    const spillBoost = phase === 'draining' ? 0.55 * (1 - drainT * 0.35)
+      : phase === 'surge' ? 0.22 * THREE.MathUtils.smoothstep(level, 0.4, FLOOD_PEAK)
+      : 0;
+    const spillHeight = Math.max(0.05, level - spillBottomY);
+    const spillMidY = (level + spillBottomY) * 0.5;
+    spillMat.uniforms.uTime.value = t;
+    spillMat.uniforms.uOpacity.value = Math.min(0.88, (0.4 + spillBoost) * spillLive);
+    for (const mesh of spillMeshes) {
+      mesh.visible = spillLive > 0.02;
+      mesh.position.y = spillMidY;
+      mesh.scale.y = spillHeight;
+    }
 
     // The breaker removes the slick only when its advancing front actually
     // reaches the merged slick. It stays gone through drainage, then the two
@@ -11267,8 +11697,8 @@ function buildTidebreaker(scene) {
     for (let i = 0; i < beaconLenses.length; i++) {
       beaconLenses[i].material.color.setRGB(0.18 + pulse * 1.8, 0.025 + pulse * 0.11, 0.012);
       beaconLights[i].intensity = pulse * 34;
-      beaconCones[i].material.opacity = pulse * 0.045;
-      beaconCones[i].rotation.y = t * 2.6 + i * Math.PI * 0.5;
+      beaconCones[i].cone.material.opacity = pulse * 0.045;
+      beaconCones[i].pivot.rotation.y = t * 2.6 + i * Math.PI * 0.5;
     }
 
     if (phase === 'surge') {
@@ -11291,6 +11721,46 @@ function buildTidebreaker(scene) {
         }
       }
       breakerPositions.needsUpdate = true;
+      // ~30% of surges wash a shark onto the deck with the breaker.
+      if (sharkWashCycle !== cycleId) {
+        sharkWashCycle = cycleId;
+        if (Math.random() < 0.3) startSharkRide(cycleId, waveHalfSpan);
+      }
+      for (const state of sharkStates) {
+        if (!state.riding) continue;
+        const along = waveFront - 1.6;
+        const x = waveDirection.x * along + waveTangent.x * state.rideAcross;
+        const z = waveDirection.z * along + waveTangent.z * state.rideAcross;
+        // Sit in the mid-curl of the modeled breaker so it reads inside the wave.
+        const y = Math.max(level + 2.2, 2.4) + Math.sin(t * 7.2 + state.rideAcross) * 0.45;
+        state.group.position.set(x, y, z);
+        state.group.rotation.y = Math.atan2(-waveDirection.z, waveDirection.x);
+        state.group.rotation.z = 0.55 + Math.sin(t * 9.0) * 0.3;
+        state.group.rotation.x = -0.4 + Math.sin(t * 5.5) * 0.15;
+        const onDeck = Math.abs(x) < 56 && Math.abs(z) < 28;
+        if (onDeck) {
+          state.rideDeckT = (state.rideDeckT || 0) + dt;
+          state.rideLastOnDeckX = x;
+          state.rideLastOnDeckZ = z;
+        }
+        // Progress 0 = boarding lip, 1 = far lip. Drop at a per-surge threshold
+        // that is always before 75% across so the crest leaves him behind.
+        const deckHalfAlong = Math.abs(waveDirection.x) * 56 + Math.abs(waveDirection.z) * 28;
+        const alongPos = x * waveDirection.x + z * waveDirection.z;
+        const progress = deckHalfAlong > 0.1
+          ? (alongPos + deckHalfAlong) / (deckHalfAlong * 2)
+          : 0;
+        const dropAt = Math.min(state.rideDropAt ?? 0.55, 0.74);
+        if (onDeck && progress >= dropAt) {
+          dropSharkOnDeck(state, x, z, waveDirection.x, waveDirection.z);
+        } else if (!onDeck && state.rideDeckT > 0.1 && progress > 0.05) {
+          // Crest carried him off a side lane — plant at last on-deck sample.
+          dropSharkOnDeck(
+            state, state.rideLastOnDeckX, state.rideLastOnDeckZ,
+            waveDirection.x, waveDirection.z,
+          );
+        }
+      }
       for (const ch of characters) {
         if (!ch?.alive || ch.pos.y > 4.6 || Math.abs(ch.pos.x) > 65 || Math.abs(ch.pos.z) > 35) continue;
         const characterProgress = ch.pos.x * waveDirection.x + ch.pos.z * waveDirection.z;
@@ -11310,6 +11780,19 @@ function buildTidebreaker(scene) {
     } else {
       breakerMaterial.uniforms.uOpacity.value = 0;
       breaker.visible = false;
+      for (const state of sharkStates) {
+        if (!state.riding) continue;
+        const p = state.group.position;
+        if (Math.abs(p.x) < 60 && Math.abs(p.z) < 32) {
+          dropSharkOnDeck(state, p.x, p.z, waveDirection.x, waveDirection.z);
+        } else {
+          state.riding = false;
+          p.y = oceanSurfaceY - 2.2;
+          state.group.rotation.x = 0;
+          state.group.rotation.z = 0;
+          state.orbitAngle = Math.atan2(p.z, p.x);
+        }
+      }
     }
 
     // Decaying wash after impact. Stay lofted while the shove is strong so the
@@ -11427,9 +11910,9 @@ function buildTidebreaker(scene) {
     scene.fog.color.copy(baseFogColor).lerp(flashFogColor, 0.36 * flash);
     world.storm.nextLightning -= dt;
     if (world.storm.nextLightning <= 0) {
-      // Uniform over the full ocean extent, including empty water far from the rig.
-      strikeLightning(rand(-oceanHalf, oceanHalf), rand(-oceanHalf, oceanHalf), characters);
-      world.storm.nextLightning = rand(9, 18);
+      const [strikeX, strikeZ] = randomLightningCoord();
+      strikeLightning(strikeX, strikeZ, characters);
+      world.storm.nextLightning = rand(7, 15);
     }
 
     for (let i = 0; i < lifeboats.length; i++) {
@@ -11482,10 +11965,10 @@ function buildTidebreaker(scene) {
     [-15, 4, -9], [-11, 4, -9], [-3, 4, -8], [-1, 4, 2], [-1, 2, 7], [-1, 0, 12],
     [-3.5, 0, -12.5], [-3.5, 2, -10.7], [-3.5, 4, -9.2],
     // north access ramp and deck
-    [0, 2.7, -22], [0, 5.3, -26], [0, 8, -31], [-20, 8, -35], [-40, 8, -35], [-58, 8, -35],
+    [0, 2.7, -22], [0, 5.3, -26], [0, 8, -30.35], [-20, 8, -35], [-40, 8, -35], [-58, 8, -35],
     [20, 8, -35], [40, 8, -35], [58, 8, -35],
     // south access ramp and deck
-    [0, 2.7, 22], [0, 5.3, 26], [0, 8, 31], [-20, 8, 35], [-40, 8, 35], [-58, 8, 35],
+    [0, 2.7, 22], [0, 5.3, 26], [0, 8, 30.35], [-20, 8, 35], [-40, 8, 35], [-58, 8, 35],
     [20, 8, 35], [40, 8, 35], [58, 8, 35],
     // helipad ramps and deck
     [-53, 10, -26], [-53, 12, -21], [-53, 14, -15], [-49, 14, 0], [-58, 14, 10], [-40, 14, 10],
@@ -11496,9 +11979,9 @@ function buildTidebreaker(scene) {
   for (const [x, y, z] of waypoints) wp(world, x, y, z);
   world.manualLinks.push(
     [0, 0, -18, 0, 2.7, -22, false],
-    [0, 5.3, -26, 0, 8, -31, false],
+    [0, 5.3, -26, 0, 8, -30.35, false],
     [0, 0, 18, 0, 2.7, 22, false],
-    [0, 5.3, 26, 0, 8, 31, false],
+    [0, 5.3, 26, 0, 8, 30.35, false],
     [-20, 0, -5, -18, 2, -5, false],
     [-18, 2, -5, -15, 4, -5, false],
     [-15, 4, -5, -13, 4, 0, false],
@@ -12469,7 +12952,7 @@ function buildOlympusMons(scene) {
 /* ============== SECRET MAP — SOLAR FLARE (orbital power station) ============== */
 function buildSolarFlare(scene) {
   const world = newWorld({
-    gravity: 8, jumpVel: 8.6, killY: -70, playerSpeed: 11.5,
+    gravity: 25, jumpVel: 9.2, killY: -70, playerSpeed: 11.5,
     waypointLinkDist: 19, waypointLinkDy: 5,
     availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper'],
   });
@@ -12672,9 +13155,10 @@ function buildSolarFlare(scene) {
     [34, 1.05, 25, 9, 3, 0x365266], [42, 8.05, 3, 11, 3, 0x394f62],
   ]) addBox(scene, world, x, y, z, w, 2.1, d, color, { tex: 'solar-hull' });
 
-  // Artificial gravity is strongest inside the pressurized modules. Crossing
-  // a doorway onto a roof or passing through the aft energy curtain cuts it
-  // exactly in half; falling away from the hull remains in the exterior field.
+  // Artificial gravity is full-strength inside pressurized modules. Crossing
+  // a doorway onto a roof or passing through the aft energy curtain drops you
+  // into the same low exterior field as Asteroid Belt.
+  const solarExteriorGravity = 4; // match Asteroid Belt
   const solarInteriorZones = [
     // Central lower/upper, science, and bridge rooms.
     { minX: -15.5, maxX: 15.5, minY: -0.1, maxY: 13.6, minZ: -13.5, maxZ: 13.5 },
@@ -12691,7 +13175,7 @@ function buildSolarFlare(scene) {
     pos.x >= zone.minX && pos.x <= zone.maxX &&
     pos.y >= zone.minY && pos.y <= zone.maxY &&
     pos.z >= zone.minZ && pos.z <= zone.maxZ)
-    ? world.gravity : world.gravity * 0.5;
+    ? world.gravity : solarExteriorGravity;
 
   // Shuttle-bay-style atmospheric curtain: completely non-solid, luminous,
   // and placed in the upper aft opening leading directly onto the outer hull.
@@ -12756,59 +13240,125 @@ function buildSolarFlare(scene) {
     axis: 'x', minX: 33.5, maxX: 36.2, minZ: 22.6, maxZ: 27.4,
     h0: 6.95, h1: 7.4, color: 0xc7c9c3, tex: 'solar-hull',
   });
-  const sensorDish = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.35, 8, 48, Math.PI * 1.35),
-    mat(0xb6c9d1, { metalness: 0.55, roughness: 0.28 }));
+  const sensorDishR = 5.2;
+  const sensorDishTube = 0.35;
+  const sensorDishArc = Math.PI * 1.35;
+  const sensorDish = new THREE.Mesh(
+    new THREE.TorusGeometry(sensorDishR, sensorDishTube, 8, 48, sensorDishArc),
+    mat(0xb6c9d1, { metalness: 0.55, roughness: 0.28 }),
+  );
   sensorDish.position.set(88, 13.2, 0);
   sensorDish.rotation.set(0.4, -0.7, 0.3);
+  sensorDish.castShadow = sensorDish.receiveShadow = true;
   scene.add(sensorDish);
+  // Approximate the tube with overlapping spheres so the arc is solid cover.
+  sensorDish.updateMatrixWorld(true);
+  {
+    const along = new THREE.Vector3();
+    const segs = 16;
+    const hitR = sensorDishTube + 0.2;
+    for (let i = 0; i <= segs; i++) {
+      const u = (i / segs) * sensorDishArc;
+      along.set(sensorDishR * Math.cos(u), sensorDishR * Math.sin(u), 0)
+        .applyMatrix4(sensorDish.matrixWorld);
+      world.colliders.push({ type: 'sphere', center: along.clone(), radius: hitR });
+    }
+  }
 
   // Flare emitter sits south of the central ramp (which owns x −8..8, z −5..5).
   // The actual sun is a colossal environmental body off the port side.
   addBox(scene, world, 0, 1.6, 11, 8, 3.2, 6, 0x34384a, { tex: 'panel' });
+  const sunRadius = 394; // 315 × 1.25
+  const solarW = 4096;
+  const solarH = 2048;
   const solarCanvas = document.createElement('canvas');
-  solarCanvas.width = 1024;
-  solarCanvas.height = 512;
+  solarCanvas.width = solarW;
+  solarCanvas.height = solarH;
   const sg = solarCanvas.getContext('2d');
-  const solarGradient = sg.createLinearGradient(0, 0, 0, 512);
-  solarGradient.addColorStop(0, '#ffbd35');
-  solarGradient.addColorStop(0.48, '#ff7a12');
-  solarGradient.addColorStop(1, '#c93a05');
+  sg.imageSmoothingEnabled = true;
+  sg.imageSmoothingQuality = 'high';
+  const solarGradient = sg.createLinearGradient(0, 0, 0, solarH);
+  solarGradient.addColorStop(0, '#ffc84a');
+  solarGradient.addColorStop(0.35, '#ff9a1c');
+  solarGradient.addColorStop(0.62, '#ff6a0c');
+  solarGradient.addColorStop(1, '#b82e04');
   sg.fillStyle = solarGradient;
-  sg.fillRect(0, 0, 1024, 512);
+  sg.fillRect(0, 0, solarW, solarH);
   const solarRnd = seededRandom(0x501af1a7);
+  // Broad soft convection cells — keeps the disc from reading as flat paint.
+  for (let i = 0; i < 90; i++) {
+    const x = solarRnd() * solarW;
+    const y = solarRnd() * solarH;
+    const r = 60 + solarRnd() * 220;
+    const cell = sg.createRadialGradient(x, y, 0, x, y, r);
+    if (solarRnd() > 0.45) {
+      cell.addColorStop(0, `rgba(255,236,140,${0.1 + solarRnd() * 0.18})`);
+      cell.addColorStop(0.55, `rgba(255,170,40,${0.04 + solarRnd() * 0.08})`);
+      cell.addColorStop(1, 'rgba(255,140,20,0)');
+    } else {
+      cell.addColorStop(0, `rgba(160,40,0,${0.08 + solarRnd() * 0.14})`);
+      cell.addColorStop(0.55, `rgba(190,55,0,${0.04 + solarRnd() * 0.07})`);
+      cell.addColorStop(1, 'rgba(140,30,0,0)');
+    }
+    sg.fillStyle = cell;
+    sg.beginPath(); sg.ellipse(x, y, r, r * (0.55 + solarRnd() * 0.35), solarRnd() * Math.PI, 0, Math.PI * 2); sg.fill();
+  }
   sg.lineCap = 'round';
-  for (let i = 0; i < 1350; i++) {
-    const x = solarRnd() * 1024;
-    const y = solarRnd() * 512;
-    const len = 10 + solarRnd() * 48;
-    const bend = (solarRnd() - 0.5) * 28;
+  sg.lineJoin = 'round';
+  // Medium plasma filaments.
+  for (let i = 0; i < 4200; i++) {
+    const x = solarRnd() * solarW;
+    const y = solarRnd() * solarH;
+    const len = 28 + solarRnd() * 140;
+    const bend = (solarRnd() - 0.5) * 70;
     sg.strokeStyle = solarRnd() > 0.5
-      ? `rgba(255,244,154,${0.08 + solarRnd() * 0.3})`
-      : `rgba(105,18,0,${0.05 + solarRnd() * 0.18})`;
-    sg.lineWidth = 0.6 + solarRnd() * 2.2;
+      ? `rgba(255,244,154,${0.06 + solarRnd() * 0.22})`
+      : `rgba(105,18,0,${0.04 + solarRnd() * 0.14})`;
+    sg.lineWidth = 1.2 + solarRnd() * 4.5;
     sg.beginPath();
     sg.moveTo(x, y);
     sg.quadraticCurveTo(x + len * 0.48, y + bend, x + len, y + bend * 0.25);
     sg.stroke();
   }
-  for (let i = 0; i < 18; i++) {
-    const x = solarRnd() * 1024;
-    const y = 55 + solarRnd() * 402;
-    const rx = 5 + solarRnd() * 18;
+  // Fine granulation — reads sharp even when the sun fills half the frame.
+  for (let i = 0; i < 9000; i++) {
+    const x = solarRnd() * solarW;
+    const y = solarRnd() * solarH;
+    const len = 6 + solarRnd() * 28;
+    const bend = (solarRnd() - 0.5) * 14;
+    sg.strokeStyle = solarRnd() > 0.55
+      ? `rgba(255,250,190,${0.04 + solarRnd() * 0.12})`
+      : `rgba(70,10,0,${0.03 + solarRnd() * 0.1})`;
+    sg.lineWidth = 0.4 + solarRnd() * 1.4;
+    sg.beginPath();
+    sg.moveTo(x, y);
+    sg.quadraticCurveTo(x + len * 0.5, y + bend, x + len, y + bend * 0.2);
+    sg.stroke();
+  }
+  for (let i = 0; i < 48; i++) {
+    const x = solarRnd() * solarW;
+    const y = solarH * 0.08 + solarRnd() * solarH * 0.84;
+    const rx = 14 + solarRnd() * 52;
     const spot = sg.createRadialGradient(x, y, 0, x, y, rx);
-    spot.addColorStop(0, 'rgba(45,4,0,.82)');
-    spot.addColorStop(0.5, 'rgba(105,18,0,.5)');
+    spot.addColorStop(0, 'rgba(45,4,0,.78)');
+    spot.addColorStop(0.45, 'rgba(105,18,0,.42)');
     spot.addColorStop(1, 'rgba(125,22,0,0)');
     sg.fillStyle = spot;
     sg.beginPath(); sg.ellipse(x, y, rx, rx * 0.48, solarRnd() * Math.PI, 0, Math.PI * 2); sg.fill();
   }
   const solarTexture = new THREE.CanvasTexture(solarCanvas);
   solarTexture.colorSpace = THREE.SRGBColorSpace;
-  const sunCore = new THREE.Mesh(new THREE.SphereGeometry(315, 64, 40),
+  solarTexture.anisotropy = 8;
+  solarTexture.generateMipmaps = true;
+  solarTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  solarTexture.magFilter = THREE.LinearFilter;
+  const sunCore = new THREE.Mesh(new THREE.SphereGeometry(sunRadius, 128, 80),
     new THREE.MeshBasicMaterial({ map: solarTexture, color: 0xffffff, toneMapped: false }));
-  sunCore.position.set(-300, 75, -340);
+  // Parked well clear of the sunward PV wing (~z −61); prior (−300,75,−340)
+  // with radius 394 intersected the tip hub/blankets.
+  sunCore.position.set(-420, 90, -490);
   scene.add(sunCore);
-  const corona = new THREE.Mesh(new THREE.SphereGeometry(342, 48, 28),
+  const corona = new THREE.Mesh(new THREE.SphereGeometry(sunRadius * 1.086, 96, 56),
     new THREE.MeshBasicMaterial({
       color: 0xff6818, transparent: true, opacity: 0.16, side: THREE.FrontSide,
       depthWrite: false, toneMapped: false,
@@ -12816,10 +13366,15 @@ function buildSolarFlare(scene) {
   corona.position.copy(sunCore.position);
   scene.add(corona);
   const sunLight = new THREE.DirectionalLight(0xff8a32, 4.8);
-  sunLight.position.set(-300, 110, -340);
+  sunLight.position.copy(sunCore.position).add(V(0, 40, 0));
   sunLight.target.position.set(0, 0, 0);
   scene.add(sunLight);
   scene.add(sunLight.target);
+  // Touch the photosphere and you are gone.
+  world.killSpheres = [{
+    center: sunCore.position, radius: sunRadius,
+    name: 'The Sun', color: '#ff8a24',
+  }];
 
   // Roof photovoltaic inlays sit flush with each deck top — no walkable lips.
   // (floorTop is the walkable surface; the thin plate is inset to avoid z-fight.)
@@ -12948,7 +13503,7 @@ function buildSolarFlare(scene) {
   // exterior hull's aft emitter.
   const strikePoint = V(75, 9.2, 8);
   const towardStation = strikePoint.clone().sub(sunCore.position).normalize();
-  const flareStart = sunCore.position.clone().addScaledVector(towardStation, 305);
+  const flareStart = sunCore.position.clone().addScaledVector(towardStation, sunRadius * 0.97);
   const flareCurve = new THREE.CatmullRomCurve3([
     flareStart,
     flareStart.clone().lerp(strikePoint, 0.24).add(V(12, 24, -8)),

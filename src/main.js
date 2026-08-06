@@ -1066,11 +1066,12 @@ function startMatch(mapDef, mode = 'ffa') {
   };
   world.onSharkBite = (ch, sharkPos) => {
     if (!ch?.alive) return;
-    applyDamage(ch, 90, SHARK, { environmental: true, silentImpact: true });
+    applyDamage(ch, 55, SHARK, { environmental: true, silentImpact: true });
     sfx('chomp', sharkPos || (ch.isPlayer ? null : ch.pos));
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
-    if (ch.isPlayer) hud.message('SHARK BITE -90', '#8ed8e8');
+    if (ch.isPlayer) hud.message('SHARK BITE -55', '#8ed8e8');
   };
+  world.onSharkBeached = () => hud.message('SHARK ON DECK!', '#8ed8e8');
   world.onTideWarning = () => sfx('siren');
   world.onSurgeHit = (ch) => {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
@@ -1218,11 +1219,12 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     // As with the canal gator, only the host applies authoritative wildlife
     // damage. Every client still animates the same local predator pursuit.
     if (!ch?.alive || !G?.multiplayerHost) return;
-    applyDamage(ch, 90, SHARK, { environmental: true, silentImpact: true });
+    applyDamage(ch, 55, SHARK, { environmental: true, silentImpact: true });
     sfx('chomp', sharkPos || (ch.isPlayer ? null : ch.pos));
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
-    if (ch.isPlayer) hud.message('SHARK BITE -90', '#8ed8e8');
+    if (ch.isPlayer) hud.message('SHARK BITE -55', '#8ed8e8');
   };
+  world.onSharkBeached = () => hud.message('SHARK ON DECK!', '#8ed8e8');
   world.onTideWarning = () => sfx('siren');
   world.onSurgeHit = (ch) => {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
@@ -1800,7 +1802,7 @@ function applyMultiplayerSnapshot(snap) {
       ev.targetId === multiplayer.slotId) {
       sfx('chomp');
       sfx('gatorhit');
-      hud.message('SHARK BITE -90', '#8ed8e8');
+      hud.message('SHARK BITE -55', '#8ed8e8');
     }
     if (ev.type === 'kill') {
       const killer = G.characters.find(c => c.team === ev.killerId || c.id === ev.killerId) ||
@@ -4370,18 +4372,28 @@ function step(dt) {
   // fell into the void? (Escher maps: drifting off any edge counts, so a
   // radius from the play center catches sideways/upward falls too)
   const kc = G.world.killCenter, kr = G.world.killRadius;
+  const killSpheres = G.world.killSpheres;
   for (const ch of G.characters) {
+    if (!ch.alive) continue;
     const drifted = kc && ch.pos.distanceToSquared(kc) > kr * kr;
-    if (ch.alive && (ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity) || drifted)) {
-      ch.hp = 0;
-      ch.jetpack = null;
-      ch.deaths++;
-      if (ch.isPlayer) {
-        ch.alive = false; sfx('death'); hud.damageFlash(); hud.showRespawn(true, RESPAWN_TIME);
-      } else ch.die();
-      hud.killfeed({ name: 'The Void', color: '#8899aa' }, ch);
-      G.respawnTimers.set(ch, RESPAWN_TIME);
-    }
+    const sunHit = killSpheres?.find(s =>
+      ch.pos.distanceToSquared(s.center) <= s.radius * s.radius);
+    const voided = ch.pos.y < G.world.killY || ch.pos.y > (G.world.killYTop ?? Infinity) || drifted;
+    if (!voided && !sunHit) continue;
+    ch.hp = 0;
+    ch.jetpack = null;
+    ch.deaths++;
+    if (ch.isPlayer) {
+      ch.alive = false; sfx('death'); hud.damageFlash(); hud.showRespawn(true, RESPAWN_TIME);
+      if (sunHit) hud.message('INCINERATED', sunHit.color || '#ff8a24');
+    } else ch.die();
+    hud.killfeed(
+      sunHit
+        ? { name: sunHit.name || 'The Sun', color: sunHit.color || '#ff8a24' }
+        : { name: 'The Void', color: '#8899aa' },
+      ch,
+    );
+    G.respawnTimers.set(ch, RESPAWN_TIME);
   }
 
   // respawns
