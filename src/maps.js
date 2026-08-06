@@ -10093,9 +10093,10 @@ function addOlympusMountain(scene, world) {
 // at map build time avoids a full-map scan when a meteor is launched.
 /* ================= MAP 7 — TIDEBREAKER (storm-lashed offshore platform) =================
    A low processing deck sits between two raised evacuation routes. The warning
-   sirens are gameplay: a modeled surge crosses south-to-north, floods the low
-   deck, and then drains back into the sea. Ocean, flood, rain, spray, crane,
-   and beacon animation all scale through the map's visual-quality hook. */
+   sirens are gameplay: a modeled surge crosses the low deck, floods it a bit
+   above waist height, then continuously drains until the deck is dry again.
+   Ocean, flood, rain, spray, crane, and beacon animation all scale through
+   the map's visual-quality hook. */
 function buildTidebreaker(scene) {
   const world = newWorld({
     // Falling from the rig enters the ocean rather than an instant void. The
@@ -10954,18 +10955,22 @@ function buildTidebreaker(scene) {
 
   // Flood plane and the breaker are separate animated surfaces. The breaker
   // curls forward through an actual grid; it is never a translated wall box.
+  // Keep the plane inset inside the 124×66 processing deck so the water never
+  // reads as an uncontained slab hanging off the platform lip.
   const floodMat = waterMaterial(0x0a3242, 0x3e8390, 0.17, 0.065, 0.68, 0.31);
   floodMat.depthWrite = false;
-  const floodMesh = new THREE.Mesh(new THREE.PlaneGeometry(132, 72, 56, 30), floodMat);
+  const floodMesh = new THREE.Mesh(new THREE.PlaneGeometry(118, 60, 56, 30), floodMat);
   floodMesh.rotation.x = -Math.PI / 2;
   floodMesh.position.y = -4.8;
   floodMesh.renderOrder = 3;
   essential.add(floodMesh);
   const floodZone = {
-    minX: -62, maxX: 62, minZ: -33, maxZ: 33,
+    minX: -59, maxX: 59, minZ: -30, maxZ: 30,
     surfaceY: -4.8, bottomY: -2.4,
   };
   world.waterZones.push(floodZone);
+  const FLOOD_PEAK = 1.95;
+  const FLOOD_EMPTY = 0.02;
 
   const breakerCols = 88;
   const breakerRows = 12;
@@ -11066,9 +11071,97 @@ function buildTidebreaker(scene) {
   rain.renderOrder = 3;
   essential.add(rain);
 
-  // Gameplay cycle: 26s calm, 8s siren, 8s modeled surge, 16s high tide,
-  // 12s drain, then a final 12s calm. The low deck floods to waist height.
+  // Permanent open-water storm lightning. Strike positions are uniform across
+  // the whole ocean plane, not just the platform footprint.
+  const boltPoints = 11;
+  const boltMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false,
+  });
+  const boltGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x8fe8ff, transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false,
+  });
+  const emptyBoltGeo = () => new THREE.CylinderGeometry(0.01, 0.01, 0.01, 3);
+  const bolt = new THREE.Mesh(emptyBoltGeo(), boltMat);
+  bolt.frustumCulled = false;
+  scene.add(bolt);
+  const boltGlow = new THREE.Mesh(emptyBoltGeo(), boltGlowMat);
+  boltGlow.frustumCulled = false;
+  scene.add(boltGlow);
+  const forkCount = 8;
+  const forkPositions = new Float32Array(forkCount * 2 * 3);
+  const forkGeo = new THREE.BufferGeometry();
+  forkGeo.setAttribute('position', new THREE.BufferAttribute(forkPositions, 3));
+  const forkMat = new THREE.LineBasicMaterial({
+    color: 0xbff8ff, transparent: true, opacity: 0, depthWrite: false, fog: false,
+  });
+  const forks = new THREE.LineSegments(forkGeo, forkMat);
+  forks.frustumCulled = false;
+  scene.add(forks);
+  const flashLight = new THREE.PointLight(0xdff7ff, 0, 320);
+  scene.add(flashLight);
+  const baseBackground = scene.background.clone();
+  const baseFogColor = scene.fog.color.clone();
+  const flashBackground = new THREE.Color(0xdaf8ff);
+  const flashFogColor = new THREE.Color(0xcff8ff);
+  const lightningHitY = (x, z) => {
+    if (x > -66 && x < -32 && Math.abs(z) < 17) return 14.15;
+    if (x > 34 && x < 64 && Math.abs(z) < 31) return 8.15;
+    if (Math.abs(x) < 66 && Math.abs(z) > 31 && Math.abs(z) < 39) return 8.15;
+    if (Math.abs(x) < 66 && Math.abs(z) < 33) return 0.15;
+    return oceanSurfaceY;
+  };
+  const strikeLightning = (x, z, characters = []) => {
+    const topY = 88;
+    const hitY = lightningHitY(x, z);
+    const points = [];
+    for (let i = 0; i < boltPoints; i++) {
+      const p = i / (boltPoints - 1);
+      const jag = i === 0 || i === boltPoints - 1 ? 0 : 3.4;
+      points.push(new THREE.Vector3(
+        x + rand(-jag, jag),
+        topY + (hitY - topY) * p,
+        z + rand(-jag, jag),
+      ));
+    }
+    const curve = new THREE.CatmullRomCurve3(points, false, 'chordal');
+    bolt.geometry.dispose();
+    boltGlow.geometry.dispose();
+    bolt.geometry = new THREE.TubeGeometry(curve, 48, 0.18, 5, false);
+    boltGlow.geometry = new THREE.TubeGeometry(curve, 48, 0.48, 6, false);
+    for (let i = 0; i < forkCount; i++) {
+      const baseP = rand(0.16, 0.82);
+      const baseY = topY + (hitY - topY) * baseP;
+      const baseX = x + rand(-2.8, 2.8);
+      const baseZ = z + rand(-2.8, 2.8);
+      const len = rand(5, 12);
+      const j = i * 6;
+      forkPositions[j] = baseX;
+      forkPositions[j + 1] = baseY;
+      forkPositions[j + 2] = baseZ;
+      forkPositions[j + 3] = baseX + rand(-len, len);
+      forkPositions[j + 4] = baseY - rand(3, 9);
+      forkPositions[j + 5] = baseZ + rand(-len, len);
+    }
+    forkGeo.attributes.position.needsUpdate = true;
+    flashLight.position.set(x, Math.max(18, hitY + 20), z);
+    world.storm.flashT = 0.72;
+    world.onLightningStrike?.({ x, y: hitY, z });
+    const hitR = 3.4;
+    for (const ch of characters || []) {
+      if (!ch?.alive) continue;
+      const dx = ch.pos.x - x;
+      const dz = ch.pos.z - z;
+      if (dx * dx + dz * dz <= hitR * hitR) world.onLightningHit?.(ch, { x, z });
+    }
+  };
+
+  // Gameplay cycle: 26s calm, 8s siren, 8s surge fill, then an immediate
+  // continuous drain (~24s) back to a dry deck, with calm filling the rest.
   const CYCLE = 82;
+  const DRAIN_START = 42;
+  const DRAIN_END = 66;
   let visualTier = 'high';
   let activeRainCount = rainCount;
   let previousPhase = 'calm';
@@ -11091,7 +11184,7 @@ function buildTidebreaker(scene) {
     phase: 'calm', level: -4.8, warningMix: 0, surgeMix: 0,
     front: -waveReach, directionX: waveDirection.x, directionZ: waveDirection.z,
   };
-  world.storm = { mix: 0.78 };
+  world.storm = { mix: 0.78, flashT: 0, nextLightning: rand(3, 9) };
   world.anim.push((dt, t, characters = []) => {
     oceanMat.uniforms.uTime.value = t;
     floodMat.uniforms.uTime.value = t;
@@ -11122,21 +11215,21 @@ function buildTidebreaker(scene) {
     if (cycleTime >= 26 && cycleTime < 34) {
       phase = 'warning';
       warningMix = THREE.MathUtils.smoothstep(cycleTime, 26, 27.5);
-    } else if (cycleTime >= 34 && cycleTime < 42) {
+    } else if (cycleTime >= 34 && cycleTime < DRAIN_START) {
       phase = 'surge';
       warningMix = 1;
       surgeMix = Math.sin((cycleTime - 34) / 8 * Math.PI);
       const p = (cycleTime - 34) / 8;
       waveFront = THREE.MathUtils.lerp(-waveReach, waveReach, p * p * (3 - 2 * p));
-      level = THREE.MathUtils.lerp(-4.8, 1.35, THREE.MathUtils.smoothstep(cycleTime, 34, 39));
-    } else if (cycleTime >= 42 && cycleTime < 58) {
-      phase = 'high';
-      level = 1.35;
-      warningMix = 0.5;
-    } else if (cycleTime >= 58 && cycleTime < 70) {
+      // Fill finishes near the end of the surge so the drain counter can start
+      // as soon as the deck is actually holding water.
+      level = THREE.MathUtils.lerp(-4.8, FLOOD_PEAK, THREE.MathUtils.smoothstep(cycleTime, 34, 40.5));
+    } else if (cycleTime >= DRAIN_START && cycleTime < DRAIN_END) {
       phase = 'draining';
-      level = THREE.MathUtils.lerp(1.35, -4.8, THREE.MathUtils.smoothstep(cycleTime, 58, 70));
-      warningMix = 0.22 * (1 - (cycleTime - 58) / 12);
+      // Linear continuous empty — no held high-tide slab that then pops away.
+      const drainT = (cycleTime - DRAIN_START) / (DRAIN_END - DRAIN_START);
+      level = THREE.MathUtils.lerp(FLOOD_PEAK, FLOOD_EMPTY, drainT);
+      warningMix = 0.22 * (1 - drainT);
     }
     if (phase === 'warning' && previousPhase !== 'warning') world.onTideWarning?.();
     previousPhase = phase;
@@ -11146,15 +11239,18 @@ function buildTidebreaker(scene) {
     });
     floodZone.surfaceY = level;
     floodMesh.position.y = level;
-    floodMesh.visible = level > -1.2;
-    floodMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.48, 0.72, Math.max(0, (level + 1.2) / 2.55));
+    // Fade out as the pool empties so the last centimeters dissolve instead of
+    // snapping off as a still-thick water block.
+    const floodCover = THREE.MathUtils.smoothstep(level, FLOOD_EMPTY, 0.28);
+    floodMesh.visible = floodCover > 0.01;
+    floodMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.18, 0.76, THREE.MathUtils.smoothstep(level, 0.08, FLOOD_PEAK)) * floodCover;
 
     // The breaker removes the slick only when its advancing front actually
-    // reaches the merged slick. It stays gone through high tide and drainage,
-    // then the two running pipe mouths push fresh oil inward during calm.
+    // reaches the merged slick. It stays gone through drainage, then the two
+    // running pipe mouths push fresh oil inward during calm.
     const oilProgress = oilCenter.x * waveDirection.x + oilCenter.z * waveDirection.z;
     if (phase === 'surge' && waveFront >= oilProgress - 2.2) oilWashedCycle = cycleId;
-    const keepingOilClear = oilWashedCycle === cycleId && cycleTime < 70;
+    const keepingOilClear = oilWashedCycle === cycleId && cycleTime < DRAIN_END;
     if (keepingOilClear || level > 0.18) oilFill = Math.max(0, oilFill - dt * 2.5);
     else oilFill = Math.min(1, oilFill + dt / 16);
     const oilVisibility = THREE.MathUtils.smoothstep(oilFill, 0.025, 0.24);
@@ -11317,6 +11413,25 @@ function buildTidebreaker(scene) {
       if (rainPositions[j + 4] < -9) resetRain(i, rand(36, 58));
     }
     rainGeo.attributes.position.needsUpdate = true;
+
+    world.storm.flashT = Math.max(0, world.storm.flashT - dt);
+    const flash = Math.min(1, world.storm.flashT / 0.42);
+    boltMat.opacity = flash;
+    boltGlowMat.opacity = flash * 0.34;
+    forkMat.opacity = flash * 0.72;
+    flashLight.intensity = flash * 420;
+    stormLight.intensity = 2.25 + flash * 7.5;
+    if (scene.background?.isColor) {
+      scene.background.copy(baseBackground).lerp(flashBackground, 0.3 * flash);
+    }
+    scene.fog.color.copy(baseFogColor).lerp(flashFogColor, 0.36 * flash);
+    world.storm.nextLightning -= dt;
+    if (world.storm.nextLightning <= 0) {
+      // Uniform over the full ocean extent, including empty water far from the rig.
+      strikeLightning(rand(-oceanHalf, oceanHalf), rand(-oceanHalf, oceanHalf), characters);
+      world.storm.nextLightning = rand(9, 18);
+    }
+
     for (let i = 0; i < lifeboats.length; i++) {
       lifeboats[i].rotation.z = Math.sin(t * 0.72 + i * 2.2) * 0.018;
     }

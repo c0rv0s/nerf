@@ -1228,6 +1228,19 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     sfx('wave', ch?.isPlayer ? null : ch?.pos);
     if (ch?.isPlayer) hud.message('WAVE IMPACT', '#9de9ff');
   };
+  world.onLightningStrike = (pos) => sfx('thunder', pos);
+  world.onLightningHit = (ch) => {
+    // Host owns environmental lightning damage; every client still renders the bolt.
+    if (!ch?.alive || !G?.multiplayerHost) return;
+    ch.paralyzeT = Math.max(ch.paralyzeT || 0, 2);
+    if (ch.vel) {
+      ch.vel.x *= 0.08;
+      ch.vel.z *= 0.08;
+      if (ch.vel.y > 0) ch.vel.y *= 0.25;
+    }
+    applyDamage(ch, 50, LIGHTNING, { environmental: true });
+    if (ch.isPlayer) hud.message('LIGHTNING STRIKE', '#dff7ff');
+  };
   world.onSolarFlareWarning = () => {
     sfx('siren');
     hud.message('SOLAR FLARE INBOUND — GET INSIDE', '#ff5638');
