@@ -12908,7 +12908,7 @@ function buildSolarFlare(scene) {
   // Exterior hull / roof (not the solar wing) — Pulsator + Gold on the main roof.
   pk(world, 'weapon', 10, 14.5, 12, { weapon: 'pulsar' });
   pk(world, 'ammo', 14, 14.5, 9, { weapon: 'pulsar' });
-  pk(world, 'gold', -8, 14.5, 8);
+  pk(world, 'gold', -10, 14.5, -4);
   pk(world, 'weapon', 75, 7.3, 8, { weapon: 'whomper' });
   pk(world, 'ammo', 70, 7.3, 0, { weapon: 'whomper' });
   pk(world, 'health', 88, 7.3, 0);
