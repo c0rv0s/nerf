@@ -7476,6 +7476,124 @@ function makeSign(scene, x, y, z, w, color, text, yaw = 0, doubleFaced = false) 
   return draw;
 }
 
+const ATRIUM_CONTROLS_REPO_URL = 'https://github.com/c0rv0s/nerf';
+const ATRIUM_CONTROLS_RICKROLL_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+// Double-sided CONTROLS plaque. Front links to the repo; the rarely-seen back
+// face rickrolls anyone curious enough to shoot it.
+function addAtriumControlsSign(scene, world, x, y, z, yaw) {
+  const size = 7;
+  const faceOffset = 0.02;
+  const nX = Math.sin(yaw);
+  const nZ = Math.cos(yaw);
+
+  const paintFace = (title, lines, accentLast = false) => {
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = 512;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(8,10,28,.92)';
+    g.beginPath();
+    g.roundRect(8, 8, 496, 496, 22);
+    g.fill();
+    g.lineWidth = 6;
+    g.strokeStyle = '#ffd23c';
+    g.stroke();
+    g.textAlign = 'center';
+    g.fillStyle = '#ffd23c';
+    g.font = 'bold 44px "Arial Black", Arial';
+    g.fillText(title, 256, 72);
+    const lineH = lines.length > 9 ? 36 : 42;
+    lines.forEach((entry, i) => {
+      const text = typeof entry === 'string' ? entry : entry.text;
+      const color = typeof entry === 'string'
+        ? (accentLast && i === lines.length - 1 ? '#ffd23c' : '#dde2ff')
+        : (entry.color || '#dde2ff');
+      const font = typeof entry === 'string'
+        ? (accentLast && i === lines.length - 1 ? 'bold 24px Arial' : 'bold 27px Arial')
+        : (entry.font || 'bold 27px Arial');
+      g.font = font;
+      g.fillStyle = color;
+      g.fillText(text, 256, 120 + i * lineH);
+    });
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    return new THREE.Mesh(
+      new THREE.PlaneGeometry(size, size),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true }),
+    );
+  };
+
+  const front = paintFace('CONTROLS', [
+    'WASD — move',
+    'Mouse — aim + shoot',
+    'Space — jump',
+    '1–9 / wheel — weapons',
+    'Tab — scoreboard',
+    'F — fullscreen · G — glow',
+    'Esc — pause',
+    '',
+    'Walk into a gate to play!',
+    "I'm open source — shoot me to view",
+  ], true);
+  front.position.set(x + nX * faceOffset, y, z + nZ * faceOffset);
+  front.rotation.y = yaw;
+  scene.add(front);
+
+  const back = paintFace('BACKSIDE', [
+    { text: 'You found the backside.', font: 'bold 28px Arial', color: '#ffd23c' },
+    { text: '', font: 'bold 20px Arial', color: '#dde2ff' },
+    { text: 'Not many manage to do it.', font: 'bold 26px Arial', color: '#dde2ff' },
+    { text: '', font: 'bold 20px Arial', color: '#dde2ff' },
+    { text: 'I wonder what happens', font: 'bold 26px Arial', color: '#dde2ff' },
+    { text: 'if you shoot me...', font: 'bold 26px Arial', color: '#ffd23c' },
+  ]);
+  back.position.set(x - nX * faceOffset, y, z - nZ * faceOffset);
+  back.rotation.y = yaw + Math.PI;
+  scene.add(back);
+
+  addBox(scene, world, x, 0.45, z, 0.35, 0.9, 0.35, 0x3a3452);
+
+  const registerUrlFace = (mesh, faceYaw, url, toast) => {
+    const normal = V(0, 0, 1).applyAxisAngle(V(0, 1, 0), faceYaw).normalize();
+    const right = V(1, 0, 0).applyAxisAngle(V(0, 1, 0), faceYaw).normalize();
+    const target = {
+      id: `url-sign-${world.scoreTargets.length}`,
+      kind: 'url-sign',
+      shape: 'plane',
+      url,
+      toast,
+      pos: mesh.position.clone(),
+      normal,
+      right,
+      up: V(0, 1, 0),
+      halfWidth: size / 2,
+      halfHeight: size / 2,
+      cooldownDuration: 2.5,
+      cooldown: 0,
+      active: true,
+      receivesSplash: false,
+      mesh,
+      setCooldown(seconds) {
+        this.cooldown = Math.max(0, Math.min(this.cooldownDuration, Number(seconds) || 0));
+        this.active = this.cooldown <= 0;
+        const brightness = this.active ? 1
+          : this.cooldown > 0.8 ? 0.35 : 0.35 + 0.65 * (1 - this.cooldown / 0.8);
+        this.mesh.material.color.setRGB(brightness, brightness, brightness);
+      },
+    };
+    world.scoreTargets.push(target);
+    world.anim.push((dt) => {
+      if (target.cooldown <= 0) return;
+      target.setCooldown(target.cooldown - dt);
+    });
+  };
+
+  registerUrlFace(front, yaw, ATRIUM_CONTROLS_REPO_URL, 'OPEN SOURCE — GITHUB');
+  registerUrlFace(back, yaw + Math.PI, ATRIUM_CONTROLS_RICKROLL_URL, 'NEVER GONNA GIVE YOU UP');
+}
+
 // The original Arena Blast atrium treated every entrance like an attraction:
 // huge, irregular wordmarks floated over the storefronts instead of sharing a
 // single UI-panel template. Keep utility signs on makeSign(), but give arena
@@ -8663,34 +8781,9 @@ export function buildAtrium(scene) {
     addBox(scene, world, x, 0.036, -25, 5, 0.07, 30, 0xd8a8c8, { tex: 'flowers', repeat: [1, 5] });
   }
 
-  // controls board to the left of spawn (replaces the old overlay text)
-  {
-    const c = document.createElement('canvas');
-    c.width = 512; c.height = 512;
-    const g = c.getContext('2d');
-    g.fillStyle = 'rgba(8,10,28,.92)';
-    g.beginPath(); g.roundRect(8, 8, 496, 496, 22); g.fill();
-    g.lineWidth = 6; g.strokeStyle = '#ffd23c'; g.stroke();
-    g.textAlign = 'center';
-    g.fillStyle = '#ffd23c';
-    g.font = 'bold 44px "Arial Black", Arial';
-    g.fillText('CONTROLS', 256, 72);
-    g.font = 'bold 27px Arial';
-    g.fillStyle = '#dde2ff';
-    const lines = ['WASD — move', 'Mouse — aim + shoot', 'Space — jump',
-      '1–9 / wheel — weapons', 'Tab — scoreboard', 'F — fullscreen · G — glow', 'Esc — pause',
-      '', 'Walk into a gate to play!'];
-    lines.forEach((t, i) => g.fillText(t, 256, 128 + i * 42));
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
-    const board = new THREE.Mesh(new THREE.PlaneGeometry(7, 7),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-    board.position.set(-12, 4.4, 39);
-    board.rotation.y = Math.PI / 2.6; // angled toward the spawn
-    scene.add(board);
-    addBox(scene, world, -12, 0.45, 39, 0.35, 0.9, 0.35, 0x3a3452);
-  }
+  // controls board to the left of spawn (replaces the old overlay text).
+  // Shoot the front to open the repo; the backside is a rickroll easter egg.
+  addAtriumControlsSign(scene, world, -12, 4.4, 39, Math.PI / 2.6);
 
   // mode pad beside the spawn
   addBox(scene, world, 11, 0.3, 38, 3.4, 0.6, 3.4, 0x2a6a8a, { tex: 'panel' });

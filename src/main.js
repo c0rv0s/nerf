@@ -834,6 +834,8 @@ function startAtrium() {
     spawnPuff: (p, c, s) => fxPool.spawnPuff(p, c, s),
     characters: () => characters,
     onDamage: () => {},
+    targets: () => shootableWorldTargets(),
+    onTargetDamage: (target, dmg, attacker, ctx) => damageWorldTarget(target, dmg, attacker, ctx),
   });
   const pickups = new PickupManager(scene, [], { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
@@ -3334,7 +3336,11 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 document.addEventListener('mousedown', (e) => {
-  if (G && document.pointerLockElement === canvas && e.button === 0) G.player.firing = true;
+  if (G && document.pointerLockElement === canvas && e.button === 0) {
+    G.player.firing = true;
+    // Open atrium URL signs during the click gesture so popups aren't blocked.
+    tryOpenAimedUrlSign();
+  }
 });
 document.addEventListener('mouseup', (e) => {
   if (G && e.button === 0) G.player.firing = false;
@@ -4183,6 +4189,79 @@ function shootableWorldTargets() {
   return [...comets, ...scoreTargets, ...(gator ? [gator] : [])];
 }
 
+function segmentTouchesPlaneTarget(target, a, b, pad = 0) {
+  if (!target || target.shape !== 'plane') return false;
+  const startX = a.x - target.pos.x;
+  const startY = a.y - target.pos.y;
+  const startZ = a.z - target.pos.z;
+  const endX = b.x - target.pos.x;
+  const endY = b.y - target.pos.y;
+  const endZ = b.z - target.pos.z;
+  const startDistance = startX * target.normal.x + startY * target.normal.y + startZ * target.normal.z;
+  const endDistance = endX * target.normal.x + endY * target.normal.y + endZ * target.normal.z;
+  const distanceDelta = startDistance - endDistance;
+  let t;
+  if (Math.abs(distanceDelta) > 1e-6) {
+    t = Math.max(0, Math.min(1, startDistance / distanceDelta));
+  } else {
+    t = Math.abs(startDistance) <= Math.abs(endDistance) ? 0 : 1;
+  }
+  const offsetX = startX + (endX - startX) * t;
+  const offsetY = startY + (endY - startY) * t;
+  const offsetZ = startZ + (endZ - startZ) * t;
+  const normalOffset = offsetX * target.normal.x + offsetY * target.normal.y + offsetZ * target.normal.z;
+  if (Math.abs(normalOffset) > pad + 0.03) return false;
+  const rightOffset = offsetX * target.right.x + offsetY * target.right.y + offsetZ * target.right.z;
+  const upOffset = offsetX * target.up.x + offsetY * target.up.y + offsetZ * target.up.z;
+  return Math.abs(rightOffset) <= target.halfWidth + pad &&
+    Math.abs(upOffset) <= target.halfHeight + pad;
+}
+
+function openUrlSign(target, { fromGesture = false } = {}) {
+  if (!target?.url || !target.active) return false;
+  target.setCooldown?.(target.cooldownDuration || 2.5);
+  // Prefer opening during the click gesture; deferred projectile hits often get
+  // popup-blocked, so keep a quiet fallback attempt either way.
+  const win = window.open(target.url, '_blank', 'noopener,noreferrer');
+  if (!win && fromGesture) {
+    const a = document.createElement('a');
+    a.href = target.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  return true;
+}
+
+function tryOpenAimedUrlSign() {
+  if (!G?.atrium || !G.player?.camera) return;
+  const signs = (G.world?.scoreTargets || []).filter((t) => t?.kind === 'url-sign' && t.active);
+  if (!signs.length) return;
+  const origin = G.player.camera.position;
+  const dir = new THREE.Vector3();
+  G.player.camera.getWorldDirection(dir);
+  const far = origin.clone().addScaledVector(dir, 120);
+  let best = null;
+  let bestDist = Infinity;
+  for (const target of signs) {
+    if (!segmentTouchesPlaneTarget(target, origin, far, 0.05)) continue;
+    const dist = origin.distanceToSquared(target.pos);
+    if (dist < bestDist) {
+      best = target;
+      bestDist = dist;
+    }
+  }
+  if (!best) return;
+  if (openUrlSign(best, { fromGesture: true }) && best.toast) {
+    hud.hitmarker();
+    sfx('coin');
+    hud.message(best.toast, '#ffd23c');
+  }
+}
+
 function damageWorldTarget(target, damage, attacker) {
   if (target?.kind === 'canal-gator') {
     target.onHit?.(attacker);
@@ -4190,6 +4269,16 @@ function damageWorldTarget(target, damage, attacker) {
       hud.hitmarker();
       sfx('hit');
     }
+    return;
+  }
+  if (target?.kind === 'url-sign') {
+    if (!attacker?.isPlayer || !target.active) return;
+    // Projectile path is usually outside the click gesture; still try so
+    // hold-to-fire into the plaque works when the browser allows it.
+    openUrlSign(target);
+    hud.hitmarker();
+    sfx('coin');
+    if (target.toast) hud.message(target.toast, '#ffd23c');
     return;
   }
   if (target?.kind === 'score-poster') {
