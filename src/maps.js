@@ -3727,15 +3727,161 @@ function buildAsteroids(scene) {
     scene.add(sp);
   }
 
-  // Ringed planet
-  const planet = new THREE.Mesh(new THREE.SphereGeometry(70, 32, 24), mat(0xcc5a2e, { roughness: 1 }));
+  // Ringed gas giant — banded storm texture + layered translucent rings.
+  const gasGiantTex = canvasTex('asteroid-gas-giant', (g) => {
+    const w = 128, h = 128;
+    // Base dusty rose / terracotta atmosphere.
+    const base = g.createLinearGradient(0, 0, 0, h);
+    base.addColorStop(0, '#5a2a38');
+    base.addColorStop(0.18, '#a85a48');
+    base.addColorStop(0.35, '#d4a090');
+    base.addColorStop(0.5, '#c87858');
+    base.addColorStop(0.62, '#e8c8b0');
+    base.addColorStop(0.78, '#b06050');
+    base.addColorStop(1, '#3a1828');
+    g.fillStyle = base;
+    g.fillRect(0, 0, w, h);
+    // Horizontal cloud bands with turbulent edges.
+    const bandCols = [
+      ['#f2e4d0', 0.12], ['#8a3830', 0.16], ['#e8b8a0', 0.1],
+      ['#6e2c38', 0.14], ['#d89878', 0.11], ['#c05040', 0.13],
+      ['#f0d8c0', 0.09], ['#7a4048', 0.12],
+    ];
+    for (let i = 0; i < 28; i++) {
+      const y = (i / 28) * h + (Math.sin(i * 2.7) * 2.2);
+      const thick = 1.6 + (i % 5) * 0.9 + Math.abs(Math.sin(i * 1.3)) * 2.4;
+      const [col, a] = bandCols[i % bandCols.length];
+      g.globalAlpha = a + 0.35;
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(0, y);
+      for (let x = 0; x <= w; x += 4) {
+        const wobble = Math.sin(x * 0.11 + i * 1.7) * 2.8
+          + Math.sin(x * 0.31 - i * 0.9) * 1.4
+          + Math.sin(x * 0.07 + i) * 1.1;
+        g.lineTo(x, y + wobble);
+      }
+      for (let x = w; x >= 0; x -= 4) {
+        const wobble = Math.sin(x * 0.11 + i * 1.7) * 2.8
+          + Math.sin(x * 0.31 - i * 0.9) * 1.4
+          + Math.sin(x * 0.07 + i) * 1.1;
+        g.lineTo(x, y + thick + wobble * 0.55);
+      }
+      g.closePath();
+      g.fill();
+    }
+    g.globalAlpha = 1;
+    // Wispy cream streaks / storm eddies.
+    for (let i = 0; i < 40; i++) {
+      const y = 10 + Math.random() * (h - 20);
+      const x0 = Math.random() * w;
+      g.strokeStyle = `rgba(255,236,214,${0.18 + Math.random() * 0.35})`;
+      g.lineWidth = 0.6 + Math.random() * 1.8;
+      g.beginPath();
+      g.moveTo(x0, y);
+      for (let k = 1; k < 8; k++) {
+        g.lineTo(x0 + k * 5.5, y + Math.sin(k * 0.9 + i) * 3.2);
+      }
+      g.stroke();
+    }
+    // Polar vortex (darker circular storm near the top of the lat map).
+    const vortex = g.createRadialGradient(64, 14, 2, 64, 16, 22);
+    vortex.addColorStop(0, 'rgba(40,12,22,0.85)');
+    vortex.addColorStop(0.45, 'rgba(120,40,50,0.45)');
+    vortex.addColorStop(1, 'rgba(120,40,50,0)');
+    g.fillStyle = vortex;
+    g.fillRect(0, 0, w, h);
+    // Soft terminator shading baked into the texture for distant readability.
+    const shade = g.createLinearGradient(0, 0, w, 0);
+    shade.addColorStop(0, 'rgba(8,4,12,0.55)');
+    shade.addColorStop(0.35, 'rgba(8,4,12,0)');
+    shade.addColorStop(0.7, 'rgba(255,220,180,0.08)');
+    shade.addColorStop(1, 'rgba(8,4,12,0.35)');
+    g.fillStyle = shade;
+    g.fillRect(0, 0, w, h);
+  });
+  gasGiantTex.wrapS = gasGiantTex.wrapT = THREE.RepeatWrapping;
+  gasGiantTex.anisotropy = 8;
+
+  const ringTex = canvasTex('asteroid-gas-rings', (g) => {
+    const w = 128, h = 128;
+    g.clearRect(0, 0, w, h);
+    // RingGeometry UVs: v = inner→outer radius. Paint horizontal lanes.
+    for (let y = 0; y < h; y++) {
+      const t = y / h;
+      const gap = (Math.floor(t * 48) % 7 === 3 || Math.floor(t * 48) % 11 === 5);
+      if (gap) continue;
+      const warm = Math.floor(t * 32) % 4 === 0;
+      const a = 0.22 + (Math.sin(t * 40) * 0.5 + 0.5) * 0.45;
+      g.fillStyle = warm
+        ? `rgba(220,200,175,${a})`
+        : `rgba(155,180,210,${a})`;
+      g.fillRect(0, y, w, 1 + (Math.floor(t * 48) % 3 === 0 ? 1 : 0));
+    }
+    // Bright inner and outer rims.
+    g.fillStyle = 'rgba(235,245,255,0.7)';
+    g.fillRect(0, 0, w, 3);
+    g.fillStyle = 'rgba(190,205,225,0.55)';
+    g.fillRect(0, h - 4, w, 4);
+    // Sparse brighter dust lanes.
+    for (let i = 0; i < 10; i++) {
+      const y = 8 + Math.random() * (h - 16);
+      g.fillStyle = `rgba(255,255,255,${0.15 + Math.random() * 0.25})`;
+      g.fillRect(0, y, w, 1);
+    }
+  });
+  ringTex.wrapS = THREE.RepeatWrapping;
+  ringTex.wrapT = THREE.ClampToEdgeWrapping;
+  ringTex.anisotropy = 8;
+
+  const planet = new THREE.Mesh(
+    new THREE.SphereGeometry(78, 48, 36),
+    new THREE.MeshStandardMaterial({
+      map: gasGiantTex,
+      roughness: 0.92,
+      metalness: 0.04,
+      emissive: new THREE.Color(0x3a1810),
+      emissiveIntensity: 0.18,
+    }),
+  );
   planet.position.set(-280, 110, -400);
+  planet.rotation.z = 0.22;
   scene.add(planet);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(112, 7, 8, 64),
-    new THREE.MeshBasicMaterial({ color: 0x8899bb, transparent: true, opacity: 0.4 }));
+
+  const ringMat = new THREE.MeshBasicMaterial({
+    map: ringTex,
+    color: 0xc8d4e4,
+    transparent: true,
+    opacity: 0.82,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  // Flat ring disk (not a fat torus) — reads as a Saturn-style system from afar.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(98, 168, 96, 4), ringMat);
   ring.position.copy(planet.position);
-  ring.rotation.x = 2.3; ring.rotation.y = 0.5;
+  ring.rotation.x = Math.PI / 2.35;
+  ring.rotation.y = 0.35;
+  ring.rotation.z = 0.15;
   scene.add(ring);
+  // Soft under-ring ghost for thickness at glancing angles.
+  const ringGhost = new THREE.Mesh(
+    new THREE.RingGeometry(102, 162, 64, 1),
+    new THREE.MeshBasicMaterial({
+      color: 0x8899bb, transparent: true, opacity: 0.18,
+      side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+    }),
+  );
+  ringGhost.position.copy(planet.position);
+  ringGhost.position.y -= 1.8;
+  ringGhost.rotation.copy(ring.rotation);
+  scene.add(ringGhost);
+
+  world.anim.push((_dt, t) => {
+    planet.rotation.y = t * 0.012;
+    ring.rotation.z = 0.15 + t * 0.004;
+    ringGhost.rotation.z = ring.rotation.z;
+  });
 
   // ---- Walkable platforms (x, y=top, z, w, d) ----
   addRockPlatform(scene, world, -75, 14, 0, 26, 20, 0x6f7fa0);  // blue base
@@ -3837,10 +3983,10 @@ function buildAsteroids(scene) {
   pk(world, 'weapon', 40, 8.2, 21, { weapon: 'pulsar' });
   pk(world, 'weapon', 16, -7.8, 68, { weapon: 'whomper' });  // far south rock
   pk(world, 'weapon', -44, 13.2, -42, { weapon: 'sidewinder' });
-  pk(world, 'weapon', 0, 9.3, 28, { weapon: 'parasite' });       // station bridge approach
+  pk(world, 'weapon', 44, 0.2, 46, { weapon: 'parasite' });       // SE rock
   pk(world, 'ammo', 13, -7.8, 72, { weapon: 'whomper' });
   pk(world, 'ammo', -40, 13.2, -46, { weapon: 'sidewinder' });
-  pk(world, 'ammo', 8, 9.3, 28, { weapon: 'parasite' });
+  pk(world, 'ammo', 40, 0.2, 49, { weapon: 'parasite' });
   pk(world, 'ammo', -3, 9.3, -2, { weapon: 'zooka' });
   pk(world, 'ammo', 0, 16.7, -44, { weapon: 'hyper' });           // cave roof
   pk(world, 'ammo', -48, 4.2, -10, { weapon: 'pulsar' });         // west balcony
