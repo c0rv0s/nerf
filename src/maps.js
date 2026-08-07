@@ -3657,8 +3657,9 @@ function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
   geo.computeVertexNormals();
   geo.translate(x, y - thick / 2, z);
   bake(geo, 3);
-  // Boulder keel under the slab. Its rounded top can poke above wide decks,
-  // so pair it with a sphere collider instead of letting players clip through.
+  // Boulder keel under the slab. On wide decks its rounded top can poke above
+  // the walkable face — keep the original placement/look, but size the sphere
+  // to the visual radius so players cannot walk through the crest.
   const r = Math.min(w, d) * 0.5;
   const keelX = x + rand(-1, 1);
   const keelY = y - thick - r * 0.5;
@@ -3668,7 +3669,9 @@ function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
   keel.rotateX(rand(0, 3)); keel.rotateY(rand(0, 3)); keel.rotateZ(rand(0, 3));
   keel.translate(keelX, keelY, keelZ);
   bake(keel, 2);
-  world.colliders.push({ type: 'sphere', center: V(keelX, keelY, keelZ), radius: r * 0.85 });
+  // After scale+tilt the mesh still fits in ~r of the center; 0.85 left a
+  // walkable gap through the part that sticks above the deck.
+  world.colliders.push({ type: 'sphere', center: V(keelX, keelY, keelZ), radius: r });
 }
 
 function buildAsteroids(scene) {
@@ -3686,7 +3689,8 @@ function buildAsteroids(scene) {
       fadeIn: 1, maxActive: 2,
     },
   });
-  scene.background = new THREE.Color(0x05060f);
+  scene.background = new THREE.Color(0x01020a);
+  scene.fog = null; // open space — don't inherit fog from the previous map
   scene.add(new THREE.HemisphereLight(0x5566aa, 0x221833, 2.4));
   scene.add(new THREE.AmbientLight(0x8899cc, 0.8));
   const sun = new THREE.DirectionalLight(0xfff0dd, 3.4);
@@ -3701,31 +3705,131 @@ function buildAsteroids(scene) {
   rim.position.set(-200, -80, 150);
   scene.add(rim);
 
-  // Starfield (two layers) + nebula sprites
-  for (const [n, size, rMin, rMax, color] of [[1200, 1.4, 380, 500, 0xffffff], [300, 2.4, 350, 450, 0xaaccff]]) {
-    const geo = new THREE.BufferGeometry();
-    const posArr = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const v = V(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(rMin, rMax));
-      posArr.set([v.x, v.y, v.z], i * 3);
-    }
-    geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-    scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color, size, sizeAttenuation: false })));
+  // Sky shell: a few small distant nebula pockets on a deep starfield.
+  // Soft source-over paint (no additive "lighter") so it doesn't read as a
+  // nearby lit canvas — high-res + gentle falloff keeps the infinite-void feel.
+  // Paint stars FIRST, then gas on top. Stamping pin-stars over the nebula
+  // made the clouds look like stippled canvas.
+  const skyW = 4096, skyH = 2048;
+  const skyCanvas = document.createElement('canvas');
+  skyCanvas.width = skyW;
+  skyCanvas.height = skyH;
+  const skyCtx = skyCanvas.getContext('2d');
+  const skyRnd = seededRandom(0xa57e801d);
+  skyCtx.fillStyle = '#01020a';
+  skyCtx.fillRect(0, 0, skyW, skyH);
+
+  // Fade to transparent with the SAME rgb — fading to rgba(0,0,0,0) tints every
+  // blob edge toward black, and stacked edges read as a mesh.
+  const rgbaFade = (color, a) => {
+    const m = String(color).match(/([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/);
+    if (!m) return `rgba(0,0,0,${a})`;
+    return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
+  };
+  const softBlob = (x, y, rx, ry, color, alpha = 1) => {
+    const R = Math.max(rx, ry);
+    const grad = skyCtx.createRadialGradient(0, 0, 0, 0, 0, R);
+    grad.addColorStop(0, color);
+    grad.addColorStop(0.5, rgbaFade(color, 0.45));
+    grad.addColorStop(1, rgbaFade(color, 0));
+    skyCtx.save();
+    skyCtx.globalAlpha = alpha;
+    skyCtx.translate(x, y);
+    skyCtx.scale(rx / R, ry / R);
+    skyCtx.fillStyle = grad;
+    skyCtx.beginPath();
+    skyCtx.arc(0, 0, R, 0, Math.PI * 2);
+    skyCtx.fill();
+    skyCtx.restore();
+  };
+
+  // Starfield behind the gas — pin dots stay sharp on the hi-res map.
+  for (let i = 0; i < 9000; i++) {
+    const x = skyRnd() * skyW;
+    const y = skyRnd() * skyH;
+    const bright = skyRnd() > 0.97;
+    const r = bright ? 0.8 + skyRnd() * 1.4 : 0.25 + skyRnd() * 0.55;
+    skyCtx.globalAlpha = bright ? 0.85 + skyRnd() * 0.15 : 0.28 + skyRnd() * 0.5;
+    const tint = skyRnd();
+    skyCtx.fillStyle = tint > 0.92 ? '#a8dcff' : tint < 0.06 ? '#e8c8ff' : tint < 0.12 ? '#ffe8b0' : '#ffffff';
+    skyCtx.beginPath();
+    skyCtx.arc(x, y, r, 0, Math.PI * 2);
+    skyCtx.fill();
   }
-  const nebTex = canvasTex('nebula', (g) => {
-    const grad = g.createRadialGradient(64, 64, 4, 64, 64, 64);
-    grad.addColorStop(0, 'rgba(255,255,255,.9)');
-    grad.addColorStop(0.4, 'rgba(255,255,255,.25)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
-  });
-  for (const [x, y, z, s, c] of [[-320, 80, -240, 420, 0x4455cc], [300, -60, 200, 380, 0xcc4477], [80, 200, 320, 300, 0x33aa88]]) {
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: nebTex, color: c, transparent: true, opacity: 0.24, depthWrite: false }));
-    sp.position.set(x, y, z);
-    sp.scale.setScalar(s);
-    scene.add(sp);
+  // Soft bright stars only — hard cross spikes scream "painted texture".
+  skyCtx.globalAlpha = 1;
+  for (let i = 0; i < 22; i++) {
+    const x = skyRnd() * skyW;
+    const y = 120 + skyRnd() * (skyH - 240);
+    const arm = 4 + skyRnd() * 9;
+    const glow = skyCtx.createRadialGradient(x, y, 0, x, y, arm);
+    glow.addColorStop(0, 'rgba(255,255,255,0.95)');
+    glow.addColorStop(0.25, 'rgba(220,230,255,0.35)');
+    glow.addColorStop(1, 'rgba(220,230,255,0)');
+    skyCtx.fillStyle = glow;
+    skyCtx.beginPath();
+    skyCtx.arc(x, y, arm, 0, Math.PI * 2);
+    skyCtx.fill();
   }
+
+  // Nebula = a handful of huge soft washes (no particle stamping). Shape comes
+  // from elongated ellipses along a spine, not hundreds of overlapping dots.
+  const wash = (x, y, rx, ry, color, alpha, rot = 0) => {
+    skyCtx.save();
+    skyCtx.translate(x, y);
+    skyCtx.rotate(rot);
+    softBlob(0, 0, rx, ry, color, alpha);
+    skyCtx.restore();
+  };
+
+  // Planet sits near UV ~(3470, 880). Long wispy trail streams away behind it.
+  const trailAngle = -0.16;
+  wash(3320, 860, 420, 130, 'rgba(70,25,130,0.55)', 0.55, trailAngle);
+  wash(3100, 820, 480, 110, 'rgba(100,35,150,0.5)', 0.45, trailAngle);
+  wash(2850, 780, 420, 90, 'rgba(80,30,140,0.42)', 0.38, trailAngle);
+  wash(2580, 740, 340, 70, 'rgba(60,40,150,0.35)', 0.3, trailAngle);
+  wash(3380, 880, 200, 70, 'rgba(160,55,190,0.55)', 0.4, trailAngle);
+  wash(3200, 850, 280, 55, 'rgba(120,80,210,0.45)', 0.32, trailAngle - 0.05);
+  wash(2950, 800, 300, 48, 'rgba(180,70,175,0.4)', 0.28, trailAngle + 0.04);
+  wash(2700, 760, 260, 40, 'rgba(90,110,210,0.35)', 0.22, trailAngle);
+  // Soft bright head tucked just behind the planet silhouette.
+  wash(3360, 870, 110, 55, 'rgba(210,225,255,0.55)', 0.3, trailAngle);
+  wash(3280, 860, 160, 65, 'rgba(150,160,230,0.4)', 0.26, trailAngle);
+  wash(3180, 840, 200, 70, 'rgba(110,70,200,0.3)', 0.22, trailAngle);
+
+  // Compact distant pockets (still just large washes — no particle clouds).
+  wash(680, 1480, 260, 180, 'rgba(130,25,100,0.55)', 0.55, 0.25);
+  wash(720, 1460, 180, 120, 'rgba(180,50,150,0.5)', 0.4, 0.1);
+  wash(640, 1500, 140, 100, 'rgba(90,40,170,0.4)', 0.35, -0.2);
+  wash(650, 1490, 60, 42, 'rgba(240,220,240,0.5)', 0.28, 0);
+
+  wash(1780, 460, 200, 130, 'rgba(50,35,120,0.4)', 0.42, -0.15);
+  wash(1820, 450, 140, 90, 'rgba(90,60,180,0.4)', 0.3, 0.1);
+
+  softenCanvasHorizontalSeam(skyCtx, skyW, skyH, 280);
+
+  const skyMap = new THREE.CanvasTexture(skyCanvas);
+  skyMap.colorSpace = THREE.SRGBColorSpace;
+  // No mipmaps — they turn pin stars into fat blobs and wash nebulae out.
+  skyMap.generateMipmaps = false;
+  skyMap.minFilter = THREE.LinearFilter;
+  skyMap.magFilter = THREE.LinearFilter;
+  const skyShell = new THREE.Mesh(
+    // Larger dome (still inside camera.far=900) = shallower curvature.
+    new THREE.SphereGeometry(820, 64, 40),
+    new THREE.MeshBasicMaterial({
+      map: skyMap,
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false,
+    }),
+  );
+  skyShell.renderOrder = -30;
+  skyShell.frustumCulled = false;
+  skyShell.name = 'asteroid-sky-shell';
+  scene.add(skyShell);
 
   // Ringed gas giant — banded storm texture + layered translucent rings.
   const gasGiantTex = canvasTex('asteroid-gas-giant', (g) => {
@@ -3803,35 +3907,42 @@ function buildAsteroids(scene) {
   gasGiantTex.wrapS = gasGiantTex.wrapT = THREE.RepeatWrapping;
   gasGiantTex.anisotropy = 8;
 
-  const ringTex = canvasTex('asteroid-gas-rings', (g) => {
+  // Bust the old barcode-stripe cache key — UVs + art both changed.
+  const ringTex = canvasTex('asteroid-gas-rings-v2', (g) => {
     const w = 128, h = 128;
     g.clearRect(0, 0, w, h);
-    // RingGeometry UVs: v = inner→outer radius. Paint horizontal lanes.
-    for (let y = 0; y < h; y++) {
-      const t = y / h;
-      const gap = (Math.floor(t * 48) % 7 === 3 || Math.floor(t * 48) % 11 === 5);
+    // Planar map: concentric circles around the texture center so stripes
+    // follow the ring geometry instead of reading as a slanted barcode.
+    const cx = 64, cy = 64;
+    for (let i = 0; i < 72; i++) {
+      const t = i / 72;
+      const radius = 6 + t * 56;
+      const gap = (i % 7 === 3 || i % 11 === 5);
       if (gap) continue;
-      const warm = Math.floor(t * 32) % 4 === 0;
-      const a = 0.22 + (Math.sin(t * 40) * 0.5 + 0.5) * 0.45;
-      g.fillStyle = warm
+      const warm = i % 4 === 0;
+      const a = 0.28 + (Math.sin(t * 36) * 0.5 + 0.5) * 0.42;
+      g.strokeStyle = warm
         ? `rgba(220,200,175,${a})`
         : `rgba(155,180,210,${a})`;
-      g.fillRect(0, y, w, 1 + (Math.floor(t * 48) % 3 === 0 ? 1 : 0));
+      g.lineWidth = 0.7 + (i % 3) * 0.55;
+      g.beginPath();
+      g.arc(cx, cy, radius, 0, Math.PI * 2);
+      g.stroke();
     }
-    // Bright inner and outer rims.
-    g.fillStyle = 'rgba(235,245,255,0.7)';
-    g.fillRect(0, 0, w, 3);
-    g.fillStyle = 'rgba(190,205,225,0.55)';
-    g.fillRect(0, h - 4, w, 4);
-    // Sparse brighter dust lanes.
-    for (let i = 0; i < 10; i++) {
-      const y = 8 + Math.random() * (h - 16);
-      g.fillStyle = `rgba(255,255,255,${0.15 + Math.random() * 0.25})`;
-      g.fillRect(0, y, w, 1);
+    g.strokeStyle = 'rgba(235,245,255,0.75)';
+    g.lineWidth = 2.2;
+    g.beginPath(); g.arc(cx, cy, 12, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = 'rgba(190,205,225,0.5)';
+    g.lineWidth = 1.8;
+    g.beginPath(); g.arc(cx, cy, 60, 0, Math.PI * 2); g.stroke();
+    for (let i = 0; i < 8; i++) {
+      const radius = 16 + Math.random() * 40;
+      g.strokeStyle = `rgba(255,255,255,${0.12 + Math.random() * 0.22})`;
+      g.lineWidth = 0.8;
+      g.beginPath(); g.arc(cx, cy, radius, 0, Math.PI * 2); g.stroke();
     }
   });
-  ringTex.wrapS = THREE.RepeatWrapping;
-  ringTex.wrapT = THREE.ClampToEdgeWrapping;
+  ringTex.wrapS = ringTex.wrapT = THREE.ClampToEdgeWrapping;
   ringTex.anisotropy = 8;
 
   const planet = new THREE.Mesh(
@@ -3857,8 +3968,19 @@ function buildAsteroids(scene) {
     depthWrite: false,
     toneMapped: false,
   });
-  // Flat ring disk (not a fat torus) — reads as a Saturn-style system from afar.
-  const ring = new THREE.Mesh(new THREE.RingGeometry(98, 168, 96, 4), ringMat);
+  // Flat ring disk with planar UVs so concentric texture circles stay circular.
+  const buildPlanetRingGeo = (inner, outer, segments = 96) => {
+    const geo = new THREE.RingGeometry(inner, outer, segments, 6);
+    const pos = geo.attributes.position;
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      const px = pos.getX(i), py = pos.getY(i);
+      uv.setXY(i, (px / outer) * 0.5 + 0.5, (py / outer) * 0.5 + 0.5);
+    }
+    uv.needsUpdate = true;
+    return geo;
+  };
+  const ring = new THREE.Mesh(buildPlanetRingGeo(98, 168, 96), ringMat);
   ring.position.copy(planet.position);
   ring.rotation.x = Math.PI / 2.35;
   ring.rotation.y = 0.35;
@@ -3866,7 +3988,7 @@ function buildAsteroids(scene) {
   scene.add(ring);
   // Soft under-ring ghost for thickness at glancing angles.
   const ringGhost = new THREE.Mesh(
-    new THREE.RingGeometry(102, 162, 64, 1),
+    buildPlanetRingGeo(102, 162, 64),
     new THREE.MeshBasicMaterial({
       color: 0x8899bb, transparent: true, opacity: 0.18,
       side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
@@ -9609,7 +9731,7 @@ function addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, seed, cavern
 
 // Upright, grounded volcanic mound. Unlike a floating island, it is broad at
 // the floor and narrow at the crown; four slope fields make the visible cone
-// genuinely walkable instead of hiding a vertical box inside it.
+// climbable, and stacked boxes fill the body so you cannot walk through it.
 function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
   world.ramps.push(
     { axis: 'x', minX: x - w * 0.46, maxX: x - w * 0.15, minZ: z - d * 0.15, maxZ: z + d * 0.15,
@@ -9621,14 +9743,23 @@ function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
     { axis: 'z', minX: x - w * 0.125, maxX: x + w * 0.125, minZ: z + d * 0.15, maxZ: z + d * 0.46,
       h0: height, h1: 0.04, supportPad0: 0.18 },
   );
-  // The ramps are height fields, not volumetric solids. This core gives the
-  // volcanic body real collision below its crown, preventing players and darts
-  // from passing through the visible mound between the four climb lanes.
-  world.colliders.push({
-    type: 'box',
-    min: V(x - w * 0.15, 0.02, z - d * 0.15),
-    max: V(x + w * 0.15, height, z + d * 0.15),
-  });
+  // Match the visual CylinderGeometry(0.38, 1) scaled by (w/2, height, d/2):
+  // stacked inset boxes track the taper so the solid fills the cone, not just
+  // a skinny core between the four climb ramps.
+  const layers = 5;
+  for (let i = 0; i < layers; i++) {
+    const t0 = i / layers;
+    const t1 = (i + 1) / layers;
+    const mid = (t0 + t1) * 0.5;
+    const radiusFrac = THREE.MathUtils.lerp(0.98, 0.4, mid);
+    const hw = w * 0.5 * radiusFrac * 0.9;
+    const hd = d * 0.5 * radiusFrac * 0.9;
+    world.colliders.push({
+      type: 'box',
+      min: V(x - hw, height * t0, z - hd),
+      max: V(x + hw, height * t1 + 0.04, z + hd),
+    });
+  }
   const geo = new THREE.CylinderGeometry(0.38, 1, 1, 9, 3, false);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
