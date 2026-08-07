@@ -694,6 +694,10 @@ export class Bot {
     this._vineExitT = Math.max(0, (this._vineExitT || 0) - dt);
     const vine = this._vineZone();
     const water = vine ? null : this._waterZone();
+    // Flooded decks still register as waterZones, but standing on a slab is
+    // wading — not a swim-out hazard that should steer toward the AABB lip.
+    const wading = !!(water && !water.waterfall &&
+      this._hasDrySupportOverWater(this.pos.x, this.pos.z, water.surfaceY));
     if (!water && !vine) this._waterRecoveryPath = false;
     const moveScale = this.world.characterMoveScale?.(this) || 1;
     const speed = this.world.playerSpeed * moveScale * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
@@ -724,7 +728,7 @@ export class Bot {
     // keep them swimming in place, so route out immediately instead of waiting
     // for drowning to become dangerous.
     let waterRecoveryGoal = null;
-    if (water) {
+    if (water && !wading) {
       waterRecoveryGoal = this._waterRecoveryGoal(water, dt);
       if (waterRecoveryGoal) wpTarget = waterRecoveryGoal;
     }
@@ -732,7 +736,7 @@ export class Bot {
     // If a bot is swimming near an escape vine, bias the current leg toward
     // the vine center. Once attached, vine motion takes over and climbs out.
     let waterVineGoal = null;
-    if (water && !waterRecoveryGoal) {
+    if (water && !wading && !waterRecoveryGoal) {
       waterVineGoal = this._nearbyVineGoal(12);
       if (waterVineGoal) wpTarget = waterVineGoal;
     }
@@ -836,6 +840,8 @@ export class Bot {
       const lavaNow = this._inLava(this.pos.x, this.pos.y, this.pos.z);
       const probeX = this.pos.x + moveX * 2.1;
       const probeZ = this.pos.z + moveZ * 2.1;
+      const lipX = this.pos.x + moveX * 4.4;
+      const lipZ = this.pos.z + moveZ * 4.4;
       if (this._inLava(probeX, this.pos.y, probeZ)) {
         const away = this._lavaAvoidVector(probeX, probeZ);
         moveX = away.x;
@@ -846,11 +852,21 @@ export class Bot {
         moveX = away.x;
         moveZ = away.z;
         if (this.grounded) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.75);
-      } else if (!water && this._isOpenWaterAt(probeX, probeZ)) {
-        const away = this._waterAvoidVector(probeX, probeZ);
+      } else if ((!water || wading) && (
+        this._isOpenWaterAt(probeX, probeZ) || this._isOpenWaterAt(lipX, lipZ)
+      )) {
+        // Prefer the nearer hazard so we don't "avoid" a far lip while already
+        // past a closer drop. Never hop for open-ocean lips — that launches
+        // bots over the edge.
+        const nearHazard = this._isOpenWaterAt(probeX, probeZ);
+        const hazardX = nearHazard ? probeX : lipX;
+        const hazardZ = nearHazard ? probeZ : lipZ;
+        const away = this._waterAvoidVector(hazardX, hazardZ);
         moveX = away.x;
         moveZ = away.z;
-        if (this.grounded) this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.35);
+        if (this.grounded && !this._isOpenOceanAt(hazardX, hazardZ)) {
+          this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.35);
+        }
       }
       const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
       const accel = this.grounded ? 8 * traction : 1.5;
@@ -858,7 +874,21 @@ export class Bot {
       this.vel.z += (moveZ * speed - this.vel.z) * Math.min(1, accel * dt);
     }
     if (vine) this._applyVineMotion(vine, dt, moveX, moveZ, wpTarget);
-    else if (water) this._applyWaterMotion(water, dt);
+    else if (water && !wading) {
+      this._applyWaterMotion(water, dt);
+      // Open-ocean recovery: keep a real swim toward the ladder. Default water
+      // drag otherwise leaves bots paddling forever far from the rig.
+      if (water.openOcean && waterRecoveryGoal) {
+        const toX = waterRecoveryGoal.x - this.pos.x;
+        const toZ = waterRecoveryGoal.z - this.pos.z;
+        const d = Math.hypot(toX, toZ);
+        if (d > 0.4) {
+          const swim = this.world.playerSpeed * 0.62;
+          this.vel.x = THREE.MathUtils.damp(this.vel.x, (toX / d) * swim, 5, dt);
+          this.vel.z = THREE.MathUtils.damp(this.vel.z, (toZ / d) * swim, 5, dt);
+        }
+      }
+    }
     this._updateJetpack(dt, wpTarget, vine, water);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
@@ -1011,6 +1041,29 @@ export class Bot {
     return new THREE.Vector3(best.x, clamp(this.pos.y, best.minY, best.maxY), best.z);
   }
 
+  // Open-ocean falls: swim to the nearest ladder that reaches into the water
+  // and climbs back onto the rig (Tidebreaker east/west ocean ladders).
+  _nearestOceanClimbGoal(zone) {
+    const zones = this.world.vineZones;
+    if (!zones?.length) return null;
+    const surface = zone.surfaceY;
+    let best = null, bestD = Infinity;
+    for (const z of zones) {
+      if (z.minY > surface + 1.5) continue;
+      if (z.maxY < surface + 2.5) continue;
+      const d = Math.hypot(z.x - this.pos.x, z.z - this.pos.z);
+      if (d < bestD) { bestD = d; best = z; }
+    }
+    if (!best) return null;
+    // Aim at the ladder near the surface so grab volume catches the bot.
+    const aimY = clamp(
+      Math.max(this.pos.y, surface - 0.4),
+      best.minY,
+      Math.min(best.maxY, surface + 0.6),
+    );
+    return new THREE.Vector3(best.x, aimY, best.z);
+  }
+
   _waterRecoveryGoal(zone, dt) {
     if (zone.waterfall) return null;
     this._waterRecoveryT = Math.max(0, (this._waterRecoveryT || 0) - dt);
@@ -1018,6 +1071,15 @@ export class Bot {
     this.shopping = null;
 
     const urgent = (this._drownT || 0) > 38;
+
+    if (zone.openOcean) {
+      const ladderGoal = this._nearestOceanClimbGoal(zone);
+      if (ladderGoal) {
+        this._waterRecoveryPath = false;
+        return ladderGoal;
+      }
+    }
+
     const vineGoal = this._nearbyVineGoal(urgent ? 26 : 16);
     if (vineGoal) return vineGoal;
 
@@ -1062,7 +1124,11 @@ export class Bot {
 
   _pointInAnyWater(pos) {
     for (const zone of this.world.waterZones || []) {
-      if (this._pointInWater(pos, zone)) return true;
+      if (!this._pointInWater(pos, zone)) continue;
+      // Waypoints on a flooded slab still have dry footing — keep them on the
+      // dry graph so pathfinding doesn't abandon the whole platform.
+      if (this._hasDrySupportOverWater(pos.x, pos.z, zone.surfaceY, pos.y)) continue;
+      return true;
     }
     return false;
   }
@@ -1076,17 +1142,57 @@ export class Bot {
     return false;
   }
 
-  _hasDrySupportOverWater(x, z, surfaceY) {
-    for (const c of this.world.colliders || []) {
-      if (c.type !== 'box') continue;
-      if (x < c.min.x || x > c.max.x || z < c.min.z || z > c.max.z) continue;
-      const top = c.max.y;
-      if (top > surfaceY + 0.05 && top < this.pos.y + 1.2) return true;
+  _isOpenOceanAt(x, z) {
+    for (const zone of this.world.waterZones || []) {
+      if (!zone.openOcean) continue;
+      if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      if (this._hasDrySupportOverWater(x, z, zone.surfaceY)) continue;
+      return true;
     }
     return false;
   }
 
+  _hasDrySupportOverWater(x, z, surfaceY, refY = this.pos.y) {
+    for (const c of this.world.colliders || []) {
+      if (c.type !== 'box') continue;
+      if (x < c.min.x || x > c.max.x || z < c.min.z || z > c.max.z) continue;
+      const top = c.max.y;
+      // Wading: a floor near our feet counts even when flood water sits above it.
+      if (top > refY - 2.6 && top < refY + 1.2) return true;
+      // Bridges / platforms above the waterline (classic river case).
+      if (top > surfaceY + 0.05 && top < refY + 1.2) return true;
+    }
+    return false;
+  }
+
+  _nearestDrySupportGoal() {
+    let best = null, bestScore = Infinity;
+    const px = this.pos.x, pz = this.pos.z;
+    for (const c of this.world.colliders || []) {
+      if (c.type !== 'box') continue;
+      const w = c.max.x - c.min.x, d = c.max.z - c.min.z;
+      // Skip skinny poles / braces — we want deck slabs and walkways.
+      if (w * d < 8) continue;
+      const top = c.max.y;
+      if (top < -3 || top > this.pos.y + 14) continue;
+      const tx = clamp(px, c.min.x + Math.min(1.2, w * 0.25), c.max.x - Math.min(1.2, w * 0.25));
+      const tz = clamp(pz, c.min.z + Math.min(1.2, d * 0.25), c.max.z - Math.min(1.2, d * 0.25));
+      const score = Math.hypot(tx - px, tz - pz) + Math.abs(top - this.pos.y) * 0.2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = new THREE.Vector3(tx, top + 0.05, tz);
+      }
+    }
+    return best;
+  }
+
   _nearestWaterEdgeGoal(zone) {
+    if (zone.openOcean) {
+      const dry = this._nearestDrySupportGoal();
+      if (dry) return dry;
+      // Last resort: swim toward platform center rather than the far sea wall.
+      return new THREE.Vector3(0, Math.max(this.pos.y, 0.2), 0);
+    }
     const pad = this.radius + 0.9;
     const choices = [
       new THREE.Vector3(zone.minX - pad, Math.max(this.pos.y, zone.surfaceY + 0.2), this.pos.z),
@@ -1151,6 +1257,16 @@ export class Bot {
     let ax = 0, az = 0;
     for (const zone of this.world.waterZones || []) {
       if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      if (this._hasDrySupportOverWater(x, z, zone.surfaceY)) continue;
+      if (zone.openOcean) {
+        // Ocean AABB walls are hundreds of meters out — steering toward them
+        // walks bots off the platform. Retreat toward current footing / center.
+        ax += this.pos.x - x;
+        az += this.pos.z - z;
+        ax += -x * 0.2;
+        az += -z * 0.2;
+        continue;
+      }
       const dl = Math.abs(x - zone.minX), dr = Math.abs(zone.maxX - x);
       const db = Math.abs(z - zone.minZ), dt = Math.abs(zone.maxZ - z);
       const m = Math.min(dl, dr, db, dt);

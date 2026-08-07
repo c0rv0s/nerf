@@ -10638,6 +10638,144 @@ function buildTidebreaker(scene) {
     }
   });
 
+  // One huge humpback cruises the deep column — scenic only, never hostile.
+  // Depth sits well under the swell but still readable when swimming or
+  // looking down through open water past the platform lip.
+  const whaleBodyMat = mat(0x4a5560, { roughness: 0.88, metalness: 0.02, flatShading: true });
+  const whaleBellyMat = mat(0x9aa6ad, { roughness: 0.9, metalness: 0.01, flatShading: true });
+  const whaleAccentMat = new THREE.MeshStandardMaterial({
+    color: 0xdde4e8, roughness: 0.86, metalness: 0.02, flatShading: true, side: THREE.DoubleSide,
+  });
+  const whaleFinMat = new THREE.MeshStandardMaterial({
+    color: 0x3d4750, roughness: 0.86, metalness: 0.02, flatShading: true, side: THREE.DoubleSide,
+  });
+  const buildHumpbackWhale = () => {
+    const group = new THREE.Group();
+    // Body runs along +X (nose forward), matching the shark heading convention.
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(2.85, 18.5, 6, 12), whaleBodyMat);
+    torso.rotation.z = Math.PI / 2;
+    torso.scale.set(1, 0.78, 1.08);
+    group.add(torso);
+    const belly = new THREE.Mesh(new THREE.CapsuleGeometry(2.35, 14.5, 5, 10), whaleBellyMat);
+    belly.rotation.z = Math.PI / 2;
+    belly.position.set(-0.4, -1.15, 0);
+    belly.scale.set(1, 0.55, 0.92);
+    group.add(belly);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(2.55, 10, 8), whaleBodyMat);
+    head.position.set(11.2, -0.15, 0);
+    head.scale.set(1.35, 0.78, 0.95);
+    group.add(head);
+    const snout = new THREE.Mesh(new THREE.SphereGeometry(1.55, 8, 6), whaleBellyMat);
+    snout.position.set(13.4, -0.55, 0);
+    snout.scale.set(1.45, 0.55, 0.82);
+    group.add(snout);
+    // Throat-groove suggestion under the chin.
+    for (let i = -2; i <= 2; i++) {
+      const groove = new THREE.Mesh(
+        new THREE.BoxGeometry(5.8, 0.07, 0.12),
+        whaleBellyMat,
+      );
+      groove.position.set(10.2, -1.55, i * 0.42);
+      groove.rotation.z = -0.12;
+      group.add(groove);
+    }
+    const hump = new THREE.Mesh(new THREE.SphereGeometry(2.1, 8, 6), whaleBodyMat);
+    hump.position.set(-1.2, 1.85, 0);
+    hump.scale.set(1.8, 0.72, 0.85);
+    group.add(hump);
+    const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.65, 5), whaleFinMat);
+    dorsal.position.set(-0.4, 3.15, 0);
+    dorsal.rotation.z = -0.35;
+    group.add(dorsal);
+    // Huge white-patched pectorals — the humpback tell.
+    const buildPectoral = (side) => {
+      const fin = new THREE.Group();
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.28, 9.2), whaleAccentMat);
+      blade.position.set(2.2, -0.85, side * 5.4);
+      blade.rotation.x = side * 0.18;
+      blade.rotation.y = side * -0.42;
+      blade.rotation.z = side * 0.12;
+      blade.scale.set(1, 1, 1);
+      fin.add(blade);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.4, 5), whaleAccentMat);
+      tip.position.set(1.55, -1.05, side * 10.35);
+      tip.rotation.x = side * Math.PI / 2;
+      tip.rotation.z = side * -0.35;
+      fin.add(tip);
+      const patch = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.18, 4.2), whaleFinMat);
+      patch.position.set(2.55, -0.72, side * 4.8);
+      patch.rotation.y = side * -0.42;
+      fin.add(patch);
+      return fin;
+    };
+    const leftPec = buildPectoral(1);
+    const rightPec = buildPectoral(-1);
+    group.add(leftPec, rightPec);
+    // Horizontal fluke at the tail.
+    const fluke = new THREE.Group();
+    fluke.position.set(-11.6, 0.15, 0);
+    const flukeGeo = new THREE.BufferGeometry();
+    flukeGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+      0, 0, 0, -3.2, 0.35, 5.8, -1.4, 0.1, 0.4,
+      0, 0, 0, -1.4, 0.1, -0.4, -3.2, 0.35, -5.8,
+      0, 0, 0, -3.2, -0.2, 5.8, -1.4, -0.05, 0.4,
+      0, 0, 0, -1.4, -0.05, -0.4, -3.2, -0.2, -5.8,
+      -1.4, 0.1, 0.4, -4.1, 0.55, 0.15, -3.2, 0.35, 5.8,
+      -1.4, 0.1, -0.4, -3.2, 0.35, -5.8, -4.1, 0.55, -0.15,
+    ], 3));
+    flukeGeo.computeVertexNormals();
+    fluke.add(new THREE.Mesh(flukeGeo, whaleFinMat));
+    group.add(fluke);
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.22, 7, 5), new THREE.MeshBasicMaterial({ color: 0x0a0c0e }));
+      eye.position.set(11.8, 0.35, side * 1.55);
+      group.add(eye);
+    }
+    // ~32m class silhouette at this scale — reads huge next to the sharks.
+    group.scale.setScalar(1.55);
+    return { group, leftPec, rightPec, fluke };
+  };
+  const whaleParts = buildHumpbackWhale();
+  const whale = whaleParts.group;
+  whale.position.set(110, oceanSurfaceY - 22, -40);
+  essential.add(whale);
+  world.whale = whale;
+  const whaleCruise = {
+    angle: 0.35,
+    radiusX: 118,
+    radiusZ: 92,
+    depth: oceanSurfaceY - 22,
+    speed: 0.045,
+  };
+  world.anim.push((dt, t) => {
+    whaleCruise.angle += whaleCruise.speed * dt;
+    const a = whaleCruise.angle;
+    const x = Math.cos(a) * whaleCruise.radiusX;
+    const z = Math.sin(a) * whaleCruise.radiusZ;
+    // Slow vertical roll through the deep band — never near the surface sharks.
+    const y = whaleCruise.depth
+      + Math.sin(t * 0.22) * 3.2
+      + Math.sin(a * 2.0) * 1.4;
+    const prevY = whale.position.y;
+    whale.position.set(x, y, z);
+    // Face along the ellipse tangent so the body tracks the cruise path.
+    const tx = -Math.sin(a) * whaleCruise.radiusX;
+    const tz = Math.cos(a) * whaleCruise.radiusZ;
+    const yaw = Math.atan2(-tz, tx);
+    let dyaw = yaw - whale.rotation.y;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    whale.rotation.y += dyaw * (1 - Math.exp(-1.6 * dt));
+    const pitch = THREE.MathUtils.clamp((y - prevY) * 0.35, -0.16, 0.16);
+    whale.rotation.z = THREE.MathUtils.damp(whale.rotation.z, -pitch, 1.4, dt);
+    // Soft fluke beat and lazy pectoral drift.
+    const beat = Math.sin(t * 1.55);
+    whaleParts.fluke.rotation.z = beat * 0.22;
+    whaleParts.fluke.rotation.y = Math.sin(t * 0.7) * 0.04;
+    whaleParts.leftPec.rotation.x = 0.08 + Math.sin(t * 0.55 + 0.4) * 0.1;
+    whaleParts.rightPec.rotation.x = 0.08 + Math.sin(t * 0.55 - 0.4) * 0.1;
+  });
+
   // Main low deck, evacuation catwalks, east operations roof, and west helipad.
   addBox(scene, world, 0, -0.55, 0, 124, 1.1, 66, steel, { ...wetDeck, debugName: 'processing deck' });
   // Evac decks grow 0.65 toward center so their inner faces meet the ramp
@@ -11082,7 +11220,18 @@ function buildTidebreaker(scene) {
   const craneGeometries = [];
   const craneBeam = (a, b, r = 0.22) => craneGeometries.push(cylinderBetween(a, b, r, 6));
   const craneX = 6, craneZ = 5;
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) craneBeam(V(craneX + sx * 1.5, 0, craneZ + sz * 1.5), V(craneX + sx * 1.05, 24, craneZ + sz * 1.05), 0.34);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const x0 = craneX + sx * 1.5, z0 = craneZ + sz * 1.5;
+    const x1 = craneX + sx * 1.05, z1 = craneZ + sz * 1.05;
+    craneBeam(V(x0, 0, z0), V(x1, 24, z1), 0.34);
+    // Solid support poles — players should bump into the tower legs.
+    const pad = 0.4;
+    world.colliders.push({
+      type: 'box',
+      min: V(Math.min(x0, x1) - pad, 0, Math.min(z0, z1) - pad),
+      max: V(Math.max(x0, x1) + pad, 24, Math.max(z0, z1) + pad),
+    });
+  }
   for (let y = 2; y <= 22; y += 4) {
     craneBeam(V(craneX - 1.4 + y * 0.015, y, craneZ - 1.4 + y * 0.015), V(craneX + 1.4 - y * 0.015, y + 3.2, craneZ - 1.4 + y * 0.015), 0.16);
     craneBeam(V(craneX + 1.4 - y * 0.015, y, craneZ + 1.4 - y * 0.015), V(craneX - 1.4 + y * 0.015, y + 3.2, craneZ + 1.4 - y * 0.015), 0.16);
@@ -11119,8 +11268,10 @@ function buildTidebreaker(scene) {
 
   // Enclosed orange lifeboats are layered capsules with glazing, keel, racks,
   // and davit arms; they read as purpose-built safety equipment at a glance.
+  // Parked on the evacuation catwalks (not the inner lip) so the davit poles
+  // plant into solid deck instead of hanging over the gap to the low floor.
   const lifeboats = [];
-  for (const [x, z, yaw] of [[-26, -30.2, 0], [21, 30.2, Math.PI]]) {
+  for (const [x, z, yaw] of [[-26, -34.2, 0], [21, 34.2, Math.PI]]) {
     const boat = new THREE.Group();
     boat.position.set(x, 10.7, z);
     boat.rotation.y = yaw;
@@ -11133,7 +11284,8 @@ function buildTidebreaker(scene) {
     glass.position.y = 0.72;
     boat.add(hull, keel, glass);
     for (const sx of [-4.6, 4.6]) {
-      const davit = new THREE.Mesh(cylinderBetween(V(sx, -2.6, 0), V(sx, 2.8, 0), 0.15, 7), mat(0xb7c2c7, { metalness: 0.62, roughness: 0.42 }));
+      // Bottom digs into the catwalk slab (top y=8) so the poles read as mounted.
+      const davit = new THREE.Mesh(cylinderBetween(V(sx, -3.05, 0), V(sx, 2.8, 0), 0.15, 7), mat(0xb7c2c7, { metalness: 0.62, roughness: 0.42 }));
       boat.add(davit);
     }
     // Five overlapping spheres follow the capsule hull closely enough to keep
@@ -11558,7 +11710,8 @@ function buildTidebreaker(scene) {
   // continuous drain (~24s) back to a dry deck, with calm filling the rest.
   const CYCLE = 82;
   const DRAIN_START = 42;
-  const DRAIN_END = 66;
+  // ~20% faster empty than the original 24s drain window.
+  const DRAIN_END = 61.2;
   let visualTier = 'high';
   let activeRainCount = rainCount;
   let previousPhase = 'calm';
@@ -11716,7 +11869,9 @@ function buildTidebreaker(scene) {
           const z = waveDirection.z * along + waveTangent.z * across;
           const crestVariation = Math.sin(across * 0.09 + t * 2.1) * (0.16 + v * 0.58)
             + Math.sin(across * 0.23 - t * 1.7) * v * 0.24;
-          const y = level - 0.4 + v * 5.7 - THREE.MathUtils.smoothstep(v, 0.84, 1) * 0.95 + crestVariation;
+          // Bottom sits on the deck (y≈0), not on the rising flood sheet — tying
+          // the curl to `level` made the face hover above the platform.
+          const y = -0.12 + v * 5.7 - THREE.MathUtils.smoothstep(v, 0.84, 1) * 0.95 + crestVariation;
           breakerPositions.setXYZ(row * (breakerCols + 1) + col, x, y, z);
         }
       }
@@ -11732,7 +11887,7 @@ function buildTidebreaker(scene) {
         const x = waveDirection.x * along + waveTangent.x * state.rideAcross;
         const z = waveDirection.z * along + waveTangent.z * state.rideAcross;
         // Sit in the mid-curl of the modeled breaker so it reads inside the wave.
-        const y = Math.max(level + 2.2, 2.4) + Math.sin(t * 7.2 + state.rideAcross) * 0.45;
+        const y = 2.55 + Math.sin(t * 7.2 + state.rideAcross) * 0.45;
         state.group.position.set(x, y, z);
         state.group.rotation.y = Math.atan2(-waveDirection.z, waveDirection.x);
         state.group.rotation.z = 0.55 + Math.sin(t * 9.0) * 0.3;
