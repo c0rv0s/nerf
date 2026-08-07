@@ -10638,142 +10638,485 @@ function buildTidebreaker(scene) {
     }
   });
 
-  // One huge humpback cruises the deep column — scenic only, never hostile.
-  // Depth sits well under the swell but still readable when swimming or
-  // looking down through open water past the platform lip.
-  const whaleBodyMat = mat(0x4a5560, { roughness: 0.88, metalness: 0.02, flatShading: true });
-  const whaleBellyMat = mat(0x9aa6ad, { roughness: 0.9, metalness: 0.01, flatShading: true });
-  const whaleAccentMat = new THREE.MeshStandardMaterial({
-    color: 0xdde4e8, roughness: 0.86, metalness: 0.02, flatShading: true, side: THREE.DoubleSide,
+  // One huge low-poly humpback — royal-blue dorsal / white ventral, scenic only.
+  // Cruises a wide ring, dives to ~40m, and breaches like a real humpback when
+  // clear of the rig: steep exit, rolled belly, flared pecs, then a heavy crash.
+  const WHALE_BLUE = 0x2f56c8;
+  const WHALE_WHITE = 0xf0f3f6;
+  const whaleMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.78,
+    metalness: 0.04,
+    flatShading: true,
+    side: THREE.DoubleSide,
   });
-  const whaleFinMat = new THREE.MeshStandardMaterial({
-    color: 0x3d4750, roughness: 0.86, metalness: 0.02, flatShading: true, side: THREE.DoubleSide,
-  });
+  const pushWhaleTri = (positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz, color) => {
+    positions.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+    const r = ((color >> 16) & 255) / 255;
+    const g = ((color >> 8) & 255) / 255;
+    const b = (color & 255) / 255;
+    for (let n = 0; n < 3; n++) colors.push(r, g, b);
+  };
+  const meshFromTris = (positions, colors) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, whaleMat);
+  };
+  const buildPectoralMesh = (side) => {
+    const positions = [];
+    const colors = [];
+    // Local space: root at origin, fin extends along +Z for side=+1.
+    // Built flat in XY so rotation.x lifts the tip like a wing.
+    const root = [0, 0, 0];
+    const aft = [1.1, -0.15, side * 0.9];
+    const mid = [-0.9, -0.35, side * 5.6];
+    const tip = [-2.2, -0.85, side * 10.4];
+    const lead = [0.35, 0.05, side * 4.2];
+    // Blue topside
+    pushWhaleTri(positions, colors,
+      root[0], 0.1, root[2], aft[0], 0.08, aft[2], lead[0], 0.12, lead[2], WHALE_BLUE);
+    pushWhaleTri(positions, colors,
+      aft[0], 0.08, aft[2], tip[0], 0.05, tip[2], mid[0], 0.08, mid[2], WHALE_BLUE);
+    pushWhaleTri(positions, colors,
+      lead[0], 0.12, lead[2], aft[0], 0.08, aft[2], mid[0], 0.08, mid[2], WHALE_BLUE);
+    pushWhaleTri(positions, colors,
+      lead[0], 0.12, lead[2], mid[0], 0.08, mid[2], tip[0], 0.05, tip[2], WHALE_BLUE);
+    // White underside
+    pushWhaleTri(positions, colors,
+      root[0], -0.1, root[2], lead[0], -0.08, lead[2], aft[0], -0.08, aft[2], WHALE_WHITE);
+    pushWhaleTri(positions, colors,
+      aft[0], -0.08, aft[2], mid[0], -0.08, mid[2], tip[0], -0.05, tip[2], WHALE_WHITE);
+    pushWhaleTri(positions, colors,
+      lead[0], -0.08, lead[2], mid[0], -0.08, mid[2], aft[0], -0.08, aft[2], WHALE_WHITE);
+    pushWhaleTri(positions, colors,
+      lead[0], -0.08, lead[2], tip[0], -0.05, tip[2], mid[0], -0.08, mid[2], WHALE_WHITE);
+    return meshFromTris(positions, colors);
+  };
   const buildHumpbackWhale = () => {
-    const group = new THREE.Group();
-    // Body runs along +X (nose forward), matching the shark heading convention.
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(2.85, 18.5, 6, 12), whaleBodyMat);
-    torso.rotation.z = Math.PI / 2;
-    torso.scale.set(1, 0.78, 1.08);
-    group.add(torso);
-    const belly = new THREE.Mesh(new THREE.CapsuleGeometry(2.35, 14.5, 5, 10), whaleBellyMat);
-    belly.rotation.z = Math.PI / 2;
-    belly.position.set(-0.4, -1.15, 0);
-    belly.scale.set(1, 0.55, 0.92);
-    group.add(belly);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(2.55, 10, 8), whaleBodyMat);
-    head.position.set(11.2, -0.15, 0);
-    head.scale.set(1.35, 0.78, 0.95);
-    group.add(head);
-    const snout = new THREE.Mesh(new THREE.SphereGeometry(1.55, 8, 6), whaleBellyMat);
-    snout.position.set(13.4, -0.55, 0);
-    snout.scale.set(1.45, 0.55, 0.82);
-    group.add(snout);
-    // Throat-groove suggestion under the chin.
-    for (let i = -2; i <= 2; i++) {
-      const groove = new THREE.Mesh(
-        new THREE.BoxGeometry(5.8, 0.07, 0.12),
-        whaleBellyMat,
-      );
-      groove.position.set(10.2, -1.55, i * 0.42);
-      groove.rotation.z = -0.12;
-      group.add(groove);
-    }
-    const hump = new THREE.Mesh(new THREE.SphereGeometry(2.1, 8, 6), whaleBodyMat);
-    hump.position.set(-1.2, 1.85, 0);
-    hump.scale.set(1.8, 0.72, 0.85);
-    group.add(hump);
-    const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.65, 5), whaleFinMat);
-    dorsal.position.set(-0.4, 3.15, 0);
-    dorsal.rotation.z = -0.35;
-    group.add(dorsal);
-    // Huge white-patched pectorals — the humpback tell.
-    const buildPectoral = (side) => {
-      const fin = new THREE.Group();
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.28, 9.2), whaleAccentMat);
-      blade.position.set(2.2, -0.85, side * 5.4);
-      blade.rotation.x = side * 0.18;
-      blade.rotation.y = side * -0.42;
-      blade.rotation.z = side * 0.12;
-      blade.scale.set(1, 1, 1);
-      fin.add(blade);
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.4, 5), whaleAccentMat);
-      tip.position.set(1.55, -1.05, side * 10.35);
-      tip.rotation.x = side * Math.PI / 2;
-      tip.rotation.z = side * -0.35;
-      fin.add(tip);
-      const patch = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.18, 4.2), whaleFinMat);
-      patch.position.set(2.55, -0.72, side * 4.8);
-      patch.rotation.y = side * -0.42;
-      fin.add(patch);
-      return fin;
+    const positions = [];
+    const colors = [];
+    // Low-poly loft: nose (+X) → fluke (−X). Top facets blue, bottom white.
+    const stations = [
+      [13.6, 0.08, 0.18, -0.12],
+      [12.2, 1.05, 0.95, -1.35],
+      [10.4, 1.95, 1.55, -2.15],
+      [7.6, 2.55, 2.05, -2.45],
+      [4.2, 2.95, 2.45, -2.55],
+      [0.6, 3.05, 2.65, -2.45],
+      [-2.8, 2.75, 2.55, -2.15],
+      [-6.2, 2.15, 2.15, -1.65],
+      [-9.0, 1.25, 1.45, -1.05],
+      [-11.2, 0.55, 0.75, -0.45],
+      [-12.4, 0.18, 0.28, -0.15],
+    ];
+    const ring = (x, halfW, topY, botY) => {
+      const midY = (topY + botY) * 0.5;
+      return [
+        [x, topY, 0],
+        [x, topY * 0.72 + midY * 0.28, halfW * 0.72],
+        [x, midY * 0.15, halfW],
+        [x, botY * 0.55 + midY * 0.45, halfW * 0.78],
+        [x, botY, 0],
+        [x, botY * 0.55 + midY * 0.45, -halfW * 0.78],
+        [x, midY * 0.15, -halfW],
+        [x, topY * 0.72 + midY * 0.28, -halfW * 0.72],
+      ];
     };
-    const leftPec = buildPectoral(1);
-    const rightPec = buildPectoral(-1);
-    group.add(leftPec, rightPec);
-    // Horizontal fluke at the tail.
-    const fluke = new THREE.Group();
-    fluke.position.set(-11.6, 0.15, 0);
-    const flukeGeo = new THREE.BufferGeometry();
-    flukeGeo.setAttribute('position', new THREE.Float32BufferAttribute([
-      0, 0, 0, -3.2, 0.35, 5.8, -1.4, 0.1, 0.4,
-      0, 0, 0, -1.4, 0.1, -0.4, -3.2, 0.35, -5.8,
-      0, 0, 0, -3.2, -0.2, 5.8, -1.4, -0.05, 0.4,
-      0, 0, 0, -1.4, -0.05, -0.4, -3.2, -0.2, -5.8,
-      -1.4, 0.1, 0.4, -4.1, 0.55, 0.15, -3.2, 0.35, 5.8,
-      -1.4, 0.1, -0.4, -3.2, 0.35, -5.8, -4.1, 0.55, -0.15,
-    ], 3));
-    flukeGeo.computeVertexNormals();
-    fluke.add(new THREE.Mesh(flukeGeo, whaleFinMat));
-    group.add(fluke);
-    for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.22, 7, 5), new THREE.MeshBasicMaterial({ color: 0x0a0c0e }));
-      eye.position.set(11.8, 0.35, side * 1.55);
-      group.add(eye);
+    const rings = stations.map(([x, w, ty, by]) => ring(x, w, ty, by));
+    const colorAt = (y, topY, botY) => {
+      const tt = (y - botY) / Math.max(0.001, topY - botY);
+      return tt >= 0.46 ? WHALE_BLUE : WHALE_WHITE;
+    };
+    for (let s = 0; s < rings.length - 1; s++) {
+      const ra = rings[s], rb = rings[s + 1];
+      const topA = stations[s][2], botA = stations[s][3];
+      const topB = stations[s + 1][2], botB = stations[s + 1][3];
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8;
+        const [ax, ay, az] = ra[i], [bx, by, bz] = ra[j];
+        const [cx, cy, cz] = rb[j], [dx, dy, dz] = rb[i];
+        const col = colorAt((ay + by + cy + dy) * 0.25, (topA + topB) * 0.5, (botA + botB) * 0.5);
+        pushWhaleTri(positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz, col);
+        pushWhaleTri(positions, colors, ax, ay, az, cx, cy, cz, dx, dy, dz, col);
+      }
     }
-    // ~32m class silhouette at this scale — reads huge next to the sharks.
-    group.scale.setScalar(1.55);
-    return { group, leftPec, rightPec, fluke };
+    const nose = rings[0];
+    const tip = [stations[0][0] + 0.85, 0.05, 0];
+    for (let i = 0; i < 8; i++) {
+      const j = (i + 1) % 8;
+      const col = colorAt((nose[i][1] + nose[j][1] + tip[1]) / 3, stations[0][2], stations[0][3]);
+      pushWhaleTri(positions, colors,
+        tip[0], tip[1], tip[2],
+        nose[i][0], nose[i][1], nose[i][2],
+        nose[j][0], nose[j][1], nose[j][2], col);
+    }
+    pushWhaleTri(positions, colors, -1.2, 2.55, 0, -3.4, 2.35, 0, -2.1, 4.15, 0, WHALE_BLUE);
+    pushWhaleTri(positions, colors, -1.2, 2.55, 0, -2.1, 4.15, 0, -3.4, 2.35, 0, WHALE_BLUE);
+    // Throat-groove suggestion on the white belly (reference photos).
+    for (let i = -2; i <= 2; i++) {
+      const gz = i * 0.48;
+      pushWhaleTri(positions, colors,
+        12.4, -1.55, gz - 0.06, 5.5, -2.35, gz - 0.06, 5.5, -2.42, gz + 0.06, WHALE_WHITE);
+      pushWhaleTri(positions, colors,
+        12.4, -1.55, gz - 0.06, 5.5, -2.42, gz + 0.06, 12.4, -1.62, gz + 0.06, WHALE_WHITE);
+    }
+
+    // Solid fluke welded to the peduncle — no floating sheets / see-through slits.
+    {
+      const last = stations[stations.length - 1];
+      const ped = rings[rings.length - 1];
+      const px = last[0];
+      const midY = (last[2] + last[3]) * 0.5;
+      // Cap the open loft end so the body doesn't leave a hole behind the fluke.
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8;
+        const col = colorAt((ped[i][1] + ped[j][1] + midY) / 3, last[2], last[3]);
+        pushWhaleTri(positions, colors,
+          px, midY, 0,
+          ped[i][0], ped[i][1], ped[i][2],
+          ped[j][0], ped[j][1], ped[j][2], col);
+      }
+      // Fluke outline in the horizontal plane (root → left tip → notch → right tip).
+      // Shared verts for top/bottom so the edge walls seal the volume.
+      const ht = 0.34; // half-thickness
+      const outline = [
+        [px - 0.05, midY, 0],
+        [px - 1.15, midY + 0.08, 2.55],
+        [px - 2.55, midY + 0.22, 5.55],
+        [px - 3.35, midY + 0.32, 0.55],
+        [px - 3.75, midY + 0.38, 0],
+        [px - 3.35, midY + 0.32, -0.55],
+        [px - 2.55, midY + 0.22, -5.55],
+        [px - 1.15, midY + 0.08, -2.55],
+      ];
+      const top = outline.map(([x, y, z]) => [x, y + ht, z]);
+      const bot = outline.map(([x, y, z]) => [x, y - ht, z]);
+      // Top face (blue) — fan from root.
+      for (let i = 1; i < outline.length - 1; i++) {
+        pushWhaleTri(positions, colors,
+          top[0][0], top[0][1], top[0][2],
+          top[i][0], top[i][1], top[i][2],
+          top[i + 1][0], top[i + 1][1], top[i + 1][2], WHALE_BLUE);
+      }
+      // Bottom face (white).
+      for (let i = 1; i < outline.length - 1; i++) {
+        pushWhaleTri(positions, colors,
+          bot[0][0], bot[0][1], bot[0][2],
+          bot[i + 1][0], bot[i + 1][1], bot[i + 1][2],
+          bot[i][0], bot[i][1], bot[i][2], WHALE_WHITE);
+      }
+      // Edge ribbon seals top to bottom all the way around.
+      for (let i = 0; i < outline.length; i++) {
+        const j = (i + 1) % outline.length;
+        const edgeCol = Math.abs(outline[i][2]) + Math.abs(outline[j][2]) > 0.8 ? WHALE_BLUE : WHALE_WHITE;
+        pushWhaleTri(positions, colors,
+          top[i][0], top[i][1], top[i][2],
+          top[j][0], top[j][1], top[j][2],
+          bot[j][0], bot[j][1], bot[j][2], edgeCol);
+        pushWhaleTri(positions, colors,
+          top[i][0], top[i][1], top[i][2],
+          bot[j][0], bot[j][1], bot[j][2],
+          bot[i][0], bot[i][1], bot[i][2], edgeCol);
+      }
+      // Weld fluke root into the peduncle cap (fills the body→tail joint).
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8;
+        const col = colorAt((ped[i][1] + ped[j][1] + midY) / 3, last[2], last[3]);
+        pushWhaleTri(positions, colors,
+          ped[i][0], ped[i][1], ped[i][2],
+          ped[j][0], ped[j][1], ped[j][2],
+          top[0][0], top[0][1], top[0][2], col);
+        pushWhaleTri(positions, colors,
+          ped[i][0], ped[i][1], ped[i][2],
+          top[0][0], top[0][1], top[0][2],
+          bot[0][0], bot[0][1], bot[0][2], col);
+      }
+    }
+
+    const group = new THREE.Group();
+    const body = meshFromTris(positions, colors);
+    group.add(body);
+    const leftPec = new THREE.Group();
+    leftPec.position.set(3.6, -0.35, 2.55);
+    leftPec.add(buildPectoralMesh(1));
+    const rightPec = new THREE.Group();
+    rightPec.position.set(3.6, -0.35, -2.55);
+    rightPec.add(buildPectoralMesh(-1));
+    group.add(leftPec, rightPec);
+    group.scale.setScalar(1.85);
+    return { group, body, leftPec, rightPec };
   };
   const whaleParts = buildHumpbackWhale();
   const whale = whaleParts.group;
-  whale.position.set(110, oceanSurfaceY - 22, -40);
+  whale.position.set(145, oceanSurfaceY - 18, -55);
   essential.add(whale);
   world.whale = whale;
+
+  // Breach splash — short-lived foam burst at the exit / crash point.
+  const whaleSplashCount = 140;
+  const whaleSplashPos = new Float32Array(whaleSplashCount * 3);
+  const whaleSplashVel = Array.from({ length: whaleSplashCount }, () => V(0, 0, 0));
+  const whaleSplashLife = new Float32Array(whaleSplashCount);
+  const whaleSplashGeo = new THREE.BufferGeometry();
+  whaleSplashGeo.setAttribute('position', new THREE.BufferAttribute(whaleSplashPos, 3));
+  const whaleSplashMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: `
+      void main() {
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = clamp(140.0 / max(1.0, -mvPosition.z), 2.4, 11.0);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform float uOpacity;
+      void main() {
+        vec2 p = gl_PointCoord - vec2(0.5);
+        float d = length(p);
+        float alpha = 1.0 - smoothstep(0.18, 0.5, d);
+        gl_FragColor = vec4(0.86, 0.95, 1.0, alpha * uOpacity);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const whaleSplash = new THREE.Points(whaleSplashGeo, whaleSplashMat);
+  whaleSplash.frustumCulled = false;
+  whaleSplash.visible = false;
+  essential.add(whaleSplash);
+  const burstWhaleSplash = (ox, oy, oz, power = 1) => {
+    for (let i = 0; i < whaleSplashCount; i++) {
+      const i3 = i * 3;
+      const ang = Math.random() * Math.PI * 2;
+      const rad = Math.random() * 4.5 * power;
+      whaleSplashPos[i3] = ox + Math.cos(ang) * rad;
+      whaleSplashPos[i3 + 1] = oy + Math.random() * 1.2;
+      whaleSplashPos[i3 + 2] = oz + Math.sin(ang) * rad;
+      whaleSplashVel[i].set(
+        Math.cos(ang) * (2 + Math.random() * 10) * power,
+        (4 + Math.random() * 14) * power,
+        Math.sin(ang) * (2 + Math.random() * 10) * power,
+      );
+      whaleSplashLife[i] = 0.45 + Math.random() * 0.85;
+    }
+    whaleSplashGeo.attributes.position.needsUpdate = true;
+    whaleSplash.visible = true;
+    whaleSplashMat.uniforms.uOpacity.value = 0.95;
+  };
+
+  const WHALE_DECK_HALF_X = 62;
+  const WHALE_DECK_HALF_Z = 33;
+  const WHALE_MAX_DEPTH = 40;
+  const WHALE_BREACH_CLEAR = 35;
+  const WHALE_BREACH_DUR = 4.6;
+  const whaleDistFromPlatform = (x, z) => {
+    const dx = Math.max(0, Math.abs(x) - WHALE_DECK_HALF_X);
+    const dz = Math.max(0, Math.abs(z) - WHALE_DECK_HALF_Z);
+    if (dx === 0 && dz === 0) return 0;
+    if (dx === 0) return dz;
+    if (dz === 0) return dx;
+    return Math.hypot(dx, dz);
+  };
   const whaleCruise = {
-    angle: 0.35,
-    radiusX: 118,
-    radiusZ: 92,
-    depth: oceanSurfaceY - 22,
-    speed: 0.045,
+    angle: 0.55,
+    radiusX: 168,
+    radiusZ: 138,
+    radiusPulse: 0,
+    speed: 0.032,
+    phase: 'cruise', // cruise | rise | breach | dive
+    phaseT: 0,
+    nextBreachT: 14 + Math.random() * 18,
+    depthBias: 0.45,
+    pitch: 0,
+    roll: 0,
+    breachSide: 1, // which way the belly rolls / which pec goes vertical
+    splashExit: false,
+    splashCrash: false,
   };
   world.anim.push((dt, t) => {
-    whaleCruise.angle += whaleCruise.speed * dt;
+    const inBreach = whaleCruise.phase === 'breach';
+    whaleCruise.angle += whaleCruise.speed * dt * (inBreach ? 0.42 : 1);
+    whaleCruise.radiusPulse = Math.sin(t * 0.11) * 18;
     const a = whaleCruise.angle;
-    const x = Math.cos(a) * whaleCruise.radiusX;
-    const z = Math.sin(a) * whaleCruise.radiusZ;
-    // Slow vertical roll through the deep band — never near the surface sharks.
-    const y = whaleCruise.depth
-      + Math.sin(t * 0.22) * 3.2
-      + Math.sin(a * 2.0) * 1.4;
-    const prevY = whale.position.y;
+    const rx = whaleCruise.radiusX + whaleCruise.radiusPulse;
+    const rz = whaleCruise.radiusZ + whaleCruise.radiusPulse * 0.7;
+    const x = Math.cos(a) * rx;
+    const z = Math.sin(a) * rz;
+    const clear = whaleDistFromPlatform(x, z);
+    const deepY = oceanSurfaceY - WHALE_MAX_DEPTH;
+    const surfaceY = oceanSurfaceY - 1.1;
+
+    whaleCruise.nextBreachT -= dt;
+    whaleCruise.phaseT += dt;
+
+    if (whaleCruise.phase === 'cruise') {
+      whaleCruise.depthBias = 0.5 + 0.5 * Math.sin(t * 0.09 + a * 0.35);
+      if (whaleCruise.nextBreachT <= 0 && clear >= WHALE_BREACH_CLEAR) {
+        whaleCruise.phase = 'rise';
+        whaleCruise.phaseT = 0;
+        whaleCruise.breachSide = Math.random() < 0.5 ? 1 : -1;
+      } else if (whaleCruise.nextBreachT <= 0) {
+        whaleCruise.nextBreachT = 4 + Math.random() * 6;
+      }
+    } else if (whaleCruise.phase === 'rise') {
+      // Climb hard from depth toward a launch just under the swell.
+      whaleCruise.depthBias = Math.max(0, whaleCruise.depthBias - dt * 0.38);
+      if (whaleCruise.depthBias <= 0.04 && clear >= WHALE_BREACH_CLEAR) {
+        whaleCruise.phase = 'breach';
+        whaleCruise.phaseT = 0;
+        whaleCruise.splashExit = false;
+        whaleCruise.splashCrash = false;
+      } else if (whaleCruise.phaseT > 12 || clear < WHALE_BREACH_CLEAR * 0.85) {
+        whaleCruise.phase = 'dive';
+        whaleCruise.phaseT = 0;
+      }
+    } else if (whaleCruise.phase === 'breach') {
+      if (clear < WHALE_BREACH_CLEAR * 0.7) {
+        whaleCruise.phase = 'dive';
+        whaleCruise.phaseT = 0;
+      } else if (whaleCruise.phaseT > WHALE_BREACH_DUR) {
+        whaleCruise.phase = 'dive';
+        whaleCruise.phaseT = 0;
+        whaleCruise.nextBreachT = 26 + Math.random() * 34;
+      }
+    } else if (whaleCruise.phase === 'dive') {
+      whaleCruise.depthBias = Math.min(1, whaleCruise.depthBias + dt * 0.24);
+      if (whaleCruise.depthBias >= 0.92 || whaleCruise.phaseT > 12) {
+        whaleCruise.phase = 'cruise';
+        whaleCruise.phaseT = 0;
+        whaleCruise.nextBreachT = Math.max(whaleCruise.nextBreachT, 16 + Math.random() * 24);
+      }
+    }
+
+    let y;
+    let targetPitch = 0;
+    let targetRoll = 0;
+    let pecUp = 0.12;   // rotation lifting a pec toward vertical
+    let pecOut = 0.18;  // the other pec stays more horizontal / trailing
+    const side = whaleCruise.breachSide;
+
+    if (inBreach) {
+      // Classic humpback breach: steep ~55° exit, roll the belly open, one pec
+      // vertical, most of the body clear, then a heavy side/belly crash.
+      const u = Math.min(1, whaleCruise.phaseT / WHALE_BREACH_DUR);
+      const launch = THREE.MathUtils.smoothstep(u, 0, 0.18);
+      const peak = Math.sin(THREE.MathUtils.clamp(u / 0.52, 0, 1) * Math.PI);
+      const crash = THREE.MathUtils.smoothstep(u, 0.52, 1);
+      // Midsection sits near the waterline at peak so ~2/3 of the body clears.
+      y = oceanSurfaceY
+        + launch * 2.2
+        + peak * 9.5
+        - crash * 11.5
+        + Math.sin(u * Math.PI) * 1.4;
+      // Pitch: climb to ~55°, hold, then tuck through the crash.
+      targetPitch = THREE.MathUtils.lerp(0.35, 0.98, launch)
+        * (1 - crash * 0.15)
+        - crash * 0.55;
+      // Roll open to show the white belly / vertical pec silhouette.
+      targetRoll = side * (
+        THREE.MathUtils.lerp(0.05, 0.72, THREE.MathUtils.smoothstep(u, 0.05, 0.35))
+        + crash * 0.35
+      );
+      pecUp = THREE.MathUtils.lerp(0.2, 1.35, THREE.MathUtils.smoothstep(u, 0.08, 0.4));
+      pecOut = THREE.MathUtils.lerp(0.15, 0.55, THREE.MathUtils.smoothstep(u, 0.1, 0.45));
+      if (crash > 0.2) {
+        pecUp = THREE.MathUtils.lerp(pecUp, 0.35, crash);
+        pecOut = THREE.MathUtils.lerp(pecOut, 0.8, crash);
+      }
+      whaleCruise.depthBias = 0;
+
+      if (!whaleCruise.splashExit && u > 0.08) {
+        whaleCruise.splashExit = true;
+        burstWhaleSplash(x, oceanSurfaceY + 0.4, z, 1.15);
+      }
+      if (!whaleCruise.splashCrash && u > 0.72) {
+        whaleCruise.splashCrash = true;
+        burstWhaleSplash(x, oceanSurfaceY + 0.2, z, 1.35);
+      }
+    } else {
+      const cruiseWobble = Math.sin(t * 0.19) * 2.4 + Math.sin(a * 1.7) * 1.6;
+      y = THREE.MathUtils.lerp(surfaceY, deepY, whaleCruise.depthBias) + cruiseWobble;
+      if (whaleCruise.phase === 'rise') {
+        targetPitch = 0.48;
+        pecUp = 0.22;
+        pecOut = 0.28;
+      } else if (whaleCruise.phase === 'dive') {
+        targetPitch = -0.42;
+        targetRoll = 0;
+      } else {
+        targetPitch = (0.5 - whaleCruise.depthBias) * 0.12;
+      }
+    }
+
     whale.position.set(x, y, z);
-    // Face along the ellipse tangent so the body tracks the cruise path.
-    const tx = -Math.sin(a) * whaleCruise.radiusX;
-    const tz = Math.cos(a) * whaleCruise.radiusZ;
+    const tx = -Math.sin(a) * rx;
+    const tz = Math.cos(a) * rz;
     const yaw = Math.atan2(-tz, tx);
     let dyaw = yaw - whale.rotation.y;
     while (dyaw > Math.PI) dyaw -= Math.PI * 2;
     while (dyaw < -Math.PI) dyaw += Math.PI * 2;
-    whale.rotation.y += dyaw * (1 - Math.exp(-1.6 * dt));
-    const pitch = THREE.MathUtils.clamp((y - prevY) * 0.35, -0.16, 0.16);
-    whale.rotation.z = THREE.MathUtils.damp(whale.rotation.z, -pitch, 1.4, dt);
-    // Soft fluke beat and lazy pectoral drift.
-    const beat = Math.sin(t * 1.55);
-    whaleParts.fluke.rotation.z = beat * 0.22;
-    whaleParts.fluke.rotation.y = Math.sin(t * 0.7) * 0.04;
-    whaleParts.leftPec.rotation.x = 0.08 + Math.sin(t * 0.55 + 0.4) * 0.1;
-    whaleParts.rightPec.rotation.x = 0.08 + Math.sin(t * 0.55 - 0.4) * 0.1;
+    // Hold heading steadier through the breach so the silhouette reads clean.
+    whale.rotation.y += dyaw * (1 - Math.exp(-(inBreach ? 3.2 : 1.5) * dt));
+    whaleCruise.pitch = THREE.MathUtils.damp(whaleCruise.pitch, targetPitch, inBreach ? 5.5 : 2.2, dt);
+    whaleCruise.roll = THREE.MathUtils.damp(whaleCruise.roll, targetRoll, inBreach ? 4.5 : 2.0, dt);
+    // +X forward: z = pitch (nose up), x = roll (belly open).
+    whale.rotation.z = whaleCruise.pitch;
+    whale.rotation.x = whaleCruise.roll;
+
+    // Pecs: breach flares one nearly vertical and leaves the other trailing out.
+    const swimBob = Math.sin(t * 1.35) * 0.08;
+    if (side > 0) {
+      whaleParts.leftPec.rotation.x = THREE.MathUtils.damp(
+        whaleParts.leftPec.rotation.x, -pecUp + (inBreach ? 0 : swimBob), 5, dt);
+      whaleParts.rightPec.rotation.x = THREE.MathUtils.damp(
+        whaleParts.rightPec.rotation.x, pecOut * 0.35 + (inBreach ? 0.15 : swimBob), 5, dt);
+      whaleParts.leftPec.rotation.z = THREE.MathUtils.damp(
+        whaleParts.leftPec.rotation.z, inBreach ? -0.25 : -0.08, 4, dt);
+      whaleParts.rightPec.rotation.z = THREE.MathUtils.damp(
+        whaleParts.rightPec.rotation.z, inBreach ? 0.45 : 0.1, 4, dt);
+    } else {
+      whaleParts.rightPec.rotation.x = THREE.MathUtils.damp(
+        whaleParts.rightPec.rotation.x, pecUp - (inBreach ? 0 : swimBob), 5, dt);
+      whaleParts.leftPec.rotation.x = THREE.MathUtils.damp(
+        whaleParts.leftPec.rotation.x, -pecOut * 0.35 - (inBreach ? 0.15 : swimBob), 5, dt);
+      whaleParts.rightPec.rotation.z = THREE.MathUtils.damp(
+        whaleParts.rightPec.rotation.z, inBreach ? 0.25 : 0.08, 4, dt);
+      whaleParts.leftPec.rotation.z = THREE.MathUtils.damp(
+        whaleParts.leftPec.rotation.z, inBreach ? -0.45 : -0.1, 4, dt);
+    }
+
+    // Splash particles.
+    let splashAlive = 0;
+    let splashMaxLife = 0;
+    for (let i = 0; i < whaleSplashCount; i++) {
+      if (whaleSplashLife[i] <= 0) continue;
+      whaleSplashLife[i] -= dt;
+      if (whaleSplashLife[i] <= 0) continue;
+      splashAlive++;
+      splashMaxLife = Math.max(splashMaxLife, whaleSplashLife[i]);
+      const i3 = i * 3;
+      whaleSplashVel[i].y -= 18 * dt;
+      whaleSplashPos[i3] += whaleSplashVel[i].x * dt;
+      whaleSplashPos[i3 + 1] += whaleSplashVel[i].y * dt;
+      whaleSplashPos[i3 + 2] += whaleSplashVel[i].z * dt;
+      if (whaleSplashPos[i3 + 1] < oceanSurfaceY) {
+        whaleSplashPos[i3 + 1] = oceanSurfaceY;
+        whaleSplashVel[i].y *= -0.15;
+        whaleSplashVel[i].x *= 0.85;
+        whaleSplashVel[i].z *= 0.85;
+      }
+    }
+    if (splashAlive) {
+      whaleSplash.visible = true;
+      whaleSplashGeo.attributes.position.needsUpdate = true;
+      whaleSplashMat.uniforms.uOpacity.value = THREE.MathUtils.clamp(splashMaxLife * 1.1, 0, 0.95);
+    } else {
+      whaleSplash.visible = false;
+      whaleSplashMat.uniforms.uOpacity.value = 0;
+    }
   });
 
   // Main low deck, evacuation catwalks, east operations roof, and west helipad.
