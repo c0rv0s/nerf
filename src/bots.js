@@ -247,6 +247,7 @@ export class Bot {
     this.shopping = null;
     this.lootLock = 0;
     this.stuckT = 0;
+    this._lowGravHop = false;
     this._lastPos.copy(pos);
     this.avoid = null;
     this.avoidT = 0;
@@ -701,7 +702,10 @@ export class Bot {
     if (!water && !vine) this._waterRecoveryPath = false;
     const moveScale = this.world.characterMoveScale?.(this) || 1;
     const speed = this.world.playerSpeed * moveScale * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
-    const lowGrav = this.world.gravity < 12;
+    // Solar Flare exterior (and similar) override gravity via gravityAt — use the
+    // local field so roof fights don't strafe like indoor full-G combat.
+    const localGrav = this.world.gravityAt?.(this.pos, this) ?? this.world.gravity;
+    const lowGrav = localGrav < 12;
     let moveX = 0, moveZ = 0;
 
     // --- navigation ---
@@ -765,7 +769,6 @@ export class Bot {
             ? [140, 180, -140, -100, 100]            // too close: back off
             : [-110, -70, -45, 45, 70, 110, 150, -150]; // mid: orbit & juke
         this.moveAngle = pick(angles) * Math.PI / 180;
-        if (this.grounded && Math.random() < 0.22) this.vel.y = this.world.jumpVel; // dodge hop
       }
       const ca = Math.cos(this.moveAngle), sa = Math.sin(this.moveAngle);
       moveX = to.x * ca - to.z * sa;
@@ -779,6 +782,11 @@ export class Bot {
           moveX = (shop.def.pos.x - this.pos.x) / fd;
           moveZ = (shop.def.pos.z - this.pos.z) / fd;
         }
+      }
+      // Don't dodge-hop toward unsupported void (Solar Flare roofs, asteroid lips).
+      if (this.grounded && Math.random() < 0.22 &&
+          this._hasWalkableSupportAt(this.pos.x + moveX * 2.6, this.pos.z + moveZ * 2.6)) {
+        this.vel.y = this.world.jumpVel;
       }
       // Seeing an opponent does not mean the chosen strafe lane is walkable.
       // If the capsule-sized probe hits cover, immediately fall back to the
@@ -824,6 +832,7 @@ export class Bot {
           this.vel.y = dy / T + 0.5 * gravity * T;
           this.pos.y += 0.4; // clear the launch surface
           this.grounded = false;
+          this._lowGravHop = true;
         } else if (!lowGrav && dy > 1 && d < 4) {
           this.vel.y = this.world.jumpVel; // small hop up ledges
         }
@@ -831,9 +840,9 @@ export class Bot {
     }
 
     // --- movement physics ---
-    // Mid-flight on low grav: commit fully to the ballistic hop — steering
-    // would drag the horizontal speed toward walk speed and land them short.
-    const inFlight = lowGrav && !this.grounded;
+    // Mid-flight on a committed low-grav hop: don't drag horizontal speed down
+    // toward walk speed or the arc falls short. Accidental falls still steer.
+    const inFlight = lowGrav && !this.grounded && this._lowGravHop;
     if (!inFlight) {
       const ml = Math.hypot(moveX, moveZ);
       if (ml > 1) { moveX /= ml; moveZ /= ml; }
@@ -867,6 +876,18 @@ export class Bot {
         if (this.grounded && !this._isOpenOceanAt(hazardX, hazardZ)) {
           this.vel.y = Math.max(this.vel.y, this.world.jumpVel * 0.35);
         }
+      } else if (this.grounded && !vine && (!water || wading) && (
+        !this._hasWalkableSupportAt(probeX, probeZ) ||
+        !this._hasWalkableSupportAt(lipX, lipZ)
+      )) {
+        // Asteroid lips / Solar Flare outer hull: no floor ahead means void.
+        const nearVoid = !this._hasWalkableSupportAt(probeX, probeZ);
+        const away = this._voidAvoidVector(
+          nearVoid ? probeX : lipX,
+          nearVoid ? probeZ : lipZ,
+        );
+        moveX = away.x;
+        moveZ = away.z;
       }
       const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
       const accel = this.grounded ? 8 * traction : 1.5;
@@ -892,6 +913,7 @@ export class Bot {
     this._updateJetpack(dt, wpTarget, vine, water);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
+    if (this.grounded) this._lowGravHop = false;
     if (vine) this._trackVineStall(vine, dt, moveX, moveZ, wpTarget);
     else this._resetVineStall();
     if (lowGrav && wasAirborne && this.grounded) {
@@ -1163,6 +1185,52 @@ export class Bot {
       if (top > surfaceY + 0.05 && top < refY + 1.2) return true;
     }
     return false;
+  }
+
+  // Walkable footing under an XZ sample — used to stay on asteroid / Solar
+  // Flare platforms instead of walking into the kill void.
+  _hasWalkableSupportAt(x, z, refY = this.pos.y) {
+    for (const c of this.world.colliders || []) {
+      if (c.type === 'box') {
+        if (x < c.min.x || x > c.max.x || z < c.min.z || z > c.max.z) continue;
+        const top = c.max.y;
+        if (top > refY - 2.8 && top < refY + 1.4) return true;
+      } else if (c.type === 'sphere') {
+        const dx = x - c.center.x, dz = z - c.center.z;
+        if (dx * dx + dz * dz > c.radius * c.radius) continue;
+        const top = c.center.y + c.radius;
+        if (top > refY - 2.8 && top < refY + 1.4) return true;
+      }
+    }
+    for (const r of this.world.ramps || []) {
+      const along = r.axis === 'x' ? x : z;
+      const cross = r.axis === 'x' ? z : x;
+      const min = r.axis === 'x' ? r.minX : r.minZ;
+      const max = r.axis === 'x' ? r.maxX : r.maxZ;
+      const crossMin = r.axis === 'x' ? r.minZ : r.minX;
+      const crossMax = r.axis === 'x' ? r.maxZ : r.maxX;
+      if (cross < crossMin || cross > crossMax || along < min || along > max) continue;
+      const t = (along - min) / Math.max(1e-6, max - min);
+      const surf = r.h0 + (r.h1 - r.h0) * t;
+      if (surf > refY - 2.8 && surf < refY + 1.4) return true;
+    }
+    // Hatch / maintenance ladders: the column is an intentional drop, not void.
+    for (const v of this.world.vineZones || []) {
+      const grabR = (v.grabR ?? v.r ?? 1) + 0.35;
+      if ((x - v.x) * (x - v.x) + (z - v.z) * (z - v.z) > grabR * grabR) continue;
+      if (v.maxY > refY - 2 && v.minY < refY + 3) return true;
+    }
+    return false;
+  }
+
+  _voidAvoidVector(x, z) {
+    // Retreat from the unsupported sample toward current footing / map center.
+    let ax = this.pos.x - x;
+    let az = this.pos.z - z;
+    ax += -x * 0.08;
+    az += -z * 0.08;
+    const len = Math.hypot(ax, az) || 1;
+    return { x: ax / len, z: az / len };
   }
 
   _nearestDrySupportGoal() {
