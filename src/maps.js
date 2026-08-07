@@ -9731,7 +9731,7 @@ function addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, seed, cavern
 
 // Upright, grounded volcanic mound. Unlike a floating island, it is broad at
 // the floor and narrow at the crown; four slope fields make the visible cone
-// climbable, and stacked boxes fill the body so you cannot walk through it.
+// genuinely walkable instead of hiding a vertical box inside it.
 function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
   world.ramps.push(
     { axis: 'x', minX: x - w * 0.46, maxX: x - w * 0.15, minZ: z - d * 0.15, maxZ: z + d * 0.15,
@@ -9743,23 +9743,17 @@ function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
     { axis: 'z', minX: x - w * 0.125, maxX: x + w * 0.125, minZ: z + d * 0.15, maxZ: z + d * 0.46,
       h0: height, h1: 0.04, supportPad0: 0.18 },
   );
-  // Match the visual CylinderGeometry(0.38, 1) scaled by (w/2, height, d/2):
-  // stacked inset boxes track the taper so the solid fills the cone, not just
-  // a skinny core between the four climb ramps.
-  const layers = 5;
-  for (let i = 0; i < layers; i++) {
-    const t0 = i / layers;
-    const t1 = (i + 1) / layers;
-    const mid = (t0 + t1) * 0.5;
-    const radiusFrac = THREE.MathUtils.lerp(0.98, 0.4, mid);
-    const hw = w * 0.5 * radiusFrac * 0.9;
-    const hd = d * 0.5 * radiusFrac * 0.9;
-    world.colliders.push({
-      type: 'box',
-      min: V(x - hw, height * t0, z - hd),
-      max: V(x + hw, height * t1 + 0.04, z + hd),
-    });
-  }
+  // The ramps are height fields, not volumetric solids. This core gives the
+  // volcanic body real collision below its crown, preventing players and darts
+  // from passing through the visible mound between the four climb lanes.
+  // Do not fill the cone with stacked boxes — those read as stair walls and
+  // force a jump onto what should be a run-up perch.
+  world.colliders.push({
+    type: 'box',
+    min: V(x - w * 0.15, 0.02, z - d * 0.15),
+    max: V(x + w * 0.15, height, z + d * 0.15),
+  });
+
   const geo = new THREE.CylinderGeometry(0.38, 1, 1, 9, 3, false);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -13908,13 +13902,7 @@ function buildSolarFlare(scene) {
     [-4.3, 9, 23.4, 5.2],                                 // west of hatch
     [14.3, 9, 3.4, 5.2],                                  // east of hatch
   ]) addBox(scene, world, x, 13.95, z, w, 0.7, d, hull, { tex: 'solar-hull' });
-  // Hatch collar — reads as an airlock lip from the roof.
-  for (const [x, z, w, d] of [
-    [roofHatch.x, roofHatch.z - roofHatch.halfD - 0.35, 6.2, 0.7],
-    [roofHatch.x, roofHatch.z + roofHatch.halfD + 0.35, 6.2, 0.7],
-    [roofHatch.x - roofHatch.halfW - 0.35, roofHatch.z, 0.7, 5.2],
-    [roofHatch.x + roofHatch.halfW + 0.35, roofHatch.z, 0.7, 5.2],
-  ]) addBox(scene, world, x, 14.45, z, w, 0.55, d, 0x425468, { tex: 'solar-hull' });
+  // No raised collar around the hatch — a rim forced a hop to walk the roof.
   addMaintenanceLadder(roofHatch.x, roofHatch.z, 7.55, 14.55, 1, 0);
   addRamp(scene, world, {
     axis: 'x', minX: -8, maxX: 8, minZ: -5, maxZ: 5,
@@ -14001,15 +13989,13 @@ function buildSolarFlare(scene) {
   }
 
   // The end module opens through its air curtain onto an irregular exterior
-  // hull chain rather than the roof of one giant rectangle.
-  // Pads sit slightly below bridge floor (top 7.2 vs 7.4) so the sill ramp can
-  // actually slope instead of leaving a square lip you have to hop.
-  for (const [x, z, w, d] of [[63, 0, 18, 12], [75, 8, 18, 16], [88, 0, 20, 18]])
-    addBox(scene, world, x, 6.75, z, w, 0.9, d, hull, { tex: 'solar-hull' });
-  addRamp(scene, world, {
-    axis: 'x', minX: 54.5, maxX: 57.4, minZ: -2.55, maxZ: 2.55,
-    h0: 7.4, h1: 7.2, color: 0xc7c9c3, tex: 'solar-hull',
-  });
+  // hull chain rather than the roof of one giant rectangle. A raised hull sill
+  // runs through the doorway at top 7.45 — proud of the dark bridge floor
+  // (7.4) — so the curtain is one continuous walk surface visually and for
+  // collision; the floor's east face stays buried under the sill.
+  for (const [x, z, w, d] of [[63.5, 0, 17, 12], [75, 8, 18, 16], [88, 0, 20, 18]])
+    addBox(scene, world, x, 7.0, z, w, 0.9, d, hull, { tex: 'solar-hull' }); // top 7.45
+  addBox(scene, world, 54.5, 7.0, 0, 5.5, 0.9, 5.5, hull, { tex: 'solar-hull' }); // through curtain
   // Science-roof curtain: relay deck 7.4 → roof walk ~6.9.
   addRamp(scene, world, {
     axis: 'x', minX: 33.5, maxX: 36.2, minZ: 22.6, maxZ: 27.4,

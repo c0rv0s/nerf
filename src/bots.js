@@ -769,6 +769,15 @@ export class Bot {
             ? [140, 180, -140, -100, 100]            // too close: back off
             : [-110, -70, -45, 45, 70, 110, 150, -150]; // mid: orbit & juke
         this.moveAngle = pick(angles) * Math.PI / 180;
+        // Dodge-hop only on strafe refresh (~0.5–1.3s), not every frame.
+        // Don't hop toward unsupported void (Solar Flare roofs, asteroid lips).
+        const hca = Math.cos(this.moveAngle), hsa = Math.sin(this.moveAngle);
+        const hopX = to.x * hca - to.z * hsa;
+        const hopZ = to.z * hca + to.x * hsa;
+        if (this.grounded && Math.random() < 0.22 &&
+            this._hasWalkableSupportAt(this.pos.x + hopX * 2.6, this.pos.z + hopZ * 2.6)) {
+          this.vel.y = this.world.jumpVel;
+        }
       }
       const ca = Math.cos(this.moveAngle), sa = Math.sin(this.moveAngle);
       moveX = to.x * ca - to.z * sa;
@@ -782,11 +791,6 @@ export class Bot {
           moveX = (shop.def.pos.x - this.pos.x) / fd;
           moveZ = (shop.def.pos.z - this.pos.z) / fd;
         }
-      }
-      // Don't dodge-hop toward unsupported void (Solar Flare roofs, asteroid lips).
-      if (this.grounded && Math.random() < 0.22 &&
-          this._hasWalkableSupportAt(this.pos.x + moveX * 2.6, this.pos.z + moveZ * 2.6)) {
-        this.vel.y = this.world.jumpVel;
       }
       // Seeing an opponent does not mean the chosen strafe lane is walkable.
       // If the capsule-sized probe hits cover, immediately fall back to the
