@@ -10643,38 +10643,167 @@ function buildTidebreaker(scene) {
   // Three low-poly sharks patrol below the swell. Only one commits to a
   // swimmer at a time; after biting it breaks away briefly, making the exact
   // two-second damage cooldown readable rather than looking like contact DPS.
-  const sharkBodyGeometry = new THREE.CapsuleGeometry(0.78, 3.4, 5, 10);
-  const sharkBodyMaterial = mat(0x607883, { roughness: 0.78, metalness: 0.04, flatShading: true });
-  const sharkFinMaterial = new THREE.MeshStandardMaterial({
-    color: 0x506873, roughness: 0.82, metalness: 0.03,
+  const SHARK_TOP = 0x455b64;
+  const SHARK_UPPER_SIDE = 0x62757d;
+  const SHARK_LOWER_SIDE = 0xaeb8b6;
+  const SHARK_BELLY = 0xe8e5dc;
+  const SHARK_FIN_EDGE = 0x4e6169;
+  const sharkMat = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.82, metalness: 0.025,
     flatShading: true, side: THREE.DoubleSide,
   });
-  const sharkFinGeometry = new THREE.BufferGeometry();
-  sharkFinGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
-    // dorsal fin
-    0.55, 0.38, 0, -0.35, 1.55, 0, -1.0, 0.3, 0,
-    // left and right pectoral fins
-    0.4, -0.12, 0.45, -1.15, -0.08, 1.72, -1.35, -0.12, 0.32,
-    0.4, -0.12, -0.45, -1.35, -0.12, -0.32, -1.15, -0.08, -1.72,
-    // forked tail
-    -2.15, 0, 0, -3.55, 1.18, 0, -3.25, 0, 0,
-    -2.15, 0, 0, -3.25, 0, 0, -3.55, -1.18, 0,
-  ], 3));
-  sharkFinGeometry.computeVertexNormals();
-  const sharkEyeGeometry = new THREE.SphereGeometry(0.09, 7, 5);
+  const sharkDetailMat = new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.DoubleSide, toneMapped: false,
+  });
+  const pushSharkTri = (positions, colors, a, b, c, color) => {
+    positions.push(...a, ...b, ...c);
+    const r = ((color >> 16) & 255) / 255;
+    const g = ((color >> 8) & 255) / 255;
+    const bl = (color & 255) / 255;
+    for (let n = 0; n < 3; n++) colors.push(r, g, bl);
+  };
+  const sharkMeshFromTris = (positions, colors) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    return new THREE.Mesh(geo, sharkMat);
+  };
+  const buildSharkBody = () => {
+    const positions = [];
+    const colors = [];
+    // Broad, blunt head and a hard taper into the tail reproduce the reference's
+    // unmistakable low-poly great-white silhouette. +X is forward.
+    const stations = [
+      [3.35, 0.42, 0.34, -0.30],
+      [3.02, 0.82, 0.62, -0.58],
+      [2.30, 0.98, 0.78, -0.72],
+      [1.10, 1.04, 0.86, -0.78],
+      [-0.25, 0.94, 0.82, -0.70],
+      [-1.35, 0.68, 0.61, -0.50],
+      [-2.15, 0.38, 0.36, -0.30],
+      [-2.75, 0.18, 0.18, -0.15],
+    ];
+    const ring = (x, halfW, topY, botY) => {
+      const midY = (topY + botY) * 0.5;
+      return [
+        [x, topY, 0],
+        [x, topY * 0.70 + midY * 0.30, halfW * 0.72],
+        [x, midY * 0.12, halfW],
+        [x, botY * 0.68 + midY * 0.32, halfW * 0.78],
+        [x, botY, 0],
+        [x, botY * 0.68 + midY * 0.32, -halfW * 0.78],
+        [x, midY * 0.12, -halfW],
+        [x, topY * 0.70 + midY * 0.30, -halfW * 0.72],
+      ];
+    };
+    const rings = stations.map(([x, w, ty, by]) => ring(x, w, ty, by));
+    const panelColors = [
+      SHARK_TOP, SHARK_UPPER_SIDE, SHARK_UPPER_SIDE, SHARK_LOWER_SIDE,
+      SHARK_BELLY, SHARK_LOWER_SIDE, SHARK_UPPER_SIDE, SHARK_TOP,
+    ];
+    for (let s = 0; s < rings.length - 1; s++) {
+      const a = rings[s], b = rings[s + 1];
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8;
+        const color = panelColors[i];
+        pushSharkTri(positions, colors, a[i], a[j], b[j], color);
+        pushSharkTri(positions, colors, a[i], b[j], b[i], color);
+      }
+    }
+    // Faceted end caps keep the snout broad instead of capsule-round.
+    for (const [ringVerts, center, reverse] of [
+      [rings[0], [stations[0][0] + 0.08, 0.01, 0], false],
+      [rings[rings.length - 1], [stations[stations.length - 1][0], 0.01, 0], true],
+    ]) {
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8;
+        const color = panelColors[i];
+        if (reverse) pushSharkTri(positions, colors, center, ringVerts[j], ringVerts[i], color);
+        else pushSharkTri(positions, colors, center, ringVerts[i], ringVerts[j], color);
+      }
+    }
+    return sharkMeshFromTris(positions, colors);
+  };
+  const buildSharkBlade = (points, offset, faceColor, backColor = faceColor) => {
+    const positions = [];
+    const colors = [];
+    const front = points.map(p => [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]);
+    const back = points.map(p => [p[0] - offset[0], p[1] - offset[1], p[2] - offset[2]]);
+    for (let i = 1; i < points.length - 1; i++) {
+      pushSharkTri(positions, colors, front[0], front[i], front[i + 1], faceColor);
+      pushSharkTri(positions, colors, back[0], back[i + 1], back[i], backColor);
+    }
+    for (let i = 0; i < points.length; i++) {
+      const j = (i + 1) % points.length;
+      pushSharkTri(positions, colors, front[i], back[i], back[j], SHARK_FIN_EDGE);
+      pushSharkTri(positions, colors, front[i], back[j], front[j], SHARK_FIN_EDGE);
+    }
+    return sharkMeshFromTris(positions, colors);
+  };
+  const sharkEyeGeometry = new THREE.SphereGeometry(0.07, 6, 4);
   const sharkEyeMaterial = new THREE.MeshBasicMaterial({ color: 0x050708 });
   const buildShark = () => {
     const group = new THREE.Group();
-    const body = new THREE.Mesh(sharkBodyGeometry, sharkBodyMaterial);
-    body.rotation.z = Math.PI / 2;
-    const fins = new THREE.Mesh(sharkFinGeometry, sharkFinMaterial);
-    group.add(body, fins);
+    const body = buildSharkBody();
+    const dorsal = buildSharkBlade([
+      [0.65, 0.72, 0], [-0.25, 1.90, 0], [-0.82, 0.66, 0],
+    ], [0, 0, 0.055], SHARK_TOP);
+    // Each propulsive/control surface has its pivot at the body joint so the
+    // animation bends the fin rather than orbiting it around the shark's center.
+    const leftPec = new THREE.Group();
+    leftPec.name = 'shark-left-pectoral-pivot';
+    leftPec.position.set(1.05, -0.22, 0.62);
+    leftPec.add(buildSharkBlade([
+      [0, 0, 0], [-1.23, -0.02, 1.43], [-2.23, 0.02, 1.93], [-1.77, 0.04, 0.03],
+    ], [0, 0.045, 0], SHARK_UPPER_SIDE, SHARK_BELLY));
+    const rightPec = new THREE.Group();
+    rightPec.name = 'shark-right-pectoral-pivot';
+    rightPec.position.set(1.05, -0.22, -0.62);
+    rightPec.add(buildSharkBlade([
+      [0, 0, 0], [-1.77, 0.04, -0.03], [-2.23, 0.02, -1.93], [-1.23, -0.02, -1.43],
+    ], [0, 0.045, 0], SHARK_UPPER_SIDE, SHARK_BELLY));
+    const tail = new THREE.Group();
+    tail.name = 'shark-tail-pivot';
+    tail.position.set(-2.62, 0, 0);
+    tail.add(buildSharkBlade([
+      [0, 0, 0], [-0.80, 1.58, 0], [-1.10, 1.78, 0], [-0.83, 0.24, 0],
+      [-1.08, 0, 0], [-0.83, -0.24, 0], [-1.10, -1.48, 0], [-0.80, -1.28, 0],
+    ], [0, 0, 0.065], SHARK_TOP, SHARK_UPPER_SIDE));
+    group.add(body, dorsal, leftPec, rightPec, tail);
+    group.userData.animParts = { tail, leftPec, rightPec };
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(sharkEyeGeometry, sharkEyeMaterial);
-      eye.position.set(1.92, 0.28, side * 0.66);
+      eye.position.set(2.42, 0.28, side * 0.84);
       group.add(eye);
+
+      // Dark inset mouth, little triangular teeth, and four swept gill cuts.
+      const detailPositions = [];
+      const detailColors = [];
+      pushSharkTri(detailPositions, detailColors,
+        [2.90, -0.20, side * 0.83], [1.72, -0.34, side * 0.95], [2.42, -0.39, side * 0.87], 0x242b2d);
+      pushSharkTri(detailPositions, detailColors,
+        [2.90, -0.20, side * 0.83], [2.42, -0.39, side * 0.87], [3.02, -0.28, side * 0.79], 0x242b2d);
+      for (let tooth = 0; tooth < 3; tooth++) {
+        const x = 2.15 + tooth * 0.27;
+        const toothZ = side * (1.02 - (x - 1.65) * 0.12);
+        pushSharkTri(detailPositions, detailColors,
+          [x, -0.34, toothZ],
+          [x + 0.12, -0.36, toothZ],
+          [x + 0.065, -0.46, toothZ], 0xf4efe2);
+      }
+      for (let gill = 0; gill < 4; gill++) {
+        const x = 1.47 - gill * 0.17;
+        pushSharkTri(detailPositions, detailColors,
+          [x + 0.08, 0.28, side * 1.035], [x, -0.36, side * 1.035], [x - 0.055, -0.34, side * 1.035], 0x36474d);
+        pushSharkTri(detailPositions, detailColors,
+          [x + 0.08, 0.28, side * 1.035], [x - 0.055, -0.34, side * 1.035], [x + 0.025, 0.29, side * 1.035], 0x36474d);
+      }
+      const details = sharkMeshFromTris(detailPositions, detailColors);
+      details.material = sharkDetailMat;
+      group.add(details);
     }
-    group.scale.setScalar(1.08);
+    group.scale.setScalar(0.92);
     return group;
   };
   const sharkStates = [0, 1, 2].map(i => {
@@ -10823,6 +10952,28 @@ function buildTidebreaker(scene) {
       state.biteCooldown = Math.max(0, state.biteCooldown - dt);
       state.retreatT = Math.max(0, state.retreatT - dt);
       const current = state.group.position;
+      const parts = state.group.userData.animParts;
+      const hunting = state === sharkHunter && !!sharkTarget;
+      const swimPhase = t * (hunting ? 10.5 : 5.4) + i * 1.9;
+      let tailTarget = Math.sin(swimPhase) * (hunting ? 0.52 : 0.32);
+      let pecStroke = Math.sin(swimPhase * 0.46) * (hunting ? 0.055 : 0.035);
+      if (state.beached) {
+        tailTarget = Math.sin(state.flopT * 13.0) * 0.68;
+        pecStroke = Math.sin(state.flopT * 9.5) * 0.15;
+      } else if (state.falling) {
+        tailTarget = Math.sin(state.flopT * 10.5) * 0.50;
+        pecStroke = Math.sin(state.flopT * 7.5) * 0.10;
+      } else if (state.riding) {
+        tailTarget = Math.sin(t * 8.0 + i) * 0.42;
+        pecStroke = Math.sin(t * 2.8 + i) * 0.06;
+      }
+      // Sharks generate thrust by sweeping the vertical tail laterally. Their
+      // pectorals stay mostly rigid and only scull a little for pitch/balance.
+      parts.tail.rotation.y = THREE.MathUtils.damp(parts.tail.rotation.y, tailTarget, 12, dt);
+      parts.leftPec.rotation.x = THREE.MathUtils.damp(
+        parts.leftPec.rotation.x, -0.045 + pecStroke, 7, dt);
+      parts.rightPec.rotation.x = THREE.MathUtils.damp(
+        parts.rightPec.rotation.x, 0.045 - pecStroke, 7, dt);
 
       if (state.riding) {
         // Position is owned by the tide surge tick so the shark stays inside the breaker.
@@ -11002,11 +11153,13 @@ function buildTidebreaker(scene) {
     }
   });
 
-  // One huge low-poly humpback — royal-blue dorsal / white ventral, scenic only.
-  // Cruises a wide ring, dives to ~40m, and breaches like a real humpback when
-  // clear of the rig: steep exit, rolled belly, flared pecs, then a heavy crash.
-  const WHALE_BLUE = 0x2f56c8;
-  const WHALE_WHITE = 0xf0f3f6;
+  // One huge reference-styled low-poly whale — violet-blue crown, deep-blue
+  // flank stripe and cool pale belly. Scenic only.
+  const WHALE_BLUE = 0x6873b6;
+  const WHALE_BLUE_LIGHT = 0x7f84c2;
+  const WHALE_SIDE = 0x31518d;
+  const WHALE_WHITE = 0x9fc5cc;
+  const WHALE_JAW = 0xc0d4d7;
   const whaleMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.78,
@@ -11034,10 +11187,10 @@ function buildTidebreaker(scene) {
     // Local space: root at origin, fin extends along +Z for side=+1.
     // Built flat in XY so rotation.x lifts the tip like a wing.
     const root = [0, 0, 0];
-    const aft = [1.1, -0.15, side * 0.9];
-    const mid = [-0.9, -0.35, side * 5.6];
-    const tip = [-2.2, -0.85, side * 10.4];
-    const lead = [0.35, 0.05, side * 4.2];
+    const aft = [-1.8, -0.38, side * 1.0];
+    const mid = [-2.8, -0.52, side * 5.2];
+    const tip = [-5.4, -0.92, side * 10.0];
+    const lead = [0.25, 0.04, side * 3.35];
     // Blue topside
     pushWhaleTri(positions, colors,
       root[0], 0.1, root[2], aft[0], 0.08, aft[2], lead[0], 0.12, lead[2], WHALE_BLUE);
@@ -11061,19 +11214,25 @@ function buildTidebreaker(scene) {
   const buildHumpbackWhale = () => {
     const positions = [];
     const colors = [];
-    // Low-poly loft: nose (+X) → fluke (−X). Top facets blue, bottom white.
+    const flukePositions = [];
+    const flukeColors = [];
+    let flukePivotX = 0;
+    let flukePivotY = 0;
+    // Low-poly loft: broad squared snout (+X) → narrow fluke (−X). The
+    // reference's long, almost level back replaces the old bulbous body.
     const stations = [
-      [13.6, 0.08, 0.18, -0.12],
-      [12.2, 1.05, 0.95, -1.35],
-      [10.4, 1.95, 1.55, -2.15],
-      [7.6, 2.55, 2.05, -2.45],
-      [4.2, 2.95, 2.45, -2.55],
-      [0.6, 3.05, 2.65, -2.45],
-      [-2.8, 2.75, 2.55, -2.15],
-      [-6.2, 2.15, 2.15, -1.65],
-      [-9.0, 1.25, 1.45, -1.05],
-      [-11.2, 0.55, 0.75, -0.45],
-      [-12.4, 0.18, 0.28, -0.15],
+      [14.15, 2.15, 0.72, -1.45],
+      [13.55, 3.32, 1.02, -1.92],
+      [12.15, 3.62, 1.28, -2.18],
+      [9.55, 3.55, 1.58, -2.35],
+      [6.25, 3.32, 1.88, -2.45],
+      [2.65, 3.00, 2.02, -2.38],
+      [-0.85, 2.66, 1.92, -2.15],
+      [-4.15, 2.25, 1.66, -1.78],
+      [-7.10, 1.68, 1.28, -1.28],
+      [-9.55, 1.06, 0.82, -0.78],
+      [-11.45, 0.48, 0.40, -0.36],
+      [-12.35, 0.20, 0.18, -0.16],
     ];
     const ring = (x, halfW, topY, botY) => {
       const midY = (topY + botY) * 0.5;
@@ -11091,23 +11250,29 @@ function buildTidebreaker(scene) {
     const rings = stations.map(([x, w, ty, by]) => ring(x, w, ty, by));
     const colorAt = (y, topY, botY) => {
       const tt = (y - botY) / Math.max(0.001, topY - botY);
-      return tt >= 0.46 ? WHALE_BLUE : WHALE_WHITE;
+      if (tt >= 0.74) return WHALE_BLUE;
+      if (tt >= 0.43) return WHALE_SIDE;
+      return WHALE_WHITE;
     };
+    const panelColors = [
+      WHALE_BLUE_LIGHT, WHALE_BLUE, WHALE_SIDE, WHALE_WHITE,
+      WHALE_WHITE, WHALE_SIDE, WHALE_BLUE, WHALE_BLUE_LIGHT,
+    ];
     for (let s = 0; s < rings.length - 1; s++) {
       const ra = rings[s], rb = rings[s + 1];
-      const topA = stations[s][2], botA = stations[s][3];
-      const topB = stations[s + 1][2], botB = stations[s + 1][3];
       for (let i = 0; i < 8; i++) {
         const j = (i + 1) % 8;
         const [ax, ay, az] = ra[i], [bx, by, bz] = ra[j];
         const [cx, cy, cz] = rb[j], [dx, dy, dz] = rb[i];
-        const col = colorAt((ay + by + cy + dy) * 0.25, (topA + topB) * 0.5, (botA + botB) * 0.5);
+        const col = panelColors[i];
         pushWhaleTri(positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz, col);
         pushWhaleTri(positions, colors, ax, ay, az, cx, cy, cz, dx, dy, dz, col);
       }
     }
     const nose = rings[0];
-    const tip = [stations[0][0] + 0.85, 0.05, 0];
+    // A tiny forward bevel leaves a broad, flat rostrum instead of a pointed
+    // fish-like nose.
+    const tip = [stations[0][0] + 0.10, -0.32, 0];
     for (let i = 0; i < 8; i++) {
       const j = (i + 1) % 8;
       const col = colorAt((nose[i][1] + nose[j][1] + tip[1]) / 3, stations[0][2], stations[0][3]);
@@ -11116,15 +11281,16 @@ function buildTidebreaker(scene) {
         nose[i][0], nose[i][1], nose[i][2],
         nose[j][0], nose[j][1], nose[j][2], col);
     }
-    pushWhaleTri(positions, colors, -1.2, 2.55, 0, -3.4, 2.35, 0, -2.1, 4.15, 0, WHALE_BLUE);
-    pushWhaleTri(positions, colors, -1.2, 2.55, 0, -2.1, 4.15, 0, -3.4, 2.35, 0, WHALE_BLUE);
-    // Throat-groove suggestion on the white belly (reference photos).
+    // Small swept dorsal bump, matching the understated fin in the reference.
+    pushWhaleTri(positions, colors, -3.15, 1.72, 0, -5.05, 2.72, 0, -5.92, 1.46, 0, WHALE_BLUE);
+    pushWhaleTri(positions, colors, -3.15, 1.72, 0, -5.92, 1.46, 0, -5.05, 2.72, 0, WHALE_BLUE);
+    // Subtle throat grooves on the pale belly.
     for (let i = -2; i <= 2; i++) {
       const gz = i * 0.48;
       pushWhaleTri(positions, colors,
-        12.4, -1.55, gz - 0.06, 5.5, -2.35, gz - 0.06, 5.5, -2.42, gz + 0.06, WHALE_WHITE);
+        13.2, -1.72, gz - 0.06, 6.1, -2.28, gz - 0.06, 6.1, -2.35, gz + 0.06, WHALE_WHITE);
       pushWhaleTri(positions, colors,
-        12.4, -1.55, gz - 0.06, 5.5, -2.42, gz + 0.06, 12.4, -1.62, gz + 0.06, WHALE_WHITE);
+        13.2, -1.72, gz - 0.06, 6.1, -2.35, gz + 0.06, 13.2, -1.79, gz + 0.06, WHALE_WHITE);
     }
 
     // Solid fluke welded to the peduncle — no floating sheets / see-through slits.
@@ -11133,6 +11299,8 @@ function buildTidebreaker(scene) {
       const ped = rings[rings.length - 1];
       const px = last[0];
       const midY = (last[2] + last[3]) * 0.5;
+      flukePivotX = px;
+      flukePivotY = midY;
       // Cap the open loft end so the body doesn't leave a hole behind the fluke.
       for (let i = 0; i < 8; i++) {
         const j = (i + 1) % 8;
@@ -11159,14 +11327,14 @@ function buildTidebreaker(scene) {
       const bot = outline.map(([x, y, z]) => [x, y - ht, z]);
       // Top face (blue) — fan from root.
       for (let i = 1; i < outline.length - 1; i++) {
-        pushWhaleTri(positions, colors,
+        pushWhaleTri(flukePositions, flukeColors,
           top[0][0], top[0][1], top[0][2],
           top[i][0], top[i][1], top[i][2],
           top[i + 1][0], top[i + 1][1], top[i + 1][2], WHALE_BLUE);
       }
       // Bottom face (white).
       for (let i = 1; i < outline.length - 1; i++) {
-        pushWhaleTri(positions, colors,
+        pushWhaleTri(flukePositions, flukeColors,
           bot[0][0], bot[0][1], bot[0][2],
           bot[i + 1][0], bot[i + 1][1], bot[i + 1][2],
           bot[i][0], bot[i][1], bot[i][2], WHALE_WHITE);
@@ -11175,11 +11343,11 @@ function buildTidebreaker(scene) {
       for (let i = 0; i < outline.length; i++) {
         const j = (i + 1) % outline.length;
         const edgeCol = Math.abs(outline[i][2]) + Math.abs(outline[j][2]) > 0.8 ? WHALE_BLUE : WHALE_WHITE;
-        pushWhaleTri(positions, colors,
+        pushWhaleTri(flukePositions, flukeColors,
           top[i][0], top[i][1], top[i][2],
           top[j][0], top[j][1], top[j][2],
           bot[j][0], bot[j][1], bot[j][2], edgeCol);
-        pushWhaleTri(positions, colors,
+        pushWhaleTri(flukePositions, flukeColors,
           top[i][0], top[i][1], top[i][2],
           bot[j][0], bot[j][1], bot[j][2],
           bot[i][0], bot[i][1], bot[i][2], edgeCol);
@@ -11188,11 +11356,11 @@ function buildTidebreaker(scene) {
       for (let i = 0; i < 8; i++) {
         const j = (i + 1) % 8;
         const col = colorAt((ped[i][1] + ped[j][1] + midY) / 3, last[2], last[3]);
-        pushWhaleTri(positions, colors,
+        pushWhaleTri(flukePositions, flukeColors,
           ped[i][0], ped[i][1], ped[i][2],
           ped[j][0], ped[j][1], ped[j][2],
           top[0][0], top[0][1], top[0][2], col);
-        pushWhaleTri(positions, colors,
+        pushWhaleTri(flukePositions, flukeColors,
           ped[i][0], ped[i][1], ped[i][2],
           top[0][0], top[0][1], top[0][2],
           bot[0][0], bot[0][1], bot[0][2], col);
@@ -11202,15 +11370,46 @@ function buildTidebreaker(scene) {
     const group = new THREE.Group();
     const body = meshFromTris(positions, colors);
     group.add(body);
+    const fluke = new THREE.Group();
+    fluke.name = 'whale-fluke-pivot';
+    fluke.position.set(flukePivotX, flukePivotY, 0);
+    const flukeMesh = meshFromTris(flukePositions, flukeColors);
+    flukeMesh.position.set(-flukePivotX, -flukePivotY, 0);
+    fluke.add(flukeMesh);
+    group.add(fluke);
+    // Pale jawline and tiny eyes are the two high-contrast details that make
+    // the faceted head read like the supplied whale at gameplay distance.
+    const markingPositions = [];
+    const markingColors = [];
+    for (const side of [-1, 1]) {
+      const z0 = side * 2.13;
+      const z1 = side * 3.34;
+      const z2 = side * 3.58;
+      const z3 = side * 3.30;
+      pushWhaleTri(markingPositions, markingColors,
+        14.18, -0.45, z0, 13.45, -0.18, z1, 9.45, -0.04, z2, WHALE_JAW);
+      pushWhaleTri(markingPositions, markingColors,
+        14.18, -0.45, z0, 9.45, -0.04, z2, 6.2, -0.27, z3, WHALE_JAW);
+    }
+    group.add(meshFromTris(markingPositions, markingColors));
+    const whaleEyeGeo = new THREE.SphereGeometry(0.13, 6, 4);
+    const whaleEyeMat = new THREE.MeshBasicMaterial({ color: 0x11141b });
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(whaleEyeGeo, whaleEyeMat);
+      eye.position.set(8.35, 0.34, side * 3.36);
+      group.add(eye);
+    }
     const leftPec = new THREE.Group();
+    leftPec.name = 'whale-left-pectoral-pivot';
     leftPec.position.set(3.6, -0.35, 2.55);
     leftPec.add(buildPectoralMesh(1));
     const rightPec = new THREE.Group();
+    rightPec.name = 'whale-right-pectoral-pivot';
     rightPec.position.set(3.6, -0.35, -2.55);
     rightPec.add(buildPectoralMesh(-1));
     group.add(leftPec, rightPec);
     group.scale.setScalar(1.85);
-    return { group, body, leftPec, rightPec };
+    return { group, body, fluke, leftPec, rightPec };
   };
   const whaleParts = buildHumpbackWhale();
   const whale = whaleParts.group;
@@ -11360,6 +11559,7 @@ function buildTidebreaker(scene) {
     let targetRoll = 0;
     let pecUp = 0.12;   // rotation lifting a pec toward vertical
     let pecOut = 0.18;  // the other pec stays more horizontal / trailing
+    let targetFluke = 0;
     const side = whaleCruise.breachSide;
 
     if (inBreach) {
@@ -11390,6 +11590,11 @@ function buildTidebreaker(scene) {
         pecUp = THREE.MathUtils.lerp(pecUp, 0.35, crash);
         pecOut = THREE.MathUtils.lerp(pecOut, 0.8, crash);
       }
+      // One hard launch stroke, then let the fluke trail and tuck into the
+      // splashdown rather than beating continuously in the air.
+      targetFluke = launch * 0.28
+        + Math.sin(u * Math.PI * 2.15) * (1 - crash) * 0.13
+        - crash * 0.24;
       whaleCruise.depthBias = 0;
 
       if (!whaleCruise.splashExit && u > 0.08) {
@@ -11407,11 +11612,14 @@ function buildTidebreaker(scene) {
         targetPitch = 0.48;
         pecUp = 0.22;
         pecOut = 0.28;
+        targetFluke = Math.sin(t * 3.8) * 0.30;
       } else if (whaleCruise.phase === 'dive') {
         targetPitch = -0.42;
         targetRoll = 0;
+        targetFluke = Math.sin(t * 3.0) * 0.23;
       } else {
         targetPitch = (0.5 - whaleCruise.depthBias) * 0.12;
+        targetFluke = Math.sin(t * 2.25) * 0.16;
       }
     }
 
@@ -11429,27 +11637,42 @@ function buildTidebreaker(scene) {
     // +X forward: z = pitch (nose up), x = roll (belly open).
     whale.rotation.z = whaleCruise.pitch;
     whale.rotation.x = whaleCruise.roll;
+    // Cetaceans propel themselves vertically with a horizontal fluke.
+    whaleParts.fluke.rotation.z = THREE.MathUtils.damp(
+      whaleParts.fluke.rotation.z, targetFluke, inBreach ? 6.5 : 4.8, dt);
 
-    // Pecs: breach flares one nearly vertical and leaves the other trailing out.
+    // Pecs scull gently for stability while submerged. During a breach one
+    // flares almost vertically while its opposite trails against the roll.
     const swimBob = Math.sin(t * 1.35) * 0.08;
-    if (side > 0) {
+    if (!inBreach) {
+      const baseLift = whaleCruise.phase === 'rise' ? 0.22
+        : whaleCruise.phase === 'dive' ? 0.09 : 0.13;
       whaleParts.leftPec.rotation.x = THREE.MathUtils.damp(
-        whaleParts.leftPec.rotation.x, -pecUp + (inBreach ? 0 : swimBob), 5, dt);
+        whaleParts.leftPec.rotation.x, -baseLift + swimBob, 4.2, dt);
       whaleParts.rightPec.rotation.x = THREE.MathUtils.damp(
-        whaleParts.rightPec.rotation.x, pecOut * 0.35 + (inBreach ? 0.15 : swimBob), 5, dt);
+        whaleParts.rightPec.rotation.x, baseLift - swimBob, 4.2, dt);
       whaleParts.leftPec.rotation.z = THREE.MathUtils.damp(
-        whaleParts.leftPec.rotation.z, inBreach ? -0.25 : -0.08, 4, dt);
+        whaleParts.leftPec.rotation.z, -0.06 + swimBob * 0.25, 3.5, dt);
       whaleParts.rightPec.rotation.z = THREE.MathUtils.damp(
-        whaleParts.rightPec.rotation.z, inBreach ? 0.45 : 0.1, 4, dt);
+        whaleParts.rightPec.rotation.z, 0.06 - swimBob * 0.25, 3.5, dt);
+    } else if (side > 0) {
+      whaleParts.leftPec.rotation.x = THREE.MathUtils.damp(
+        whaleParts.leftPec.rotation.x, -pecUp, 5, dt);
+      whaleParts.rightPec.rotation.x = THREE.MathUtils.damp(
+        whaleParts.rightPec.rotation.x, pecOut * 0.35 + 0.15, 5, dt);
+      whaleParts.leftPec.rotation.z = THREE.MathUtils.damp(
+        whaleParts.leftPec.rotation.z, -0.25, 4, dt);
+      whaleParts.rightPec.rotation.z = THREE.MathUtils.damp(
+        whaleParts.rightPec.rotation.z, 0.45, 4, dt);
     } else {
       whaleParts.rightPec.rotation.x = THREE.MathUtils.damp(
-        whaleParts.rightPec.rotation.x, pecUp - (inBreach ? 0 : swimBob), 5, dt);
+        whaleParts.rightPec.rotation.x, pecUp, 5, dt);
       whaleParts.leftPec.rotation.x = THREE.MathUtils.damp(
-        whaleParts.leftPec.rotation.x, -pecOut * 0.35 - (inBreach ? 0.15 : swimBob), 5, dt);
+        whaleParts.leftPec.rotation.x, -pecOut * 0.35 - 0.15, 5, dt);
       whaleParts.rightPec.rotation.z = THREE.MathUtils.damp(
-        whaleParts.rightPec.rotation.z, inBreach ? 0.25 : 0.08, 4, dt);
+        whaleParts.rightPec.rotation.z, 0.25, 4, dt);
       whaleParts.leftPec.rotation.z = THREE.MathUtils.damp(
-        whaleParts.leftPec.rotation.z, inBreach ? -0.45 : -0.1, 4, dt);
+        whaleParts.leftPec.rotation.z, -0.45, 4, dt);
     }
 
     // Splash particles.
