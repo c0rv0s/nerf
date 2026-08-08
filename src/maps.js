@@ -10643,11 +10643,10 @@ function buildTidebreaker(scene) {
   // Three low-poly sharks patrol below the swell. Only one commits to a
   // swimmer at a time; after biting it breaks away briefly, making the exact
   // two-second damage cooldown readable rather than looking like contact DPS.
-  const SHARK_TOP = 0x455b64;
-  const SHARK_UPPER_SIDE = 0x62757d;
-  const SHARK_LOWER_SIDE = 0xaeb8b6;
-  const SHARK_BELLY = 0xe8e5dc;
-  const SHARK_FIN_EDGE = 0x4e6169;
+  const SHARK_TOP = 0x4d5354;
+  const SHARK_UPPER_SIDE = 0x707676;
+  const SHARK_BELLY = 0xf1eee5;
+  const SHARK_FIN_EDGE = 0x454a4a;
   const sharkMat = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.82, metalness: 0.025,
     flatShading: true, side: THREE.DoubleSide,
@@ -10699,8 +10698,8 @@ function buildTidebreaker(scene) {
     };
     const rings = stations.map(([x, w, ty, by]) => ring(x, w, ty, by));
     const panelColors = [
-      SHARK_TOP, SHARK_UPPER_SIDE, SHARK_UPPER_SIDE, SHARK_LOWER_SIDE,
-      SHARK_BELLY, SHARK_LOWER_SIDE, SHARK_UPPER_SIDE, SHARK_TOP,
+      SHARK_TOP, SHARK_UPPER_SIDE, SHARK_BELLY, SHARK_BELLY,
+      SHARK_BELLY, SHARK_BELLY, SHARK_UPPER_SIDE, SHARK_TOP,
     ];
     for (let s = 0; s < rings.length - 1; s++) {
       const a = rings[s], b = rings[s + 1];
@@ -11153,17 +11152,25 @@ function buildTidebreaker(scene) {
     }
   });
 
-  // One huge reference-styled low-poly whale — violet-blue crown, deep-blue
-  // flank stripe and cool pale belly. Scenic only.
-  const WHALE_BLUE = 0x6873b6;
-  const WHALE_BLUE_LIGHT = 0x7f84c2;
-  const WHALE_SIDE = 0x31518d;
-  const WHALE_WHITE = 0x9fc5cc;
-  const WHALE_JAW = 0xc0d4d7;
+  // One huge low-poly blue whale — mottled slate-blue dorsal surface, cooler
+  // flanks and a muted pale underside. Scenic only.
+  const WHALE_BLUE = 0x315f78;
+  const WHALE_BLUE_LIGHT = 0x4d7f95;
+  const WHALE_SIDE = 0x294f68;
+  const WHALE_WHITE = 0x729cac;
+  const WHALE_JAW = 0x86aeba;
+  const WHALE_GROOVE = 0x4f7889;
+  const whaleDorsalMottle = [0x315f78, 0x3f7188, 0x4d7f95, 0x2b536b];
+  const whaleUpperMottle = [0x2e5870, 0x3b6a82, 0x46778d, 0x294f66];
+  const whaleFlankMottle = [0x294f68, 0x315d75, 0x22445b, 0x3d6a7e];
+  const whaleBellyMottle = [0x729cac, 0x82aab6, 0x648e9f, 0x8db2bd];
   const whaleMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.78,
     metalness: 0.04,
+    emissive: 0x0d2938,
+    emissiveIntensity: 0.22,
+    envMapIntensity: 0.72,
     flatShading: true,
     side: THREE.DoubleSide,
   });
@@ -11211,7 +11218,7 @@ function buildTidebreaker(scene) {
       lead[0], -0.08, lead[2], tip[0], -0.05, tip[2], mid[0], -0.08, mid[2], WHALE_WHITE);
     return meshFromTris(positions, colors);
   };
-  const buildHumpbackWhale = () => {
+  const buildBlueWhale = () => {
     const positions = [];
     const colors = [];
     const flukePositions = [];
@@ -11254,19 +11261,24 @@ function buildTidebreaker(scene) {
       if (tt >= 0.43) return WHALE_SIDE;
       return WHALE_WHITE;
     };
-    const panelColors = [
-      WHALE_BLUE_LIGHT, WHALE_BLUE, WHALE_SIDE, WHALE_WHITE,
-      WHALE_WHITE, WHALE_SIDE, WHALE_BLUE, WHALE_BLUE_LIGHT,
-    ];
+    const facetColor = (station, panel, triangle) => {
+      const palette = panel === 0 || panel === 7 ? whaleDorsalMottle
+        : panel === 1 || panel === 6 ? whaleUpperMottle
+          : panel === 2 || panel === 5 ? whaleFlankMottle : whaleBellyMottle;
+      // Deterministic variation keeps every whale identical while breaking the
+      // body into the irregular blue-gray mottling characteristic of the species.
+      return palette[(station * 5 + panel * 3 + triangle * 2) % palette.length];
+    };
     for (let s = 0; s < rings.length - 1; s++) {
       const ra = rings[s], rb = rings[s + 1];
       for (let i = 0; i < 8; i++) {
         const j = (i + 1) % 8;
         const [ax, ay, az] = ra[i], [bx, by, bz] = ra[j];
         const [cx, cy, cz] = rb[j], [dx, dy, dz] = rb[i];
-        const col = panelColors[i];
-        pushWhaleTri(positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz, col);
-        pushWhaleTri(positions, colors, ax, ay, az, cx, cy, cz, dx, dy, dz, col);
+        pushWhaleTri(positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz,
+          facetColor(s, i, 0));
+        pushWhaleTri(positions, colors, ax, ay, az, cx, cy, cz, dx, dy, dz,
+          facetColor(s, i, 1));
       }
     }
     const nose = rings[0];
@@ -11284,13 +11296,13 @@ function buildTidebreaker(scene) {
     // Small swept dorsal bump, matching the understated fin in the reference.
     pushWhaleTri(positions, colors, -3.15, 1.72, 0, -5.05, 2.72, 0, -5.92, 1.46, 0, WHALE_BLUE);
     pushWhaleTri(positions, colors, -3.15, 1.72, 0, -5.92, 1.46, 0, -5.05, 2.72, 0, WHALE_BLUE);
-    // Subtle throat grooves on the pale belly.
+    // Long, darker throat pleats are one of a blue whale's clearest markings.
     for (let i = -2; i <= 2; i++) {
       const gz = i * 0.48;
       pushWhaleTri(positions, colors,
-        13.2, -1.72, gz - 0.06, 6.1, -2.28, gz - 0.06, 6.1, -2.35, gz + 0.06, WHALE_WHITE);
+        13.2, -1.72, gz - 0.06, 6.1, -2.28, gz - 0.06, 6.1, -2.35, gz + 0.06, WHALE_GROOVE);
       pushWhaleTri(positions, colors,
-        13.2, -1.72, gz - 0.06, 6.1, -2.35, gz + 0.06, 13.2, -1.79, gz + 0.06, WHALE_WHITE);
+        13.2, -1.72, gz - 0.06, 6.1, -2.35, gz + 0.06, 13.2, -1.79, gz + 0.06, WHALE_GROOVE);
     }
 
     // Solid fluke welded to the peduncle — no floating sheets / see-through slits.
@@ -11325,19 +11337,21 @@ function buildTidebreaker(scene) {
       ];
       const top = outline.map(([x, y, z]) => [x, y + ht, z]);
       const bot = outline.map(([x, y, z]) => [x, y - ht, z]);
-      // Top face (blue) — fan from root.
+      // Mottled blue-gray top face — fan from root.
       for (let i = 1; i < outline.length - 1; i++) {
         pushWhaleTri(flukePositions, flukeColors,
           top[0][0], top[0][1], top[0][2],
           top[i][0], top[i][1], top[i][2],
-          top[i + 1][0], top[i + 1][1], top[i + 1][2], WHALE_BLUE);
+          top[i + 1][0], top[i + 1][1], top[i + 1][2],
+          whaleDorsalMottle[i % whaleDorsalMottle.length]);
       }
-      // Bottom face (white).
+      // Pale, irregular underside.
       for (let i = 1; i < outline.length - 1; i++) {
         pushWhaleTri(flukePositions, flukeColors,
           bot[0][0], bot[0][1], bot[0][2],
           bot[i + 1][0], bot[i + 1][1], bot[i + 1][2],
-          bot[i][0], bot[i][1], bot[i][2], WHALE_WHITE);
+          bot[i][0], bot[i][1], bot[i][2],
+          whaleBellyMottle[(i * 3) % whaleBellyMottle.length]);
       }
       // Edge ribbon seals top to bottom all the way around.
       for (let i = 0; i < outline.length; i++) {
@@ -11399,6 +11413,14 @@ function buildTidebreaker(scene) {
       eye.position.set(8.35, 0.34, side * 3.36);
       group.add(eye);
     }
+    const blowholeGeo = new THREE.SphereGeometry(0.16, 6, 3);
+    const blowholeMat = new THREE.MeshBasicMaterial({ color: 0x263b43 });
+    for (const side of [-1, 1]) {
+      const blowhole = new THREE.Mesh(blowholeGeo, blowholeMat);
+      blowhole.position.set(9.35, 1.61, side * 0.19);
+      blowhole.scale.set(1.05, 0.16, 0.52);
+      group.add(blowhole);
+    }
     const leftPec = new THREE.Group();
     leftPec.name = 'whale-left-pectoral-pivot';
     leftPec.position.set(3.6, -0.35, 2.55);
@@ -11408,10 +11430,12 @@ function buildTidebreaker(scene) {
     rightPec.position.set(3.6, -0.35, -2.55);
     rightPec.add(buildPectoralMesh(-1));
     group.add(leftPec, rightPec);
-    group.scale.setScalar(1.85);
+    // A mature blue whale should feel enormous beside the rig and human-scale
+    // combatants, while still fitting its wide offshore cruise/breach path.
+    group.scale.setScalar(2.35);
     return { group, body, fluke, leftPec, rightPec };
   };
-  const whaleParts = buildHumpbackWhale();
+  const whaleParts = buildBlueWhale();
   const whale = whaleParts.group;
   whale.position.set(145, oceanSurfaceY - 18, -55);
   essential.add(whale);
