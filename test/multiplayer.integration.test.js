@@ -210,6 +210,12 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
           amount: 7,
           pos: { x: 1, y: 0.1, z: 0 },
         },
+        {
+          id: 'integration:gold:3',
+          kind: 'gold',
+          timeLeft: 12.75,
+          pos: { x: 2, y: 0.1, z: 0 },
+        },
       ],
       pickups: [
         { id: 'map-3', timer: 22.5 },
@@ -244,9 +250,11 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     kind: drop.kind,
     weapon: drop.weapon,
     amount: drop.amount,
+    timeLeft: drop.timeLeft,
   })), [
-    { id: 'integration:points:1', kind: 'points', weapon: undefined, amount: 250 },
-    { id: 'integration:drop:2', kind: 'drop', weapon: 'scatter', amount: 7 },
+    { id: 'integration:points:1', kind: 'points', weapon: undefined, amount: 250, timeLeft: undefined },
+    { id: 'integration:drop:2', kind: 'drop', weapon: 'scatter', amount: 7, timeLeft: undefined },
+    { id: 'integration:gold:3', kind: 'gold', weapon: undefined, amount: 0, timeLeft: 12.75 },
   ]);
   assert.deepEqual(shiftedSnapshot.targetCooldowns, [
     { id: 'target-poster-0', cooldown: 29.25 },

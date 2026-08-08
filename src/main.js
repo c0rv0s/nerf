@@ -1903,6 +1903,7 @@ function reconcileMultiplayerDrops(drops) {
       kind: drop.kind,
       amount: drop.amount,
       weapon: drop.weapon,
+      timeLeft: drop.timeLeft,
       pos: new THREE.Vector3(drop.pos.x, drop.pos.y, drop.pos.z),
       up: drop.up ? new THREE.Vector3(drop.up.x || 0, drop.up.y || 1, drop.up.z || 0).normalize() : new THREE.Vector3(0, 1, 0),
     };
@@ -1911,6 +1912,7 @@ function reconcileMultiplayerDrops(drops) {
       existing.def.pos.copy(def.pos);
       existing.def.amount = def.amount;
       existing.def.weapon = def.weapon;
+      existing.def.timeLeft = def.timeLeft;
       existing.def.up = def.up;
       existing.hostMirror = true;
       existing.active = true;
@@ -3008,6 +3010,7 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
       target.team === 'blue' ? 0x5cb3ff : 0xff5c5c, 2);
 
     dropWeapon(target);
+    dropPowerup(target);
     if (target.isPlayer) {
       target.alive = false;
       sfx('death');
@@ -3051,6 +3054,19 @@ function dropWeapon(ch) {
   if (ch.pos.y < G.world.killY + 10) return; // falling into the void takes it with you
   G.pickups.addDrop({
     id: nextDropId('drop'), kind: 'drop', weapon: ch.weapon, amount: ch.ammo[ch.weapon],
+    pos: ch.pos.clone(),
+    up: (ch.up || new THREE.Vector3(0, 1, 0)).clone(),
+  });
+}
+
+// Active gold/silver falls with the victim, preserving only its unused time.
+function dropPowerup(ch) {
+  const kind = ch.powerup?.kind;
+  const timeLeft = Math.max(0, Math.min(30, Number(ch.powerup?.timeLeft) || 0));
+  if ((kind !== 'gold' && kind !== 'silver') || timeLeft <= 0) return;
+  if (ch.pos.y < G.world.killY + 10) return; // falling into the void takes it with you
+  G.pickups.addDrop({
+    id: nextDropId(kind), kind, timeLeft,
     pos: ch.pos.clone(),
     up: (ch.up || new THREE.Vector3(0, 1, 0)).clone(),
   });
@@ -3160,8 +3176,12 @@ function onPickup(ch, def) {
     case 'gold':
     case 'silver': {
       const gold = def.kind === 'gold';
+      const timeLeft = def.timeLeft == null
+        ? 30
+        : Math.max(0, Math.min(30, Number(def.timeLeft) || 0));
+      if (timeLeft <= 0) return false;
       ch.damageMult = gold ? 3 : 2;
-      ch.powerup = { kind: def.kind, timeLeft: 30 };
+      ch.powerup = { kind: def.kind, timeLeft };
       if (ch.isPlayer) { sfx('powerup'); ch.setSkin(def.kind); }
       hud.message(
         `${ch.isPlayer ? 'YOU HAVE' : ch.name + ' has'} the ${gold ? 'GOLD' : 'SILVER'} NERF! ${gold ? '3×' : '2×'} damage!`,
@@ -4556,6 +4576,7 @@ function serializeDrops() {
       kind: item.def.kind,
       weapon: item.def.weapon,
       amount: item.def.amount || 0,
+      timeLeft: item.def.timeLeft,
       pos: { x: item.def.pos.x, y: item.def.pos.y, z: item.def.pos.z },
       up: item.def.up ? { x: item.def.up.x, y: item.def.up.y, z: item.def.up.z } : { x: 0, y: 1, z: 0 },
     }));

@@ -7,8 +7,12 @@ import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from '.
 import { aiTex } from './maps.js';
 import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
+import { chooseCombatIntent, combatTargetScore, pickupUtility } from './bot-strategy.js';
 
 const _combatRouteProbe = new THREE.Vector3();
+const WEAPON_PICKUP_AMMO = Object.fromEntries(
+  Object.entries(WEAPONS).map(([id, weapon]) => [id, weapon.pickupAmmo]),
+);
 
 const coloredPart = (geometry, color, position, rotation = null) => {
   const geo = geometry.clone();
@@ -159,6 +163,13 @@ export class Bot {
     this._jetpackThinkT = 0;
     this._jetpackWants = false;
     this._combatRouteT = 0;
+    this.combatIntent = 'roam';
+    this._lootUtility = -Infinity;
+    this._strategyGoal = null;
+    this._strategyGoalType = null;
+    this._pursuitTarget = null;
+    this._lastSeenTargetPos = new THREE.Vector3();
+    this._targetMemoryT = 0;
 
     const { group, jetpack } = buildBotMesh(color);
     this.mesh = group;
@@ -261,6 +272,13 @@ export class Bot {
     this._jetpackThinkT = 0;
     this._jetpackWants = false;
     this._combatRouteT = 0;
+    this.combatIntent = 'roam';
+    this._lootUtility = -Infinity;
+    this._strategyGoal = null;
+    this._strategyGoalType = null;
+    this._pursuitTarget = null;
+    this._lastSeenTargetPos.copy(pos);
+    this._targetMemoryT = 0;
     this._drownT = 0;
     this._drownDamageT = 0;
     this.up.set(0, 1, 0);
@@ -327,7 +345,9 @@ export class Bot {
   //  - getting shot reveals the attacker for a few seconds
   //  - stickiness: keep fighting the current target instead of hopping to whoever's nearest
   think(characters) {
-    this.shopping = this.bestLoot();
+    const opponents = characters.filter(ch => ch !== this && ch.alive && ch.team !== this.team);
+    const leaderScore = Math.max(this.score || 0, ...opponents.map(ch => ch.score || 0));
+    this.shopping = this.bestLoot({ leaderScore });
     const myEye = this.eye();
     const eyeOf = (ch) => ch.eye ? ch.eye() : new THREE.Vector3(
       ch.pos.x,
@@ -335,66 +355,64 @@ export class Bot {
       ch.pos.z,
     );
 
-    // Just got shot by someone new? Turn on the attacker — even mid-fight.
+    // Just got shot by someone new? Give the attacker a large priority boost,
+    // but still let a badly hurt bot break contact for nearby sustain.
     const atk = this.lastAttacker;
-    if (this.alertTimer > 0 && atk && atk.alive && atk !== this.target && atk !== this &&
-        atk.team !== this.team && atk.pos.distanceTo(this.pos) < 60 &&
-        hasLOS(myEye, eyeOf(atk), this.world)) {
-      this.target = atk;
-      this.reactionTimer = rand(0.3, 0.6);
-      this.weapon = this.bestWeapon();
-      this.repath(false);
-      return;
-    }
-
-    // stay on the current target while it's alive and visible
-    if (this.target && this.target.alive &&
-        this.target.pos.distanceTo(this.pos) < 60 &&
-        hasLOS(myEye, eyeOf(this.target), this.world)) {
-      this.weapon = this.bestWeapon();
-      this.repath(false);
-      return;
-    }
-
-    let best = null, bd = Infinity;
-    for (const ch of characters) {
-      if (ch === this || !ch.alive || ch.team === this.team) continue;
+    let best = null, bestScore = -Infinity;
+    for (const ch of opponents) {
       const d = ch.pos.distanceTo(this.pos);
-      if (d > 55 || d >= bd) continue;
+      if (d > 60) continue;
       const dirTo = Math.atan2(ch.pos.x - this.pos.x, ch.pos.z - this.pos.z);
       const inFov = Math.abs(angDiff(dirTo, this.aimYaw)) < 1.22; // ~140° cone
       const heard = d < 8;
       const alerted = this.alertTimer > 0 && ch === this.lastAttacker;
-      if (!inFov && !heard && !alerted) continue;
-      if (hasLOS(myEye, eyeOf(ch), this.world)) { best = ch; bd = d; }
+      const tracking = ch === this.target;
+      if (!inFov && !heard && !alerted && !tracking) continue;
+      if (!hasLOS(myEye, eyeOf(ch), this.world)) continue;
+      const score = combatTargetScore(this, ch, d, {
+        isLeader: (ch.score || 0) >= leaderScore && leaderScore > 0,
+        isCurrent: ch === this.target,
+        isAttacker: alerted && ch === atk,
+      });
+      if (score > bestScore) { best = ch; bestScore = score; }
     }
-    if (best && best !== this.target) this.reactionTimer = rand(0.4, 0.9);
+    if (best && best !== this.target) {
+      this.reactionTimer = best === atk && this.alertTimer > 0 ? rand(0.3, 0.6) : rand(0.4, 0.9);
+    }
     this.target = best;
+    if (best) {
+      this._pursuitTarget = best;
+      this._lastSeenTargetPos.copy(best.pos);
+      this._targetMemoryT = rand(2.8, 4.6);
+    }
     this.weapon = this.bestWeapon();
     if (this.weapon !== 'blaster' && !(this.ammo[this.weapon] > 0)) this.weapon = 'blaster';
+    this.combatIntent = chooseCombatIntent(this, this.target, this.shopping, {
+      leaderScore,
+      lootUtility: this._lootUtility,
+    });
+    // Healthy bots briefly investigate the last place a valuable opponent was
+    // seen instead of forgetting a fight the instant someone rounds a corner.
+    if (!this.target && this._targetMemoryT > 0 && this._pursuitTarget?.alive &&
+        (this.hp || 0) + (this.shield || 0) >= 65 &&
+        ((this._pursuitTarget.score || 0) >= (this.score || 0) || !this.shopping)) {
+      this.combatIntent = 'pursue';
+    }
     this.repath(false);
   }
 
-  // The nearest pickup worth a detour: point orbs and medals above all, then
-  // guns we don't own, dropped weapons, and health when hurting.
-  bestLoot() {
+  // Score known pickups by match value, need and travel distance.
+  bestLoot(context = {}) {
     const items = this.world.getPickups ? this.world.getPickups() : [];
-    let best = null, bs = Infinity;
+    let best = null, bs = -Infinity;
     for (const it of items) {
       if (!it.active || it === this.avoid) continue;
-      const k = it.def.kind;
-      const want = k === 'points' || k === 'gold' || k === 'silver' || k === 'drop' ||
-        (k === 'weapon' && !(this.weapons[it.def.weapon] && this.ammo[it.def.weapon] > 0)) ||
-        (k === 'health' && this.hp < 60) ||
-        (k === 'shield' && !(this.shield > 0)) ||
-        (k === 'speed' && !(this.speedMult > 1)) ||
-        (k === 'jetpack' && !this.jetpack);
-      if (!want) continue;
       const d = it.def.pos.distanceTo(this.pos);
-      if (d > 80) continue;
-      const priority = k === 'points' ? d * 0.3 : (k === 'gold' || k === 'silver') ? d * 0.6 : d;
-      if (priority < bs) { bs = priority; best = it; }
+      if (d > 95) continue;
+      const utility = pickupUtility(this, it.def, d, { ...context, weaponPickupAmmo: WEAPON_PICKUP_AMMO });
+      if (utility > bs) { bs = utility; best = it; }
     }
+    this._lootUtility = bs;
     return best;
   }
 
@@ -402,25 +420,83 @@ export class Bot {
   repath(force) {
     // committed to a fresh kill drop — don't let combat rolls redirect us
     if (!force && this.lootLock > 0 && this.path && this.pathIdx < this.path.length) return;
-    if (!force && this.path && this.pathIdx < this.path.length && Math.random() >= 0.06) return;
+    const loot = this.shopping;
+    const hasRoute = this.path && this.pathIdx < this.path.length;
+    const desiredType = (this.combatIntent === 'recover' || this.combatIntent === 'loot') && loot
+      ? 'loot'
+      : this.combatIntent === 'evade' && this.target
+        ? 'evade'
+        : this.combatIntent === 'pursue' && this._targetMemoryT > 0
+          ? 'pursue'
+          : this.target ? 'engage' : loot ? 'loot' : 'roam';
+    const desiredGoal = desiredType === 'loot' ? loot
+      : desiredType === 'pursue' ? this._pursuitTarget
+        : (desiredType === 'engage' || desiredType === 'evade') ? this.target : null;
+    if (!force && hasRoute && desiredType === this._strategyGoalType && desiredGoal === this._strategyGoal) return;
+
     const from = this.reachableNearest();
-    const aggression = this.world.gravity < 12 ? 0.35 : 0.7;
-    let to;
-    const loot = this.bestLoot();
-    if (this.target && Math.random() < aggression) {
-      to = nearestWaypoint(this.world, this.target.pos); // push toward the fight
-    } else if (loot && Math.random() < 0.8) {
-      to = nearestWaypoint(this.world, loot.def.pos);    // go shopping
-      // already standing at the item's waypoint but can't actually grab it
-      // (wrong floor, ledge above, …) — stop staring at the wall and move on
-      if (to === from && this.pos.distanceTo(loot.def.pos) > 3) {
-        to = this._randomRoamWaypoint(from);
-      }
+    let goal = null;
+    let route = null;
+    if ((this.combatIntent === 'recover' || this.combatIntent === 'loot') && loot) {
+      goal = loot;
+      route = this._pathTowardPosition(from, loot.def.pos);
+    } else if (this.combatIntent === 'evade' && this.target) {
+      const to = this._evasionWaypoint(from, this.target);
+      goal = this.target;
+      route = this._findPath(from, to, { avoidWater: true });
+    } else if (this.combatIntent === 'pursue' && this._targetMemoryT > 0) {
+      goal = this._pursuitTarget;
+      route = this._pathTowardPosition(from, this._lastSeenTargetPos);
+    } else if (this.target) {
+      goal = this.target;
+      route = this._pathTowardPosition(from, this.target.pos);
+    } else if (loot) {
+      goal = loot;
+      route = this._pathTowardPosition(from, loot.def.pos);
     } else {
-      to = this._randomRoamWaypoint(from);
+      const to = this._randomRoamWaypoint(from);
+      goal = `roam:${to}`;
+      route = this._findPath(from, to, { avoidWater: true });
     }
-    this.path = this._findPath(from, to, { avoidWater: true }) || [from];
+    this._strategyGoal = goal;
+    this._strategyGoalType = desiredType;
+    this.path = route || [from];
     this.pathIdx = 0;
+  }
+
+  // The waypoint nearest a target can live in another disconnected component.
+  // Try progressively farther destination nodes and keep the first route that
+  // is actually connected to the bot's current component.
+  _pathTowardPosition(from, pos) {
+    const wps = this.world.waypoints || [];
+    const ranked = wps.map((w, i) => [w.pos.distanceToSquared(pos), i]).sort((a, b) => a[0] - b[0]);
+    for (const [, to] of ranked.slice(0, Math.min(28, ranked.length))) {
+      const path = this._findPath(from, to, { avoidWater: true });
+      if (!path || (path.length === 1 && to === from && this.pos.distanceTo(pos) > 5)) continue;
+      return path;
+    }
+    return null;
+  }
+
+  _evasionWaypoint(from, target) {
+    const wps = this.world.waypoints || [];
+    const targetEye = target.eye ? target.eye() : new THREE.Vector3(
+      target.pos.x,
+      target.pos.y + 1.5 * (this.world.characterVisualScale?.(target) || 1),
+      target.pos.z,
+    );
+    let best = from, bestScore = -Infinity;
+    for (let i = 0; i < wps.length; i++) {
+      if (this._pointInAnyWater(wps[i].pos)) continue;
+      const path = this._findPath(from, i, { avoidWater: true });
+      if (!path || path.length > 9) continue;
+      const enemyD = wps[i].pos.distanceTo(target.pos);
+      const travelD = wps[i].pos.distanceTo(this.pos);
+      const covered = !hasLOS(targetEye, new THREE.Vector3(wps[i].pos.x, wps[i].pos.y + 1.4, wps[i].pos.z), this.world);
+      const score = enemyD * 1.25 - travelD * 0.25 + (covered ? 18 : 0);
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    return best;
   }
 
   _randomRoamWaypoint(from = this.reachableNearest()) {
@@ -452,8 +528,7 @@ export class Bot {
 
   _routeTowardPosition(pos) {
     const from = this.reachableNearest();
-    const to = nearestWaypoint(this.world, pos);
-    this.path = this._findPath(from, to, { avoidWater: true }) || [from];
+    this.path = this._pathTowardPosition(from, pos) || [from];
     this.pathIdx = 0;
   }
 
@@ -658,6 +733,7 @@ export class Bot {
     this.alertTimer -= dt;
     this.lootLock -= dt;
     this.avoidT -= dt;
+    this._targetMemoryT = Math.max(0, this._targetMemoryT - dt);
     this._combatRouteT = Math.max(0, this._combatRouteT - dt);
     if (this.avoidT <= 0) this.avoid = null;
 
@@ -675,12 +751,9 @@ export class Bot {
         if (this.shopping) { this.avoid = this.shopping; this.avoidT = 12; }
         this.shopping = null;
         this.lootLock = 0;
-        if (this.target?.alive) this._routeTowardPosition(this.target.pos);
-        else {
-          const from = this.reachableNearest();
-          this.path = this._findPath(from, this._randomRoamWaypoint(from), { avoidWater: true }) || null;
-          this.pathIdx = 0;
-        }
+        this._strategyGoal = null;
+        this._strategyGoalType = null;
+        this.repath(true);
         this._combatRouteT = 2.5;
         this.stuckT = 0;
       } else if (this.stuckT >= 1.5 && this.grounded) {
@@ -720,7 +793,8 @@ export class Bot {
     // Final approach: waypoints only get you *near* an item — walk the last
     // stretch straight onto it, or the orb just spins there forever.
     const shop = this.shopping;
-    if (shop && shop.active && (!this.target || this.lootLock > 0)) {
+    const committedToLoot = this.combatIntent === 'recover' || this.combatIntent === 'loot';
+    if (shop && shop.active && (!this.target || this.lootLock > 0 || committedToLoot)) {
       const lp = shop.def.pos;
       const fd = Math.hypot(lp.x - this.pos.x, lp.z - this.pos.z);
       // low grav: only beeline on the same flat — a straight walk can cross a void gap
@@ -753,7 +827,7 @@ export class Bot {
       this.facing = this.target
         ? Math.atan2(this.target.pos.x - this.pos.x, this.target.pos.z - this.pos.z)
         : Math.atan2(moveX, moveZ);
-    } else if (this.target && !lowGrav && this._combatRouteT <= 0) {
+    } else if (this.target && this.combatIntent === 'engage' && !lowGrav && this._combatRouteT <= 0) {
       // combat: run around — pick a fresh maneuver (an angle relative to the
       // target direction) every second or so, with the odd dodge-hop
       const to = new THREE.Vector3().subVectors(this.target.pos, this.pos);

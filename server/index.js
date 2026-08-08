@@ -1381,7 +1381,7 @@ function sanitizeAmmo(value, weapons) {
 function sanitizeDrop(drop, lobby) {
   if (!drop || typeof drop !== 'object') return null;
   const kind = String(drop.kind || '');
-  if (!['points', 'drop'].includes(kind)) return null;
+  if (!['points', 'drop', 'gold', 'silver'].includes(kind)) return null;
   const pos = sanitizePos(drop.pos, lobby.map);
   if (!pos) return null;
   const id = String(drop.id || `${kind}:${Math.round(pos.x * 10)}:${Math.round(pos.y * 10)}:${Math.round(pos.z * 10)}`).slice(0, 64);
@@ -1395,6 +1395,9 @@ function sanitizeDrop(drop, lobby) {
   if (kind === 'drop') {
     const weapon = String(drop.weapon || 'blaster').slice(0, 24);
     out.weapon = WEAPON_IDS.has(weapon) ? weapon : 'blaster';
+  } else if (kind === 'gold' || kind === 'silver') {
+    out.timeLeft = Math.max(0, Math.min(30, finite(drop.timeLeft, 0)));
+    if (out.timeLeft <= 0) return null;
   }
   return out;
 }
