@@ -22,6 +22,8 @@ import { unlockSecretMap } from './secret-maps.js';
 import { byId, setStyle, setText } from './dom.js';
 import { mapPlayerLimit } from './map-rules.js';
 import { damageMultiplierForPowerup, resolveShieldedDamage } from './combat.js';
+import { MobileControls } from './mobile-controls.js';
+import { isStandaloneApp, setupPwaInstall } from './pwa.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -481,8 +483,22 @@ let mapLoadInProgress = false;
 let selectedMode = 'ffa';
 let openingMultiplayer = false;
 let multiplayerVotingTimer = 0;
+let mobilePauseOpen = false;
+let mobilePauseOpenedAt = 0;
 const lastSpawnByKey = new Map();
 const lastSpawnFaceByKey = new Map();
+
+function usesMobileControls() {
+  return mobileControls.active;
+}
+
+function startsPausedForPointerLock() {
+  return !usesMobileControls() && document.pointerLockElement !== canvas;
+}
+
+function gameplayOverlayDisplay() {
+  return usesMobileControls() || document.pointerLockElement === canvas ? 'none' : 'flex';
+}
 
 function hierarchyPairs(source, copy) {
   const sourceNodes = [];
@@ -645,6 +661,8 @@ document.getElementById('againbtn').addEventListener('click', () => {
 /* ---------------- match setup ---------------- */
 function teardown() {
   if (!G) return;
+  mobilePauseOpen = false;
+  mobileControls.reset();
   setJetpackThrust(false);
   setPauseScoreboardLayer(false);
   updateUnderwaterFx(1, true);
@@ -863,7 +881,7 @@ function startAtrium() {
     timeLeft: MATCH_TIME,
     respawnTimers: new Map(),
     over: false,
-    paused: document.pointerLockElement !== canvas,
+    paused: startsPausedForPointerLock(),
     showBoard: false,
     padCooldown: 0,
     lastT: performance.now(),
@@ -880,7 +898,7 @@ function startAtrium() {
   hud.clearAwards();
   setStyle(document.getElementById('scores'), 'display', 'none');
   setText(document.getElementById('catchtitle'), 'CLICK TO PLAY');
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
   cancelAnimationFrame(rafId);
@@ -950,7 +968,7 @@ function startHallOfFame() {
     timeLeft: MATCH_TIME,
     respawnTimers: new Map(),
     over: false,
-    paused: document.pointerLockElement !== canvas,
+    paused: startsPausedForPointerLock(),
     showBoard: false,
     lastT: performance.now(),
   };
@@ -968,7 +986,7 @@ function startHallOfFame() {
   setStyle(hud.els.msg, 'opacity', '0');
   setStyle(document.getElementById('scores'), 'display', 'none');
   setText(document.getElementById('catchtitle'), 'CLICK TO ENTER THE HALL');
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   refreshHallLeaderboard(world);
   cancelAnimationFrame(rafId);
@@ -1097,7 +1115,7 @@ function startMatch(mapDef, mode = 'ffa') {
     timeLeft: world.matchTime || MATCH_TIME,
     respawnTimers: new Map(),
     over: false,
-    paused: document.pointerLockElement !== canvas, // unpauses when the pointer locks
+    paused: startsPausedForPointerLock(), // touch starts immediately; desktop waits for pointer lock
     showBoard: false,
     lastT: performance.now(),
   };
@@ -1127,7 +1145,7 @@ function startMatch(mapDef, mode = 'ffa') {
   hud.show(true);
   hud.clearAwards();
   setStyle(document.getElementById('scores'), 'display', '');
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   musicPlay();
   cancelAnimationFrame(rafId);
@@ -1286,7 +1304,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   setStyle(document.getElementById('scores'), 'display', '');
   setStyle(document.getElementById('endscreen'), 'display', 'none');
   setText(document.getElementById('catchtitle'), 'CLICK TO RESUME');
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   musicPlay();
   cancelAnimationFrame(rafId);
@@ -1307,7 +1325,7 @@ function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa', res
   G.mpConnectionPaused = false;
   G.paused = false;
   setText(document.getElementById('catchtitle'), 'CLICK TO RESUME');
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   G.player.id = multiplayer.slotId;
   G.player.name = multiplayer.name || 'YOU';
   G.player.color = multiplayerColorForTeam(playerTeam, playerSlot?.color || '#ffd23c');
@@ -3249,6 +3267,7 @@ function setPauseScoreboardLayer(on) {
 }
 
 function requestPointerLock() {
+  if (usesMobileControls()) return;
   if (!canvas.requestPointerLock) return;
   try {
     const request = canvas.requestPointerLock({ unadjustedMovement: true });
@@ -3259,7 +3278,86 @@ function requestPointerLock() {
 }
 
 const quitBtn = document.getElementById('quitbtn');
+
+function updatePauseMenuExtras(showPause, multiplayerMatch = !!(G?.multiplayer || G?.multiplayerHost)) {
+  setStyle(quitBtn, 'display', showPause ? '' : 'none');
+  setStyle(volumeControl, 'display', showPause ? 'block' : 'none');
+  setText(quitBtn, multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM');
+  const board = hud.els.board;
+  setPauseScoreboardLayer(showPause);
+  setStyle(board, 'display', showPause ? 'block' : 'none');
+  setStyle(board, 'top', '');
+  setStyle(board, 'zIndex', showPause ? 4 : '');
+  setStyle(board, 'background', showPause ? 'rgba(10,12,30,.96)' : '');
+  if (showPause && G) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
+}
+
+async function enterMobileImmersiveMode() {
+  if (!usesMobileControls() || isStandaloneApp()) return;
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch { /* iOS browser tabs do not expose fullscreen; the installed app does */ }
+  try {
+    await screen.orientation?.lock?.('landscape');
+  } catch { /* orientation lock support varies by browser */ }
+}
+
+function openMobilePause() {
+  if (!G || G.over || G.mpConnectionPaused || mobilePauseOpen) return;
+  mobilePauseOpen = true;
+  mobilePauseOpenedAt = performance.now();
+  G.player.firing = false;
+  G.player.cancelWeaponWarmup?.();
+  G.player.setMoveInput?.(0, 0);
+  G.player.keys.Space = false;
+  const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
+  if (!multiplayerMatch) G.paused = true;
+  const showPause = !G.atrium && !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen();
+  setText(document.getElementById('catchtitle'), multiplayerMatch ? 'MENU — TAP TO RESUME' : '⏸ PAUSED — TAP TO RESUME');
+  setStyle(clickcatch, 'display', 'flex');
+  updatePauseMenuExtras(showPause, multiplayerMatch);
+  mobileControls.sync();
+}
+
+function resumeMobilePause() {
+  if (!G || !mobilePauseOpen || G.mpConnectionPaused) return;
+  mobilePauseOpen = false;
+  G.paused = false;
+  updatePauseMenuExtras(false);
+  setStyle(clickcatch, 'display', 'none');
+  mobileControls.sync();
+}
+
+const mobileControls = new MobileControls({
+  root: document.getElementById('mobilecontrols'),
+  onMove: (strafe, forward) => G?.player?.setMoveInput?.(strafe, forward),
+  onLook: (dx, dy) => {
+    if (G && !G.paused && !mobilePauseOpen) G.player.onMouseMove(dx, dy);
+  },
+  onFire: (pressed) => {
+    if (!G) return;
+    G.player.firing = !!pressed && !G.paused && !mobilePauseOpen && G.player.alive;
+    if (G.player.firing) tryOpenAimedUrlSign();
+  },
+  onJump: (pressed) => {
+    if (!G) return;
+    G.player.keys.Space = !!pressed;
+    if (pressed && !G.paused && !mobilePauseOpen) G.player.wantJump = true;
+  },
+  onCycleWeapon: () => {
+    if (G && !G.paused && !mobilePauseOpen && G.player.alive) G.player.cycleWeapon(1);
+  },
+  onPause: openMobilePause,
+  onEngage: enterMobileImmersiveMode,
+  shouldShow: () => !!G && !G.over && !G.paused && !mobilePauseOpen && !mapLoadInProgress &&
+    !G.mpConnectionPaused && !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
+});
+setupPwaInstall();
+
 document.addEventListener('pointerlockchange', () => {
+  if (usesMobileControls()) return;
   const locked = document.pointerLockElement === canvas;
   if (G && !G.over) {
     if (!locked) {
@@ -3280,25 +3378,19 @@ document.addEventListener('pointerlockchange', () => {
     // pause menu extras (matches only): live scoreboard + quit
     const showPause = !connectionPaused && !locked && !G.atrium &&
       !multiplayerPanelOpen && !multiplayerChatOpen;
-    setStyle(quitBtn, 'display', showPause ? '' : 'none');
-    setStyle(volumeControl, 'display', showPause ? 'block' : 'none');
-    setText(quitBtn, multiplayerMatch ? 'EXIT MULTIPLAYER' : 'BACK TO ATRIUM');
-    const board = hud.els.board;
-    setPauseScoreboardLayer(showPause);
-    setStyle(board, 'display', showPause ? 'block' : 'none');
-    setStyle(board, 'top', ''); // pause layout is class-driven so its scroll region remains viewport-safe
-    setStyle(board, 'zIndex', showPause ? 4 : '');     // above the pause overlay
-    setStyle(board, 'background', showPause ? 'rgba(10,12,30,.96)' : ''); // solid — the tint washed it out
-    if (showPause) hud.renderBoard({ characters: G.characters, scores: G.scores, mode: G.mode });
+    updatePauseMenuExtras(showPause, multiplayerMatch);
   } else {
-    setPauseScoreboardLayer(false);
+    updatePauseMenuExtras(false);
     setStyle(clickcatch, 'display', 'none');
-    setStyle(quitBtn, 'display', 'none');
-    setStyle(volumeControl, 'display', 'none');
   }
 });
 clickcatch.addEventListener('click', () => {
   if (G?.mpConnectionPaused) return;
+  if (usesMobileControls()) {
+    if (performance.now() - mobilePauseOpenedAt < 350) return;
+    resumeMobilePause();
+    return;
+  }
   requestPointerLock();
 });
 hud.els.board.addEventListener('click', (e) => e.stopPropagation());
@@ -3317,6 +3409,8 @@ quitBtn.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();               // don't let the overlay re-lock the pointer
   e.stopImmediatePropagation();
+  mobilePauseOpen = false;
+  mobileControls.reset();
   setStyle(quitBtn, 'display', 'none');
   setStyle(volumeControl, 'display', 'none');
   setStyle(clickcatch, 'display', 'none');
@@ -3333,7 +3427,7 @@ function popOutOfMultiplayerPortal() {
   clearTimeout(multiplayerVotingTimer);
   openingMultiplayer = false;
   multiplayer.closeOverlay?.();
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   setStyle(quitBtn, 'display', 'none');
   setStyle(volumeControl, 'display', 'none');
   setText(document.getElementById('catchtitle'), 'CLICK TO PLAY');
@@ -3491,7 +3585,7 @@ multiplayer.addEventListener('phase', (e) => {
       setStyle(document.getElementById('endscreen'), 'display', 'none');
       if (!G?.atrium) startAtrium();
       document.exitPointerLock?.();
-      if (G) G.paused = true;
+      if (G && !usesMobileControls()) G.paused = true;
     }, wait);
   }
 });
@@ -3528,6 +3622,8 @@ multiplayer.addEventListener('hostChanged', (e) => {
 
 function pauseMultiplayerForConnection(message = 'CONNECTION LOST — RECONNECTING...') {
   if (!G || (!G.multiplayer && !G.multiplayerHost) || G.mpConnectionPaused) return;
+  mobilePauseOpen = false;
+  mobileControls.reset();
   G.mpConnectionPaused = true;
   G.paused = true;
   G.player.firing = false;
@@ -3546,7 +3642,7 @@ function finishMultiplayerConnectionPause(message = 'SYNC RESTORED — CLICK TO 
   G.mpConnectionPaused = false;
   G.paused = false;
   setText(document.getElementById('catchtitle'), message);
-  setStyle(clickcatch, 'display', document.pointerLockElement === canvas ? 'none' : 'flex');
+  setStyle(clickcatch, 'display', gameplayOverlayDisplay());
 }
 
 multiplayer.addEventListener('connectionLost', () => {
@@ -3573,6 +3669,7 @@ multiplayer.addEventListener('disconnect', () => {
 /* ---------------- main loop ---------------- */
 function tick(now) {
   if (!G) return;
+  mobileControls.sync();
   if (G.multiplayer && multiplayer.phase === 'playing' && !G.mpConnectionPaused &&
       now - (G.mpLastSnapshotAt || now) > MP_SNAPSHOT_STALL_MS) {
     pauseMultiplayerForConnection('SYNC INTERRUPTED — RECONNECTING...');

@@ -49,6 +49,7 @@ export class Player {
     this.jetpack = null;       // {fuel, cooldown, active}; cleared on death
     this._airJumped = false;
     this.keys = {};
+    this.moveInput = { strafe: 0, forward: 0 };
     this.firing = false;
     this.grounded = false;
     this.recoil = 0;
@@ -164,6 +165,21 @@ export class Player {
       this.yaw -= dx * s;
       this.pitch = clamp(this.pitch - dy * s, -1.5, 1.5);
     }
+  }
+
+  setMoveInput(strafe, forward) {
+    this.moveInput.strafe = clamp(Number(strafe) || 0, -1, 1);
+    this.moveInput.forward = clamp(Number(forward) || 0, -1, 1);
+  }
+
+  _forwardInput() {
+    const keyboard = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
+    return clamp(keyboard + this.moveInput.forward, -1, 1);
+  }
+
+  _strafeInput() {
+    const keyboard = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    return clamp(keyboard + this.moveInput.strafe, -1, 1);
   }
 
   switchWeapon(id) {
@@ -342,8 +358,8 @@ export class Player {
     const moveScale = this.world.characterMoveScale?.(this) || 1;
     const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
     const speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * env.speedMult;
-    const f = paralyzed ? 0 : (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
-    const s = paralyzed ? 0 : (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    const f = paralyzed ? 0 : this._forwardInput();
+    const s = paralyzed ? 0 : this._strafeInput();
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     let wx = (-sin * f + cos * s), wz = (-cos * f - sin * s);
     const wl = Math.hypot(wx, wz);
@@ -430,8 +446,8 @@ export class Player {
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
     const moveScale = this.world.characterMoveScale?.(this) || 1;
     const speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * this._waterSpeedMult();
-    const f = (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0);
-    const s = (this.keys['KeyD'] ? 1 : 0) - (this.keys['KeyA'] ? 1 : 0);
+    const f = this._forwardInput();
+    const s = this._strafeInput();
     const want = new THREE.Vector3().addScaledVector(fwd, f).addScaledVector(right, s);
     const wl = want.length();
     if (wl > 1) want.multiplyScalar(1 / wl);
@@ -582,7 +598,7 @@ export class Player {
     const eyeY = this.pos.y + this.eyeHeight;
     let targetVy = eyeY < surface - 0.25 ? 1.15 : -0.35;
     if (this.keys['Space']) targetVy = eyeY < surface + 0.15 ? 5.6 : this.world.jumpVel * 0.78;
-    else if (this.keys['KeyS']) targetVy = -2.4;
+    else if (this._forwardInput() < -0.25) targetVy = -2.4;
     this.vel.y = THREE.MathUtils.damp(this.vel.y, targetVy + this.world.gravity * dt, 8, dt);
     const waterDrag = Math.exp(-2.8 * dt);
     this.vel.x *= waterDrag;
@@ -593,7 +609,7 @@ export class Player {
   _applyVineMotion(dt, vine) {
     let climb = -1.15;                 // no input: slide down slowly
     if (this.keys['Space']) climb = 5.4;
-    else if (this.keys['KeyS']) climb = -3.0;
+    else if (this._forwardInput() < -0.25) climb = -3.0;
 
     const midY = this.pos.y + this.height * 0.5;
     if (this.keys['Space'] && vine && midY > vine.maxY + 1.35) {

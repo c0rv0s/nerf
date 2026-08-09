@@ -101,6 +101,19 @@ development uses an in-memory top 100 that resets when the server restarts.
 WASD move · mouse aim · left-click shoot · Space jump · 1–8/scroll switch
 weapon · Tab scoreboard · F fullscreen · Esc release mouse.
 
+On touch devices, the left half of the screen is a floating movement stick and
+the right half is a swipe-to-aim surface. Hold FIRE to shoot, hold JUMP to jump
+or run a jetpack, tap SWAP to cycle to the next loaded weapon, and use the pause
+button in the top-right for the scoreboard and settings.
+
+## Installable mobile app
+
+The site is an installable progressive web app. Android browsers use the in-app
+install prompt; iPhone and iPad users can use Share → Add to Home Screen. The
+installed app launches fullscreen in landscape. `sw.js` precaches the game shell
+and keeps requested textures, audio, and CDN modules available for faster repeat
+launches and offline fallback.
+
 ## Code layout
 
 | File | What it does |

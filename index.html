@@ -3,7 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>NERF ARENA BLAST REVIVAL</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#070b14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Nerf Arena">
+<link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./assets/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" href="./assets/favicon-32.png" sizes="32x32">
 <link rel="icon" type="image/png" href="./assets/icon-192.png" sizes="192x192">
@@ -366,6 +372,88 @@
     #wslots { display:none; } #top3 { display:none !important; }
     #scores { top:10px; } #killfeed { top:66px; right:10px; }
   }
+
+  /* ---------- TOUCH CONTROLS + INSTALL ---------- */
+  #mobilecontrols[hidden],#installPrompt[hidden] { display:none !important; }
+  #mobilecontrols { position:fixed; inset:0; z-index:4; pointer-events:none; touch-action:none;
+    -webkit-user-select:none; user-select:none; font-family:var(--body); }
+  .mobile-touch-zone { position:absolute; top:0; bottom:0; width:50%; pointer-events:auto;
+    touch-action:none; -webkit-tap-highlight-color:transparent; }
+  #mobileMoveZone { left:0; }
+  #mobileLookZone { right:0; }
+  #mobileMoveZone::after,#mobileLookZone::after { position:absolute; bottom:max(14px,env(safe-area-inset-bottom));
+    color:rgba(235,244,255,.42); font:800 9px/1 var(--body); letter-spacing:1.8px;
+    text-transform:uppercase; text-shadow:0 1px 4px #000; pointer-events:none; }
+  #mobileMoveZone::after { content:"Move"; left:max(18px,env(safe-area-inset-left)); }
+  #mobileLookZone::after { content:"Aim"; right:max(18px,env(safe-area-inset-right)); }
+  #mobileStickBase { position:fixed; width:116px; height:116px; border-radius:50%;
+    transform:translate(-50%,-50%); border:1px solid rgba(209,231,255,.34);
+    background:radial-gradient(circle,rgba(70,106,145,.18),rgba(7,13,25,.38));
+    box-shadow:inset 0 0 26px rgba(103,211,255,.12),0 5px 24px rgba(0,0,0,.26); pointer-events:none; }
+  #mobileStickBase[hidden] { display:none; }
+  #mobileStickKnob { position:absolute; left:50%; top:50%; width:52px; height:52px;
+    border-radius:50%; transform:translate(-50%,-50%); border:2px solid rgba(255,224,126,.72);
+    background:radial-gradient(circle at 38% 30%,rgba(255,255,255,.3),rgba(214,75,35,.72));
+    box-shadow:0 0 18px rgba(255,200,69,.22); }
+  .mobile-action { position:absolute; z-index:2; display:grid; place-items:center; pointer-events:auto;
+    touch-action:none; border-radius:50%; border:1px solid rgba(229,240,255,.5); color:#fff;
+    background:linear-gradient(145deg,rgba(24,40,64,.8),rgba(7,13,26,.74));
+    box-shadow:inset 0 1px rgba(255,255,255,.16),0 5px 18px rgba(0,0,0,.28);
+    font:900 10px/1 var(--body); letter-spacing:1px; text-transform:uppercase;
+    text-shadow:0 1px 3px #000; -webkit-tap-highlight-color:transparent; }
+  .mobile-action.pressed,.mobile-action:active { transform:scale(.91); filter:brightness(1.3); }
+  #mobileFire { right:max(22px,env(safe-area-inset-right)); bottom:max(54px,calc(env(safe-area-inset-bottom) + 38px));
+    width:82px; height:82px; border-color:rgba(255,212,92,.9);
+    background:radial-gradient(circle at 38% 30%,rgba(255,220,116,.38),rgba(187,47,25,.78)); }
+  #mobileJump { right:max(116px,calc(env(safe-area-inset-right) + 104px));
+    bottom:max(28px,calc(env(safe-area-inset-bottom) + 18px)); width:64px; height:64px; }
+  #mobileWeapon { right:max(122px,calc(env(safe-area-inset-right) + 110px));
+    bottom:max(104px,calc(env(safe-area-inset-bottom) + 94px)); width:58px; height:58px; }
+  #mobilePause { right:max(14px,env(safe-area-inset-right)); top:max(14px,env(safe-area-inset-top));
+    width:42px; height:42px; border-radius:12px; font-size:15px; letter-spacing:0; }
+  #rotateHint { position:absolute; left:50%; top:max(16px,env(safe-area-inset-top));
+    transform:translateX(-50%); display:none; padding:7px 12px; border:1px solid rgba(255,200,69,.4);
+    background:rgba(7,12,24,.72); color:#ffd65c; border-radius:3px;
+    font:850 9px/1 var(--body); letter-spacing:1.2px; text-transform:uppercase; pointer-events:none; }
+
+  #installPrompt { position:fixed; z-index:30; left:50%; top:max(12px,env(safe-area-inset-top));
+    transform:translateX(-50%); display:flex; align-items:center; gap:9px;
+    width:min(92vw,520px); padding:9px 10px 9px 13px; border:1px solid rgba(255,213,90,.66);
+    border-radius:5px; background:linear-gradient(135deg,rgba(20,31,51,.97),rgba(7,12,24,.97));
+    box-shadow:0 10px 30px rgba(0,0,0,.38); color:#f5f8ff;
+    font:750 11px/1.25 var(--body); letter-spacing:.2px; }
+  #installPrompt::before { content:"APP"; flex:0 0 auto; color:#070b14; background:#ffc845;
+    padding:5px 6px; border-radius:2px; font:950 8px/1 var(--body); letter-spacing:1px; }
+  #installMessage { flex:1; }
+  #installButton { flex:0 0 auto; padding:8px 10px; border:1px solid rgba(255,236,173,.84);
+    border-radius:3px; background:#bd421f; color:#fff; font:900 9px/1 var(--body);
+    letter-spacing:1px; cursor:pointer; }
+  #installDismiss { flex:0 0 auto; width:28px; height:28px; border:0; background:transparent;
+    color:#aebbd0; font:500 20px/1 var(--body); cursor:pointer; }
+  #installPrompt.instructions { font-size:10px; }
+
+  body.touch-capable { overscroll-behavior:none; }
+  body.touch-capable canvas#game { touch-action:none; }
+  body.touch-capable #health,body.touch-capable #ammo { transform:scale(.74); opacity:.9; bottom:auto; }
+  body.touch-capable #health { transform-origin:top left; left:max(8px,env(safe-area-inset-left));
+    top:max(10px,env(safe-area-inset-top)); }
+  body.touch-capable #ammo { transform-origin:top right; right:max(8px,env(safe-area-inset-right));
+    top:max(66px,calc(env(safe-area-inset-top) + 56px)); }
+  body.touch-capable #top3 { display:none !important; }
+  body.touch-capable #killfeed { max-width:34vw; right:max(66px,calc(env(safe-area-inset-right) + 56px)); }
+  body.touch-capable #catchtitle { position:absolute; top:43%; left:50%; transform:translate(-50%,-50%);
+    width:92vw; }
+  body.touch-capable #pausevolume { bottom:max(46px,calc(env(safe-area-inset-bottom) + 38px));
+    width:min(620px,92vw); max-height:37vh; padding:10px 12px; overflow:auto; }
+  body.touch-capable #scoreboard.pause-scoreboard { top:max(8px,env(safe-area-inset-top));
+    min-width:min(620px,94vw); max-height:30vh; padding:12px 14px 14px; }
+  body.touch-capable #quitbtn { bottom:max(6px,env(safe-area-inset-bottom)) !important; }
+  @media (orientation:portrait) and (pointer:coarse) {
+    #rotateHint { display:block; }
+    #mobileFire { bottom:max(90px,calc(env(safe-area-inset-bottom) + 68px)); }
+    #mobileJump { bottom:max(38px,calc(env(safe-area-inset-bottom) + 28px)); }
+    #mobileWeapon { bottom:max(168px,calc(env(safe-area-inset-bottom) + 146px)); }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -407,6 +495,24 @@
   <div id="respawn"><div>ELIMINATED!<br><span id="respawncount" style="font-size:20px;color:#ffd23c"></span></div></div>
   <div id="scoreboard" class="panel" tabindex="0" aria-label="Match scoreboard"></div>
 </div>
+
+<div id="mobilecontrols" hidden aria-hidden="true">
+  <div id="mobileMoveZone" class="mobile-touch-zone" aria-label="Movement joystick surface">
+    <div id="mobileStickBase" hidden><div id="mobileStickKnob"></div></div>
+  </div>
+  <div id="mobileLookZone" class="mobile-touch-zone" aria-label="Aim touch surface"></div>
+  <button id="mobileFire" class="mobile-action" type="button" aria-label="Fire" aria-pressed="false">Fire</button>
+  <button id="mobileJump" class="mobile-action" type="button" aria-label="Jump or use jetpack" aria-pressed="false">Jump</button>
+  <button id="mobileWeapon" class="mobile-action" type="button" aria-label="Switch weapon">Swap</button>
+  <button id="mobilePause" class="mobile-action" type="button" aria-label="Pause">Ⅱ</button>
+  <div id="rotateHint">Turn sideways for the full arena</div>
+</div>
+
+<aside id="installPrompt" hidden aria-label="Install Nerf Arena">
+  <span id="installMessage">Install for fullscreen play and quicker launches.</span>
+  <button id="installButton" type="button">INSTALL</button>
+  <button id="installDismiss" type="button" aria-label="Dismiss install suggestion">×</button>
+</aside>
 
 <div id="clickcatch" style="display:flex">
   <div id="catchtitle">LOADING…</div>
@@ -466,6 +572,6 @@
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
-<script type="module" src="./src/main.js?v=50"></script>
+<script type="module" src="./src/main.js?v=53"></script>
 </body>
 </html>
