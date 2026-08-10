@@ -153,6 +153,7 @@ let graphicsMode = validGraphicsModes.has(requestedQuality) ? requestedQuality :
 const initialGraphicsPreset = GRAPHICS_PRESETS[graphicsMode] || null;
 const TARGET_FPS = 90;
 const FPS_FLOOR = 80;
+const AUTO_MATCH_CALIBRATION_SECONDS = 10;
 const TARGET_FRAME_MS = 1000 / TARGET_FPS;
 const FLOOR_FRAME_MS = 1000 / FPS_FLOOR;
 const performanceProfile = {
@@ -411,10 +412,10 @@ function recordPerformanceSample(frameMs, workMs) {
   if (perfTelemetry.workMs.length > perfTelemetry.maxSamples) perfTelemetry.workMs.shift();
 }
 function updateAdaptiveRenderScale(frameMs, workMs) {
-  // Auto is a lobby-time hardware calibration, not a live dynamic-quality
-  // system. Once an arena starts, keep its detected scale and visual tier fixed
-  // for the whole match so ordinary combat spikes cannot alternate Medium/High.
-  if (graphicsMode !== 'auto' || (G && !G.atrium)) return;
+  // Auto calibrates freely in the Atrium and gets one short adjustment window
+  // at the start of an arena. After that, freeze the detected scale and tier so
+  // ordinary combat spikes cannot alternate Medium/High during the match.
+  if (graphicsMode !== 'auto' || !autoGraphicsCalibrationOpen()) return;
   const dt = Math.min(0.1, Math.max(0, frameMs / 1000));
   adaptiveRender.cooldown = Math.max(0, adaptiveRender.cooldown - dt);
   adaptiveRender.sampleT += dt;
@@ -3223,6 +3224,12 @@ const graphicsButtons = [...document.querySelectorAll('[data-graphics]')];
 const graphicsDetail = document.getElementById('graphicsdetail');
 const highScoreForm = document.getElementById('highscoreform');
 
+function autoGraphicsCalibrationOpen() {
+  if (!G || G.atrium) return true;
+  const matchDuration = G.world?.matchTime || MATCH_TIME;
+  return matchDuration - G.timeLeft < AUTO_MATCH_CALIBRATION_SECONDS;
+}
+
 function updateGraphicsUI() {
   const tier = presentationTier();
   for (const button of graphicsButtons) {
@@ -3234,7 +3241,9 @@ function updateGraphicsUI() {
   const tierLabel = tier === 'standard' ? 'Medium' : tier[0].toUpperCase() + tier.slice(1);
   setText(graphicsDetail, graphicsMode === 'auto'
     ? (G && !G.atrium
-      ? `Auto · locked ${tierLabel} for this match · detected in Atrium`
+      ? (autoGraphicsCalibrationOpen()
+        ? `Auto · tuning ${tierLabel} · locks after ${AUTO_MATCH_CALIBRATION_SECONDS} seconds`
+        : `Auto · locked ${tierLabel} for this match`)
       : `Auto · calibrating ${tierLabel} in Atrium · targeting ${TARGET_FPS} FPS`)
     : `Locked ${GRAPHICS_PRESETS[graphicsMode].label} · automatic scaling disabled`);
 }
@@ -3242,9 +3251,8 @@ function updateGraphicsUI() {
 function setGraphicsMode(mode, announce = true) {
   if (!validGraphicsModes.has(mode)) return;
   graphicsMode = mode;
-  // A mid-match return to Auto reuses the last Atrium result. Manual previewing
-  // must not erase that detection, and Auto must not begin calibrating against
-  // a transient firefight.
+  // A return to Auto reuses the latest detected result. Manual previewing must
+  // not erase it; calibration resumes only during the opening match window.
   resetAdaptiveRenderScale({ preserveDetection: !!G && !G.atrium });
   if (announce && G && !G.atrium) {
     const label = mode === 'auto' ? `AUTO · ${presentationTier().toUpperCase()}` : GRAPHICS_PRESETS[mode].label.toUpperCase();
@@ -4796,7 +4804,7 @@ window.__perf = () => {
     detectedAutoScale: adaptiveRender.detectedScale,
     visualTier: adaptiveRender.visualTier,
     graphicsMode,
-    autoQualityLocked: graphicsMode === 'auto' && !!G && !G.atrium,
+    autoQualityLocked: graphicsMode === 'auto' && !autoGraphicsCalibrationOpen(),
   };
 };
 window.__mapVisualIssues = () => G?.world?.visualSurfaceIssues ?? [];
