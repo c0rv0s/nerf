@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'nerf-arena-v5';
+const CACHE_VERSION = 'nerf-arena-v6';
 const CORE_CACHE = `${CACHE_VERSION}-core`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CORE_ASSETS = [

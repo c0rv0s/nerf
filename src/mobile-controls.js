@@ -73,8 +73,8 @@ export class MobileControls {
 
     this._bindMoveSurface();
     this._bindLookSurface();
-    this._bindHeldButton(this.fireButton, onFire);
-    this._bindHeldButton(this.jumpButton, onJump);
+    this._bindHeldButton(this.fireButton, onFire, { dragToLook: true });
+    this._bindHeldButton(this.jumpButton, onJump, { dragToLook: true });
     this.weaponButton.addEventListener('pointerdown', (event) => {
       this._consume(event);
       this._engage();
@@ -164,12 +164,14 @@ export class MobileControls {
     }
   }
 
-  _bindHeldButton(button, callback) {
+  _bindHeldButton(button, callback, { dragToLook = false } = {}) {
     let pointer = null;
+    let point = null;
     const release = (event) => {
       if (event.pointerId !== pointer) return;
       this._consume(event);
       pointer = null;
+      point = null;
       button.classList.remove('pressed');
       button.setAttribute('aria-pressed', 'false');
       callback?.(false);
@@ -179,10 +181,19 @@ export class MobileControls {
       this._consume(event);
       this._engage();
       pointer = event.pointerId;
+      point = { x: event.clientX, y: event.clientY };
       button.setPointerCapture?.(event.pointerId);
       button.classList.add('pressed');
       button.setAttribute('aria-pressed', 'true');
       callback?.(true);
+    });
+    button.addEventListener('pointermove', (event) => {
+      if (!dragToLook || event.pointerId !== pointer || !point) return;
+      this._consume(event);
+      const dx = event.clientX - point.x;
+      const dy = event.clientY - point.y;
+      point = { x: event.clientX, y: event.clientY };
+      this.onLook?.(dx * TOUCH_LOOK_SCALE, dy * TOUCH_LOOK_SCALE);
     });
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
       button.addEventListener(type, release);
