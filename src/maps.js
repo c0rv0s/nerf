@@ -3676,7 +3676,7 @@ function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
 
 function buildAsteroids(scene) {
   const world = newWorld({
-    gravity: 4, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
+    gravity: 4.8, jumpVel: 8.4, killY: -60, playerSpeed: 12,  // match the bots' hop range
     waypointLinkDist: 45, waypointLinkDy: 16,
     availableWeapons: ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper'],
     cometField: {
@@ -14261,7 +14261,7 @@ function buildSolarFlare(scene) {
   // Artificial gravity is full-strength inside pressurized modules. Crossing
   // a doorway onto a roof or passing through the aft energy curtain drops you
   // into the same low exterior field as Asteroid Belt.
-  const solarExteriorGravity = 4; // match Asteroid Belt
+  const solarExteriorGravity = 4.8; // match Asteroid Belt
   const solarInteriorZones = [
     // Central lower/upper, science, and bridge rooms.
     { minX: -15.5, maxX: 15.5, minY: -0.1, maxY: 13.6, minZ: -13.5, maxZ: 13.5 },
