@@ -86,6 +86,7 @@ export function nextLoadedWeaponAfter(currentId, owned = {}, ammo = {}) {
    Distinct Nerf-style silhouettes per weapon, merged into 2 draw calls each
    (plastic shell with baked vertex colors + one emissive "energy" mesh). */
 const _blasterMats = {};
+const _blasterModels = {};
 function blasterMats(color, textureName = null) {
   const bodyKey = textureName ? `body-${textureName}` : 'body';
   if (!_blasterMats[bodyKey]) {
@@ -144,7 +145,11 @@ export function updateBlasterSkin(kind, t) {
 }
 
 // Muzzle points −z, grip hangs down. Total length ≈ 1.2–1.7.
-export function buildBlaster(id) {
+// Building and merging this geometry is expensive, especially when several
+// Olympus bots reach different weapon pickups during the same fight. Keep one
+// untouched source model per weapon and hand callers lightweight clones that
+// share its immutable geometry and materials.
+function createBlasterModel(id) {
   const w = WEAPONS[id];
   const geos = [], glow = [];
   const DARK = 0x232330, WHITE = 0xf0f0f4, SHELL = w.color;
@@ -308,6 +313,7 @@ export function buildBlaster(id) {
     );
     aura.scale.setScalar(1.58);
     const chargeOrb = new THREE.Group();
+    chargeOrb.name = 'weapon-charge-orb';
     chargeOrb.position.set(0, 0.02, -0.62);
     chargeOrb.scale.setScalar(0.01);
     chargeOrb.visible = false;
@@ -319,6 +325,16 @@ export function buildBlaster(id) {
     g._chargeOrb = chargeOrb;
   }
   return g;
+}
+
+export function buildBlaster(id) {
+  const source = _blasterModels[id] ||= createBlasterModel(id);
+  const clone = source.clone(true);
+  if (source.children[0]?._baseMaterial) {
+    clone.children[0]._baseMaterial = source.children[0]._baseMaterial;
+  }
+  if (source._chargeOrb) clone._chargeOrb = clone.getObjectByName('weapon-charge-orb');
+  return clone;
 }
 
 export function updateWeaponWarmupVisual(model, progress = -1, time = 0) {

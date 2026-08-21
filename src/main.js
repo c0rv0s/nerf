@@ -146,16 +146,37 @@ const GRAPHICS_PRESETS = {
   high: { label: 'High', pixelRatioCap: 1.35, shadows: true, postprocessing: true, tier: 'high' },
 };
 const validGraphicsModes = new Set(['auto', ...Object.keys(GRAPHICS_PRESETS)]);
-// A URL parameter remains useful for automated testing, but ordinary launches
-// always start in Auto. Manual pause-menu choices intentionally last only for
-// this page session so the next launch detects the machine again.
-let graphicsMode = validGraphicsModes.has(requestedQuality) ? requestedQuality : 'auto';
-const initialGraphicsPreset = GRAPHICS_PRESETS[graphicsMode] || null;
 const TARGET_FPS = 90;
 const FPS_FLOOR = 80;
 const AUTO_MATCH_CALIBRATION_SECONDS = 10;
+const ADAPTIVE_RENDER_MIN_SCALE = 0.68;
 const TARGET_FRAME_MS = 1000 / TARGET_FPS;
 const FLOOR_FRAME_MS = 1000 / FPS_FLOOR;
+const graphicsAutoStorageKey = 'nerf-arena-graphics-auto-v1';
+const graphicsOverrideStorageKey = 'nerf-arena-graphics-override-v1';
+let autoGraphicsTestStage = null;
+let initialAutoGraphicsScale = 1;
+let storedGraphicsOverride = null;
+let inGameAutoTestStarted = false;
+try {
+  const storedAuto = localStorage.getItem(graphicsAutoStorageKey);
+  const storedOverride = localStorage.getItem(graphicsOverrideStorageKey);
+  if (storedAuto) {
+    const parsed = JSON.parse(storedAuto);
+    if ((parsed?.tested === 'atrium' || parsed?.tested === 'game') && Number.isFinite(Number(parsed.scale))) {
+      autoGraphicsTestStage = parsed.tested;
+      initialAutoGraphicsScale = Math.max(ADAPTIVE_RENDER_MIN_SCALE, Math.min(1, Number(parsed.scale)));
+    }
+  }
+  if (storedOverride && GRAPHICS_PRESETS[storedOverride]) storedGraphicsOverride = storedOverride;
+} catch { /* localStorage may be unavailable or contain an obsolete value */ }
+// URL quality remains a temporary testing override. Ordinary launches restore
+// a manual preset when one exists; otherwise Auto starts at its last tested
+// scale instead of repeating the expensive adjustment from full quality.
+let graphicsMode = validGraphicsModes.has(requestedQuality)
+  ? requestedQuality
+  : (storedGraphicsOverride || 'auto');
+const initialGraphicsPreset = GRAPHICS_PRESETS[graphicsMode] || null;
 const performanceProfile = {
   safari: isSafari,
   pixelRatioCap: 1.35,
@@ -198,10 +219,45 @@ function setEffectsMix(value, persist = true) {
 }
 
 const canvas = document.getElementById('game');
+const mapLoadingScreen = document.getElementById('maploading');
+const mapLoadingIcon = document.getElementById('maploadingicon');
+const mapLoadingTitle = document.getElementById('maploadingtitle');
+const mapLoadingStatus = document.getElementById('maploadingstatus');
+let mapLoadingToken = 0;
+
+function setMapLoadingStatus(message) {
+  setText(mapLoadingStatus, message);
+}
+
+function showMapLoading(mapDef) {
+  mapLoadingToken++;
+  setText(mapLoadingIcon, mapDef?.emoji || '🎯');
+  setText(mapLoadingTitle, mapDef?.name || 'PREPARING ARENA');
+  setMapLoadingStatus('Building the battlefield and warming combat effects');
+  if (mapLoadingScreen) mapLoadingScreen.hidden = false;
+}
+
+function hideMapLoading() {
+  mapLoadingToken++;
+  if (mapLoadingScreen) mapLoadingScreen.hidden = true;
+}
+
+function finishMapLoading() {
+  if (!mapLoadingScreen || mapLoadingScreen.hidden) return;
+  const token = mapLoadingToken;
+  setMapLoadingStatus('Arena ready');
+  // Keep the cover through the first completed game frame. That prevents a
+  // flash of an unrendered scene after the synchronous arena build finishes.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (token === mapLoadingToken) mapLoadingScreen.hidden = true;
+  }));
+}
+
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 // Post-processing multiplies per-pixel cost — cap the internal resolution.
 // (1.35× CSS pixels + 2× MSAA looks nearly identical to 2×/4× at half the GPU load.)
-renderer.setPixelRatio(Math.min(devicePixelRatio, initialGraphicsPreset?.pixelRatioCap ?? performanceProfile.pixelRatioCap));
+renderer.setPixelRatio(Math.min(devicePixelRatio,
+  initialGraphicsPreset?.pixelRatioCap ?? performanceProfile.pixelRatioCap * initialAutoGraphicsScale));
 renderer.shadowMap.enabled = initialGraphicsPreset?.shadows ?? performanceProfile.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -355,16 +411,46 @@ resize();
 // are deliberately gradual so a map load or a single GC hitch cannot trigger a
 // visible downgrade.
 const adaptiveRender = {
-  scale: 1,
-  detectedScale: 1,
+  scale: initialAutoGraphicsScale,
+  detectedScale: initialAutoGraphicsScale,
   slowT: 0,
   clearT: 0,
   cooldown: 0,
   fastestFrameMs: Infinity,
   sampleT: 0,
-  visualTier: initialGraphicsPreset?.tier ?? 'high',
+  visualTier: initialGraphicsPreset?.tier ?? (initialAutoGraphicsScale < 0.76
+    ? 'low'
+    : initialAutoGraphicsScale < 0.92 ? 'standard' : 'high'),
 };
 const perfTelemetry = { frameMs: [], workMs: [], maxSamples: 360 };
+
+function persistAutoGraphicsTest(tested) {
+  if (tested !== 'atrium' && tested !== 'game') return;
+  const scale = Math.max(ADAPTIVE_RENDER_MIN_SCALE, Math.min(1, adaptiveRender.detectedScale));
+  autoGraphicsTestStage = tested;
+  try {
+    localStorage.setItem(graphicsAutoStorageKey, JSON.stringify({
+      scale: Number(scale.toFixed(2)),
+      tested,
+    }));
+  } catch { /* localStorage may be unavailable */ }
+}
+
+function finishAtriumAutoGraphicsTest() {
+  if (graphicsMode === 'auto' && autoGraphicsTestStage === null && G?.atrium) {
+    persistAutoGraphicsTest('atrium');
+  }
+}
+
+function finishInGameAutoGraphicsTest() {
+  if (graphicsMode !== 'auto' || autoGraphicsTestStage === 'game' || !inGameAutoTestStarted || !G || G.atrium) return false;
+  const matchDuration = G.world?.matchTime || MATCH_TIME;
+  if (matchDuration - G.timeLeft < AUTO_MATCH_CALIBRATION_SECONDS) return false;
+  persistAutoGraphicsTest('game');
+  inGameAutoTestStarted = false;
+  updateGraphicsUI();
+  return true;
+}
 
 function presentationTier() {
   const preset = GRAPHICS_PRESETS[graphicsMode];
@@ -412,10 +498,11 @@ function recordPerformanceSample(frameMs, workMs) {
   if (perfTelemetry.workMs.length > perfTelemetry.maxSamples) perfTelemetry.workMs.shift();
 }
 function updateAdaptiveRenderScale(frameMs, workMs) {
-  // Auto calibrates freely in the Atrium and gets one short adjustment window
-  // at the start of an arena. After that, freeze the detected scale and tier so
-  // ordinary combat spikes cannot alternate Medium/High during the match.
-  if (graphicsMode !== 'auto' || !autoGraphicsCalibrationOpen()) return;
+  // A fresh install tests once in the Atrium, then once during the opening of
+  // the first arena. The saved in-game result is reused on later launches so
+  // ordinary startup and combat do not repeat visible quality adjustments.
+  if (graphicsMode !== 'auto' || finishInGameAutoGraphicsTest() || !autoGraphicsCalibrationOpen()) return;
+  if (G && !G.atrium) inGameAutoTestStarted = true;
   const dt = Math.min(0.1, Math.max(0, frameMs / 1000));
   adaptiveRender.cooldown = Math.max(0, adaptiveRender.cooldown - dt);
   adaptiveRender.sampleT += dt;
@@ -441,8 +528,8 @@ function updateAdaptiveRenderScale(frameMs, workMs) {
     adaptiveRender.slowT = Math.max(0, adaptiveRender.slowT - dt * 0.25);
     adaptiveRender.clearT = 0;
   }
-  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= 0.75 && adaptiveRender.scale > 0.68) {
-    adaptiveRender.scale = Math.max(0.68, adaptiveRender.scale - 0.08);
+  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= 0.75 && adaptiveRender.scale > ADAPTIVE_RENDER_MIN_SCALE) {
+    adaptiveRender.scale = Math.max(ADAPTIVE_RENDER_MIN_SCALE, adaptiveRender.scale - 0.08);
     adaptiveRender.detectedScale = adaptiveRender.scale;
     adaptiveRender.slowT = 0;
     adaptiveRender.cooldown = 0.65;
@@ -629,10 +716,10 @@ function modeLabel(mode = selectedMode) {
 function queueMapLoad(mapDef, mode = selectedMode) {
   if (!mapDef || mapLoadInProgress) return;
   mapLoadInProgress = true;
-  setText(document.getElementById('catchtitle'), `LOADING ${mapDef.name}…`);
-  setStyle(clickcatch, 'display', 'flex');
-  // Yield once so the loading screen paints before map construction and GPU
-  // prewarming run on the main thread.
+  showMapLoading(mapDef);
+  setStyle(clickcatch, 'display', 'none');
+  // Yield twice so the dedicated loading screen reaches the compositor before
+  // synchronous map construction and GPU prewarming occupy the main thread.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     mapLoadInProgress = false;
     startMatch(mapDef, mode);
@@ -825,8 +912,9 @@ function updateDeathCamera(dt) {
 
 // THE LOBBY: a walkable atrium — stroll into a glowing gate to start a match.
 function startAtrium() {
+  hideMapLoading();
   teardown();
-  resetAdaptiveRenderScale();
+  resetAdaptiveRenderScale({ preserveDetection: true });
   musicStop();
   camera.fov = 75;
   camera.near = 0.1;
@@ -921,8 +1009,9 @@ async function refreshHallLeaderboard(world = G?.world) {
 }
 
 function startHallOfFame() {
+  hideMapLoading();
   teardown();
-  resetAdaptiveRenderScale();
+  resetAdaptiveRenderScale({ preserveDetection: true });
   musicStop();
   camera.fov = 75;
   camera.near = 0.1;
@@ -995,6 +1084,10 @@ function startHallOfFame() {
 }
 
 function startMatch(mapDef, mode = 'ffa') {
+  if (mapLoadingScreen?.hidden) showMapLoading(mapDef);
+  setMapLoadingStatus('Building arena geometry');
+  finishAtriumAutoGraphicsTest();
+  inGameAutoTestStarted = false;
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   camera.fov = 75;
@@ -1004,6 +1097,7 @@ function startMatch(mapDef, mode = 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  setMapLoadingStatus('Connecting routes and preparing combatants');
   renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   bindWorldPresentation(world, false);
@@ -1121,6 +1215,7 @@ function startMatch(mapDef, mode = 'ffa') {
     lastT: performance.now(),
   };
   syncRenderQuality();
+  updateGraphicsUI();
 
   G.spawnBatchUsed = new Map();
   G.spawnBatchUsedFaces = new Map();
@@ -1128,20 +1223,9 @@ function startMatch(mapDef, mode = 'ffa') {
   G.spawnBatchUsed = null;
   G.spawnBatchUsedFaces = null;
 
-  // Pre-warm every shader (incl. hidden viewmodels, powerup skins, projectile
-  // and puff materials) so nothing compiles mid-match and causes a hitch.
-  const probes = new THREE.Group();
-  probes.visible = false;
-  const probeGeo = new THREE.BoxGeometry(0.01, 0.01, 0.01);
-  for (const id of Object.keys(WEAPONS)) {
-    probes.add(new THREE.Mesh(probeGeo, projectiles.matFor(WEAPONS[id].color)));
-  }
-  probes.add(new THREE.Mesh(probeGeo,
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 })));
-  scene.add(probes);
-  renderer.compile(scene, camera);
-
   player.update(0, () => {});      // camera on the spawn point before the first tick
+  setMapLoadingStatus('Warming weapons, powerups, and arena effects');
+  prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
   prewarmEventVisuals();
   hud.show(true);
   hud.clearAwards();
@@ -1151,6 +1235,7 @@ function startMatch(mapDef, mode = 'ffa') {
   musicPlay();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
+  finishMapLoading();
 }
 
 function multiplayerSlotById(id = multiplayer.slotId) {
@@ -1179,6 +1264,10 @@ function addTeamMarker(ch) {
 }
 
 function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
+  if (mapLoadingScreen?.hidden) showMapLoading(mapDef);
+  setMapLoadingStatus('Building multiplayer arena');
+  finishAtriumAutoGraphicsTest();
+  inGameAutoTestStarted = false;
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   camera.fov = 75;
@@ -1188,6 +1277,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  setMapLoadingStatus('Connecting routes and synchronizing combatants');
   renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   bindWorldPresentation(world, true);
@@ -1296,10 +1386,12 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     mpConnectionPaused: false,
   };
   syncRenderQuality();
+  updateGraphicsUI();
 
   respawnCharacter(player, true);
-  renderer.compile(scene, camera);
   player.update(0, () => {});
+  setMapLoadingStatus('Warming weapons, powerups, and arena effects');
+  prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
   prewarmEventVisuals();
   hud.show(true);
   setStyle(document.getElementById('scores'), 'display', '');
@@ -1310,6 +1402,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   musicPlay();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
+  finishMapLoading();
 }
 
 function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa', resumeSnapshot = null) {
@@ -3225,7 +3318,8 @@ const graphicsDetail = document.getElementById('graphicsdetail');
 const highScoreForm = document.getElementById('highscoreform');
 
 function autoGraphicsCalibrationOpen() {
-  if (!G || G.atrium) return true;
+  if (autoGraphicsTestStage === 'game') return false;
+  if (!G || G.atrium) return autoGraphicsTestStage === null;
   const matchDuration = G.world?.matchTime || MATCH_TIME;
   return matchDuration - G.timeLeft < AUTO_MATCH_CALIBRATION_SECONDS;
 }
@@ -3240,20 +3334,28 @@ function updateGraphicsUI() {
   if (!graphicsDetail) return;
   const tierLabel = tier === 'standard' ? 'Medium' : tier[0].toUpperCase() + tier.slice(1);
   setText(graphicsDetail, graphicsMode === 'auto'
-    ? (G && !G.atrium
-      ? (autoGraphicsCalibrationOpen()
-        ? `Auto · tuning ${tierLabel} · locks after ${AUTO_MATCH_CALIBRATION_SECONDS} seconds`
-        : `Auto · locked ${tierLabel} for this match`)
-      : `Auto · calibrating ${tierLabel} in Atrium · targeting ${TARGET_FPS} FPS`)
+    ? (autoGraphicsTestStage === 'game'
+      ? `Auto · tested ${tierLabel} · saved for future launches`
+      : (G && !G.atrium
+        ? `Auto · final game test ${tierLabel} · saves after ${AUTO_MATCH_CALIBRATION_SECONDS} seconds`
+        : (autoGraphicsTestStage === 'atrium'
+          ? `Auto · Atrium tested ${tierLabel} · game test next`
+          : `Auto · testing ${tierLabel} in Atrium · targeting ${TARGET_FPS} FPS`)))
     : `Locked ${GRAPHICS_PRESETS[graphicsMode].label} · automatic scaling disabled`);
 }
 
-function setGraphicsMode(mode, announce = true) {
+function setGraphicsMode(mode, announce = true, persist = true) {
   if (!validGraphicsModes.has(mode)) return;
   graphicsMode = mode;
-  // A return to Auto reuses the latest detected result. Manual previewing must
-  // not erase it; calibration resumes only during the opening match window.
-  resetAdaptiveRenderScale({ preserveDetection: !!G && !G.atrium });
+  // Manual choices are a separate override. Returning to Auto clears only that
+  // override and reuses the most recently tested automatic scale.
+  if (persist) {
+    try {
+      if (mode === 'auto') localStorage.removeItem(graphicsOverrideStorageKey);
+      else localStorage.setItem(graphicsOverrideStorageKey, mode);
+    } catch { /* localStorage may be unavailable */ }
+  }
+  resetAdaptiveRenderScale({ preserveDetection: true });
   if (announce && G && !G.atrium) {
     const label = mode === 'auto' ? `AUTO · ${presentationTier().toUpperCase()}` : GRAPHICS_PRESETS[mode].label.toUpperCase();
     hud.message(`GRAPHICS: ${label}`, mode === 'low' ? '#7fd0ff' : '#ffd23c');
@@ -4121,6 +4223,55 @@ function clearEventVisualPools() {
   G.cometVisualPool = [];
 }
 
+function prewarmMatchVisuals(scene, player, characters, projectiles, fxPool) {
+  // WebGLRenderer.compile() traverses visible objects only. Temporarily reveal
+  // every hidden weapon, powerup-skin probe, and equipped-jetpack part so the
+  // loading phase really compiles the variants that can appear mid-match.
+  const visibility = new Map();
+  const reveal = root => root?.traverse(obj => {
+    visibility.set(obj, obj.visible);
+    obj.visible = true;
+  });
+  reveal(player.viewmodel);
+  for (const character of characters) reveal(character.mesh);
+
+  const probes = new THREE.Group();
+  probes.position.set(0, 0, -2);
+  probes.scale.setScalar(0.01);
+  const probeGeometries = [];
+  const projectileGeo = new THREE.SphereGeometry(1, 8, 6);
+  probeGeometries.push(projectileGeo);
+  for (const weapon of Object.values(WEAPONS)) {
+    const projectile = new THREE.Mesh(
+      projectileGeo,
+      projectiles.matFor(weapon.color, weapon.glowingProjectile),
+    );
+    if (weapon.glowingProjectile) {
+      const aura = new THREE.Mesh(projectileGeo, projectiles.projectileAuraMatFor(weapon.color));
+      aura.scale.setScalar(1.5);
+      projectile.add(aura);
+    }
+    probes.add(projectile);
+  }
+  for (const weapon of Object.values(WEAPONS).filter(def => def.beam)) {
+    const beamGeo = new THREE.CylinderGeometry(0.08, 0.08, 1, 10);
+    probeGeometries.push(beamGeo);
+    probes.add(new THREE.Mesh(beamGeo, projectiles.beamMatFor(weapon.color, 0.9)));
+    probes.add(new THREE.Mesh(beamGeo, projectiles.beamMatFor(weapon.color, 0.2)));
+  }
+  camera.add(probes);
+
+  const warmPos = camera.getWorldPosition(new THREE.Vector3())
+    .addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 4);
+  fxPool.spawnPuff(warmPos, 0xffffff, 0.1);
+  renderer.compile(scene, camera);
+
+  fxPool.clear();
+  camera.remove(probes);
+  for (const geometry of probeGeometries) geometry.dispose();
+  for (const [object, visible] of visibility) object.visible = visible;
+}
+
 function prewarmEventVisuals() {
   if (!G?.world) return;
   const direction = camera.getWorldDirection(new THREE.Vector3());
@@ -4804,6 +4955,7 @@ window.__perf = () => {
     detectedAutoScale: adaptiveRender.detectedScale,
     visualTier: adaptiveRender.visualTier,
     graphicsMode,
+    autoGraphicsTestStage,
     autoQualityLocked: graphicsMode === 'auto' && !autoGraphicsCalibrationOpen(),
   };
 };
@@ -4818,7 +4970,7 @@ window.__mapVisualAudit = () => {
   };
 };
 window.__setGraphics = mode => {
-  setGraphicsMode(mode, false);
+  setGraphicsMode(mode, false, false);
   return window.__perf();
 };
 window.__step = (seconds) => {
