@@ -2,12 +2,16 @@
 // On low-gravity maps they make ballistic jumps between waypoints.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { moveCharacter, moveCharacterUp, cardinal, hasLOS, hasRouteClearance, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ } from './engine.js';
+import {
+  moveCharacter, moveCharacterUp, cardinal, cylinderShellSurfaceY, ellipsoidSurfaceY, hasLOS,
+  hasRouteClearance, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ,
+} from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from './weapons.js';
 import { aiTex } from './maps.js';
 import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 import { chooseCombatIntent, combatTargetScore, pickupUtility } from './bot-strategy.js';
+import { waterSpeedMultiplier } from './water-movement.js';
 
 const _combatRouteProbe = new THREE.Vector3();
 const WEAPON_PICKUP_AMMO = Object.fromEntries(
@@ -774,7 +778,8 @@ export class Bot {
       this._hasDrySupportOverWater(this.pos.x, this.pos.z, water.surfaceY));
     if (!water && !vine) this._waterRecoveryPath = false;
     const moveScale = this.world.characterMoveScale?.(this) || 1;
-    const speed = this.world.playerSpeed * moveScale * 0.82 * (this.speedMult || 1) * (water ? 0.68 : 1);
+    const waterMoveMult = water?.waterfall ? 0.68 : waterSpeedMultiplier(this, water);
+    const speed = this.world.playerSpeed * moveScale * 0.82 * (this.speedMult || 1) * waterMoveMult;
     // Solar Flare exterior (and similar) override gravity via gravityAt — use the
     // local field so roof fights don't strafe like indoor full-G combat.
     const localGrav = this.world.gravityAt?.(this.pos, this) ?? this.world.gravity;
@@ -1100,8 +1105,7 @@ export class Bot {
     if (!zones?.length) return null;
     for (const z of zones) {
       if (
-        this.pos.x >= z.minX && this.pos.x <= z.maxX &&
-        this.pos.z >= z.minZ && this.pos.z <= z.maxZ &&
+        pointInZoneXZ(z, this.pos.x, this.pos.z) &&
         midY >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
         this.pos.y < z.surfaceY + 0.35
       ) return z;
@@ -1216,8 +1220,7 @@ export class Bot {
   }
 
   _pointInWater(pos, zone) {
-    return pos.x >= zone.minX && pos.x <= zone.maxX &&
-      pos.z >= zone.minZ && pos.z <= zone.maxZ &&
+    return pointInZoneXZ(zone, pos.x, pos.z) &&
       pos.y < zone.surfaceY + 0.35 &&
       pos.y > (zone.bottomY ?? zone.surfaceY - 4) - 0.6;
   }
@@ -1235,7 +1238,7 @@ export class Bot {
 
   _isOpenWaterAt(x, z) {
     for (const zone of this.world.waterZones || []) {
-      if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      if (!pointInZoneXZ(zone, x, z)) continue;
       if (this._hasDrySupportOverWater(x, z, zone.surfaceY)) continue;
       return true;
     }
@@ -1245,7 +1248,7 @@ export class Bot {
   _isOpenOceanAt(x, z) {
     for (const zone of this.world.waterZones || []) {
       if (!zone.openOcean) continue;
-      if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      if (!pointInZoneXZ(zone, x, z)) continue;
       if (this._hasDrySupportOverWater(x, z, zone.surfaceY)) continue;
       return true;
     }
@@ -1278,6 +1281,12 @@ export class Bot {
         if (dx * dx + dz * dz > c.radius * c.radius) continue;
         const top = c.center.y + c.radius;
         if (top > refY - 2.8 && top < refY + 1.4) return true;
+      } else if (c.type === 'ellipsoid') {
+        const top = ellipsoidSurfaceY(c, x, z);
+        if (top != null && top > refY - 2.8 && top < refY + 1.4) return true;
+      } else if (c.type === 'cylinderShell') {
+        const top = cylinderShellSurfaceY(c, x, z);
+        if (top != null && top > refY - 2.8 && top < refY + 1.4) return true;
       }
     }
     for (const r of this.world.ramps || []) {
@@ -1402,7 +1411,7 @@ export class Bot {
   _waterAvoidVector(x, z) {
     let ax = 0, az = 0;
     for (const zone of this.world.waterZones || []) {
-      if (x < zone.minX || x > zone.maxX || z < zone.minZ || z > zone.maxZ) continue;
+      if (!pointInZoneXZ(zone, x, z)) continue;
       if (this._hasDrySupportOverWater(x, z, zone.surfaceY)) continue;
       if (zone.openOcean) {
         // Ocean AABB walls are hundreds of meters out — steering toward them

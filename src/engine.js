@@ -1,5 +1,5 @@
-// Shared math + physics helpers. Colliders are AABB boxes, spheres, and
-// walkable ramps (heightfield strips) — enough for all three maps.
+// Shared math + physics helpers. Colliders are AABB boxes, spheres, oriented
+// ellipsoids, finite hollow-cylinder shells, and walkable ramps (heightfield strips).
 import * as THREE from 'three';
 
 export const rand = (a, b) => a + Math.random() * (b - a);
@@ -38,6 +38,19 @@ export function buildCollisionIndex(world, cellSize = 16) {
       const r = collider.radius;
       add(collider, collider.center.x - r, collider.center.x + r,
         collider.center.z - r, collider.center.z + r);
+    } else if (collider.type === 'ellipsoid') {
+      // A rotated ellipsoid fits inside the sphere made from its longest axis.
+      // The broad-phase can be conservative; the narrow-phase below follows
+      // the actual orientation and all three radii.
+      const r = Math.max(collider.radii.x, collider.radii.y, collider.radii.z);
+      add(collider, collider.center.x - r, collider.center.x + r,
+        collider.center.z - r, collider.center.z + r);
+    } else if (collider.type === 'cylinderShell') {
+      const axis = collider.axis || 'y';
+      const extentX = axis === 'x' ? collider.halfLength : collider.outerRadius;
+      const extentZ = axis === 'z' ? collider.halfLength : collider.outerRadius;
+      add(collider, collider.center.x - extentX, collider.center.x + extentX,
+        collider.center.z - extentZ, collider.center.z + extentZ);
     }
   }
   world.collisionIndex = {
@@ -85,7 +98,312 @@ function nearbyColliders(world, p, radius = 0) {
 const _v = new THREE.Vector3();
 const _l = new THREE.Vector3();
 const _cl = new THREE.Vector3();
+const _ellipsoidLocal = new THREE.Vector3();
+const _ellipsoidSurface = new THREE.Vector3();
+const _ellipsoidDelta = new THREE.Vector3();
+const _ellipsoidDirection = new THREE.Vector3();
+const _ellipsoidHeightBase = new THREE.Vector3();
+const _ellipsoidHeightAxis = new THREE.Vector3();
+const _cylinderRadial = new THREE.Vector3();
+const _cylinderPush = new THREE.Vector3();
 let collisionQueryStamp = 0;
+
+function ellipsoidInverseRotation(collider) {
+  if (!collider.inverseRotation) {
+    collider.inverseRotation = (collider.rotation || new THREE.Quaternion()).clone().invert();
+  }
+  return collider.inverseRotation;
+}
+
+// Find the closest point on an axis-aligned ellipsoid in collider-local space.
+// Outside points use the exact Lagrange-multiplier solution. Inside points use
+// the positive intersection along the local surface gradient, which is stable
+// for the rare case where a fast movement substep begins inside the solid.
+function closestPointOnEllipsoid(local, radii, target) {
+  const ax = Math.max(1e-4, radii.x);
+  const ay = Math.max(1e-4, radii.y);
+  const az = Math.max(1e-4, radii.z);
+  const ax2 = ax * ax, ay2 = ay * ay, az2 = az * az;
+  const normalizedSq = local.x * local.x / ax2
+    + local.y * local.y / ay2 + local.z * local.z / az2;
+  if (normalizedSq <= 1) {
+    _ellipsoidDirection.set(local.x / ax2, local.y / ay2, local.z / az2);
+    if (_ellipsoidDirection.lengthSq() < 1e-12) {
+      if (ax <= ay && ax <= az) _ellipsoidDirection.set(1, 0, 0);
+      else if (ay <= az) _ellipsoidDirection.set(0, 1, 0);
+      else _ellipsoidDirection.set(0, 0, 1);
+    } else _ellipsoidDirection.normalize();
+    const dx = _ellipsoidDirection.x, dy = _ellipsoidDirection.y, dz = _ellipsoidDirection.z;
+    const qa = dx * dx / ax2 + dy * dy / ay2 + dz * dz / az2;
+    const qb = 2 * (local.x * dx / ax2 + local.y * dy / ay2 + local.z * dz / az2);
+    const qc = normalizedSq - 1;
+    const t = (-qb + Math.sqrt(Math.max(0, qb * qb - 4 * qa * qc))) / (2 * qa);
+    target.copy(local).addScaledVector(_ellipsoidDirection, t);
+    return true;
+  }
+
+  const evaluate = lambda => {
+    const x = ax * local.x / (lambda + ax2);
+    const y = ay * local.y / (lambda + ay2);
+    const z = az * local.z / (lambda + az2);
+    return x * x + y * y + z * z;
+  };
+  let low = 0;
+  let high = Math.max(ax2, ay2, az2);
+  while (evaluate(high) > 1) high *= 2;
+  for (let i = 0; i < 48; i++) {
+    const mid = (low + high) / 2;
+    if (evaluate(mid) > 1) low = mid;
+    else high = mid;
+  }
+  const lambda = (low + high) / 2;
+  target.set(
+    ax2 * local.x / (lambda + ax2),
+    ay2 * local.y / (lambda + ay2),
+    az2 * local.z / (lambda + az2),
+  );
+  return false;
+}
+
+export function sphereHitsEllipsoid(pos, radius, collider) {
+  const broadRadius = Math.max(collider.radii.x, collider.radii.y, collider.radii.z) + radius;
+  if (pos.distanceToSquared(collider.center) > broadRadius * broadRadius) return false;
+  _ellipsoidLocal.copy(pos).sub(collider.center).applyQuaternion(ellipsoidInverseRotation(collider));
+  const inside = closestPointOnEllipsoid(_ellipsoidLocal, collider.radii, _ellipsoidSurface);
+  if (inside) return true;
+  return _ellipsoidLocal.distanceToSquared(_ellipsoidSurface) < radius * radius;
+}
+
+function resolveSphereEllipsoid(pos, radius, collider, out) {
+  const broadRadius = Math.max(collider.radii.x, collider.radii.y, collider.radii.z) + radius;
+  if (pos.distanceToSquared(collider.center) > broadRadius * broadRadius) return;
+  _ellipsoidLocal.copy(pos).sub(collider.center).applyQuaternion(ellipsoidInverseRotation(collider));
+  const inside = closestPointOnEllipsoid(_ellipsoidLocal, collider.radii, _ellipsoidSurface);
+  if (inside) {
+    _ellipsoidDelta.copy(_ellipsoidSurface).sub(_ellipsoidLocal);
+    const distance = _ellipsoidDelta.length();
+    if (distance < 1e-8) return;
+    _ellipsoidDelta.multiplyScalar((distance + radius) / distance);
+  } else {
+    _ellipsoidDelta.copy(_ellipsoidLocal).sub(_ellipsoidSurface);
+    const distance = _ellipsoidDelta.length();
+    if (distance >= radius || distance < 1e-8) return;
+    _ellipsoidDelta.multiplyScalar((radius - distance) / distance);
+  }
+  _ellipsoidDelta.applyQuaternion(collider.rotation || new THREE.Quaternion());
+  pos.add(_ellipsoidDelta);
+  out.hit = true;
+  const length = _ellipsoidDelta.length();
+  const nx = length > 1e-8 ? _ellipsoidDelta.x / length : 0;
+  const ny = length > 1e-8 ? _ellipsoidDelta.y / length : 0;
+  const nz = length > 1e-8 ? _ellipsoidDelta.z / length : 0;
+  if (ny > out.ny) out.ny = ny;
+  out.nx += nx;
+  out.nz += nz;
+}
+
+// Highest world-space Y intersection at an X/Z sample. This lets navigation
+// reason about footing on the same rotated shape used by movement collision.
+export function ellipsoidSurfaceY(collider, x, z) {
+  const inverse = ellipsoidInverseRotation(collider);
+  _ellipsoidHeightBase.set(x - collider.center.x, 0, z - collider.center.z)
+    .applyQuaternion(inverse);
+  _ellipsoidHeightAxis.set(0, 1, 0).applyQuaternion(inverse);
+  const rx2 = collider.radii.x * collider.radii.x;
+  const ry2 = collider.radii.y * collider.radii.y;
+  const rz2 = collider.radii.z * collider.radii.z;
+  const qa = _ellipsoidHeightAxis.x ** 2 / rx2
+    + _ellipsoidHeightAxis.y ** 2 / ry2 + _ellipsoidHeightAxis.z ** 2 / rz2;
+  const qb = 2 * (
+    _ellipsoidHeightBase.x * _ellipsoidHeightAxis.x / rx2
+    + _ellipsoidHeightBase.y * _ellipsoidHeightAxis.y / ry2
+    + _ellipsoidHeightBase.z * _ellipsoidHeightAxis.z / rz2
+  );
+  const qc = _ellipsoidHeightBase.x ** 2 / rx2
+    + _ellipsoidHeightBase.y ** 2 / ry2 + _ellipsoidHeightBase.z ** 2 / rz2 - 1;
+  const discriminant = qb * qb - 4 * qa * qc;
+  if (discriminant < 0 || qa < 1e-12) return null;
+  return collider.center.y + (-qb + Math.sqrt(discriminant)) / (2 * qa);
+}
+
+export function rayHitsEllipsoid(origin, direction, collider, maxDist = Infinity) {
+  const inverse = ellipsoidInverseRotation(collider);
+  const localOrigin = origin.clone().sub(collider.center).applyQuaternion(inverse);
+  const localDirection = direction.clone().applyQuaternion(inverse);
+  const scaledOrigin = localOrigin.clone().divide(collider.radii);
+  const scaledDirection = localDirection.clone().divide(collider.radii);
+  const qa = scaledDirection.lengthSq();
+  const qb = 2 * scaledOrigin.dot(scaledDirection);
+  const qc = scaledOrigin.lengthSq() - 1;
+  const discriminant = qb * qb - 4 * qa * qc;
+  if (discriminant < 0 || qa < 1e-12) return null;
+  const root = Math.sqrt(discriminant);
+  const near = (-qb - root) / (2 * qa);
+  const far = (-qb + root) / (2 * qa);
+  const t = near > 0.03 ? near : far;
+  if (t <= 0.03 || t > maxDist) return null;
+  const localPoint = localOrigin.addScaledVector(localDirection, t);
+  const normal = new THREE.Vector3(
+    localPoint.x / (collider.radii.x * collider.radii.x),
+    localPoint.y / (collider.radii.y * collider.radii.y),
+    localPoint.z / (collider.radii.z * collider.radii.z),
+  ).applyQuaternion(collider.rotation || new THREE.Quaternion()).normalize();
+  return { t, normal };
+}
+
+// Finite hollow cylinders are represented analytically instead of as a stack
+// of boxes. The solid is the annular band between innerRadius and outerRadius,
+// extruded along `axis`; both circular ends remain open through the bore.
+export function sphereHitsCylinderShell(pos, radius, collider) {
+  const axis = collider.axis || 'y';
+  const along = pos[axis] - collider.center[axis];
+  _cylinderRadial.copy(pos).sub(collider.center);
+  _cylinderRadial[axis] = 0;
+  const radial = _cylinderRadial.length();
+  const alongGap = Math.max(Math.abs(along) - collider.halfLength, 0);
+  let radialGap = 0;
+  if (radial < collider.innerRadius) radialGap = collider.innerRadius - radial;
+  else if (radial > collider.outerRadius) radialGap = radial - collider.outerRadius;
+  if (alongGap === 0 && radialGap === 0) return true;
+  return alongGap * alongGap + radialGap * radialGap < radius * radius;
+}
+
+function resolveSphereCylinderShell(pos, radius, collider, out) {
+  const axis = collider.axis || 'y';
+  const along = pos[axis] - collider.center[axis];
+  _cylinderRadial.copy(pos).sub(collider.center);
+  _cylinderRadial[axis] = 0;
+  const radial = _cylinderRadial.length();
+  const halfLength = collider.halfLength;
+  const innerRadius = collider.innerRadius;
+  const outerRadius = collider.outerRadius;
+  const insideSolid = Math.abs(along) <= halfLength
+    && radial >= innerRadius && radial <= outerRadius;
+
+  _cylinderPush.set(0, 0, 0);
+  if (insideSolid) {
+    const exits = [
+      [radial - innerRadius, 'inner'],
+      [outerRadius - radial, 'outer'],
+      [halfLength - along, 'positiveEnd'],
+      [along + halfLength, 'negativeEnd'],
+    ].sort((a, b) => a[0] - b[0]);
+    const [distance, face] = exits[0];
+    const push = distance + radius;
+    if (face === 'positiveEnd') _cylinderPush[axis] = push;
+    else if (face === 'negativeEnd') _cylinderPush[axis] = -push;
+    else {
+      if (radial > 1e-8) _cylinderPush.copy(_cylinderRadial).multiplyScalar(1 / radial);
+      else {
+        const radialAxis = axis === 'x' ? 'y' : 'x';
+        _cylinderPush[radialAxis] = 1;
+      }
+      _cylinderPush.multiplyScalar(face === 'inner' ? -push : push);
+    }
+  } else {
+    const closestAlong = clamp(along, -halfLength, halfLength);
+    const closestRadial = clamp(radial, innerRadius, outerRadius);
+    const alongDelta = along - closestAlong;
+    const radialDelta = radial - closestRadial;
+    const distance = Math.hypot(alongDelta, radialDelta);
+    if (distance >= radius) return;
+    if (radial > 1e-8) {
+      _cylinderPush.copy(_cylinderRadial).multiplyScalar(radialDelta / radial);
+    } else {
+      const radialAxis = axis === 'x' ? 'y' : 'x';
+      _cylinderPush[radialAxis] = radialDelta;
+    }
+    _cylinderPush[axis] = alongDelta;
+    if (distance > 1e-8) _cylinderPush.multiplyScalar((radius - distance) / distance);
+    else return;
+  }
+
+  pos.add(_cylinderPush);
+  out.hit = true;
+  const length = _cylinderPush.length();
+  if (length < 1e-8) return;
+  const nx = _cylinderPush.x / length;
+  const ny = _cylinderPush.y / length;
+  const nz = _cylinderPush.z / length;
+  if (ny > out.ny) out.ny = ny;
+  out.nx += nx;
+  out.nz += nz;
+}
+
+export function rayHitsCylinderShell(origin, direction, collider, maxDist = Infinity) {
+  const axis = collider.axis || 'y';
+  const radialA = axis === 'x' ? 'y' : 'x';
+  const radialB = axis === 'z' ? 'y' : 'z';
+  const originAlong = origin[axis] - collider.center[axis];
+  const originA = origin[radialA] - collider.center[radialA];
+  const originB = origin[radialB] - collider.center[radialB];
+  const directionAlong = direction[axis];
+  const directionA = direction[radialA];
+  const directionB = direction[radialB];
+  const candidates = [];
+  const addCandidate = (t, normal) => {
+    if (t > 0.03 && t <= maxDist) candidates.push({ t, normal });
+  };
+
+  const qa = directionA * directionA + directionB * directionB;
+  if (qa > 1e-12) {
+    const qb = 2 * (originA * directionA + originB * directionB);
+    for (const [shellRadius, normalSign] of [
+      [collider.outerRadius, 1], [collider.innerRadius, -1],
+    ]) {
+      const qc = originA * originA + originB * originB - shellRadius * shellRadius;
+      const discriminant = qb * qb - 4 * qa * qc;
+      if (discriminant < 0) continue;
+      const root = Math.sqrt(discriminant);
+      for (const t of [(-qb - root) / (2 * qa), (-qb + root) / (2 * qa)]) {
+        const along = originAlong + directionAlong * t;
+        if (Math.abs(along) > collider.halfLength + 1e-6) continue;
+        const normal = new THREE.Vector3();
+        normal[radialA] = (originA + directionA * t) / shellRadius * normalSign;
+        normal[radialB] = (originB + directionB * t) / shellRadius * normalSign;
+        addCandidate(t, normal.normalize());
+      }
+    }
+  }
+
+  if (Math.abs(directionAlong) > 1e-12) {
+    for (const sign of [-1, 1]) {
+      const t = (sign * collider.halfLength - originAlong) / directionAlong;
+      const radialAtA = originA + directionA * t;
+      const radialAtB = originB + directionB * t;
+      const radialAt = Math.hypot(radialAtA, radialAtB);
+      if (radialAt < collider.innerRadius - 1e-6 ||
+          radialAt > collider.outerRadius + 1e-6) continue;
+      const normal = new THREE.Vector3();
+      normal[axis] = sign;
+      addCandidate(t, normal);
+    }
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.t - b.t);
+  return candidates[0];
+}
+
+export function cylinderShellSurfaceY(collider, x, z) {
+  const axis = collider.axis || 'y';
+  if (axis === 'x') {
+    if (Math.abs(x - collider.center.x) > collider.halfLength) return null;
+    const cross = z - collider.center.z;
+    if (Math.abs(cross) > collider.outerRadius) return null;
+    return collider.center.y
+      + Math.sqrt(collider.outerRadius * collider.outerRadius - cross * cross);
+  }
+  if (axis === 'z') {
+    if (Math.abs(z - collider.center.z) > collider.halfLength) return null;
+    const cross = x - collider.center.x;
+    if (Math.abs(cross) > collider.outerRadius) return null;
+    return collider.center.y
+      + Math.sqrt(collider.outerRadius * collider.outerRadius - cross * cross);
+  }
+  const radial = Math.hypot(x - collider.center.x, z - collider.center.z);
+  if (radial < collider.innerRadius || radial > collider.outerRadius) return null;
+  return collider.center.y + collider.halfLength;
+}
 
 // Lazily build a ramp's oriented-box collider matching its visual slab.
 function rampOBB(r) {
@@ -230,6 +548,10 @@ function resolveSphere(pos, radius, colliders, out) {
         const ny = _v.y / (min - d) || 0;
         if (ny > out.ny) out.ny = ny;
       }
+    } else if (c.type === 'ellipsoid') {
+      resolveSphereEllipsoid(pos, radius, c, out);
+    } else if (c.type === 'cylinderShell') {
+      resolveSphereCylinderShell(pos, radius, c, out);
     }
   }
 }
@@ -545,6 +867,10 @@ export function pointHitsWorld(p, radius, world, skipRamps = false) {
       if (pointHitsBox(p, radius, c, world)) return true;
     } else if (c.type === 'sphere') {
       if (p.distanceToSquared(c.center) < (c.radius + radius) ** 2) return true;
+    } else if (c.type === 'ellipsoid') {
+      if (sphereHitsEllipsoid(p, radius, c)) return true;
+    } else if (c.type === 'cylinderShell') {
+      if (sphereHitsCylinderShell(p, radius, c)) return true;
     }
   }
   if (!skipRamps) {

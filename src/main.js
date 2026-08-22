@@ -5,8 +5,16 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MAPS, buildAtrium, buildHallOfFame, texturesReady } from './maps.js';
-import { buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ, pointHitsWorld } from './engine.js';
+import {
+  MAPS, buildAtrium, buildHallOfFame, getSharedTextureLoadProgress,
+  getTextureLoadProgress, onTextureLoadProgress, prioritizeTextureLoading,
+  sharedTexturesReady, texturesReady,
+} from './maps.js';
+import {
+  buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ,
+  cylinderShellSurfaceY, ellipsoidSurfaceY, pointHitsWorld,
+  sphereHitsCylinderShell, sphereHitsEllipsoid,
+} from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh, syncJetpackVisual } from './bots.js';
 import {
@@ -15,7 +23,10 @@ import {
 } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
-import { sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume, setRainAmbience, startWhomperWarmup } from './audio.js';
+import {
+  sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume,
+  setRainAmbience, startWhomperWarmup, warmAudioSamplesInBackground,
+} from './audio.js';
 import { multiplayer } from './multiplayer.js';
 import { createJetpack } from './jetpack.js';
 import { unlockSecretMap } from './secret-maps.js';
@@ -97,9 +108,21 @@ function nextMusicIndex() {
   return next;
 }
 
+function ensureMusicElement() {
+  if (musicEl) return musicEl;
+  musicEl = new Audio();
+  musicEl.preload = 'auto';
+  musicEl.volume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
+  musicEl.addEventListener('ended', () => {
+    playMusicIndex(nextMusicIndex());
+  });
+  return musicEl;
+}
+
 function playMusicIndex(idx) {
   const track = MUSIC[idx];
-  if (!track || !musicEl) return;
+  if (!track) return;
+  ensureMusicElement();
   musicIdx = idx;
   currentTrackTitle = track.title;
   updateTrackTitle();
@@ -107,15 +130,21 @@ function playMusicIndex(idx) {
   musicEl.play().catch(() => {}); // blocked until a user gesture — fine
 }
 
+function prepareMusic() {
+  ensureMusicElement();
+  if (musicEl.src) return;
+  const track = MUSIC[nextMusicIndex()];
+  if (!track) return;
+  musicIdx = MUSIC.indexOf(track);
+  currentTrackTitle = track.title;
+  updateTrackTitle();
+  musicEl.src = track.src;
+  musicEl.load();
+}
+
 function musicPlay() {
-  if (!musicEl) {
-    musicEl = new Audio();
-    musicEl.volume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
-    musicEl.addEventListener('ended', () => {
-      playMusicIndex(nextMusicIndex());
-    });
-  }
-  playMusicIndex(nextMusicIndex());
+  prepareMusic();
+  musicEl?.play().catch(() => {});
 }
 function musicStop() { musicEl?.pause(); }
 
@@ -223,17 +252,37 @@ const canvas = document.getElementById('game');
 const mapLoadingScreen = document.getElementById('maploading');
 const mapLoadingTitle = document.getElementById('maploadingtitle');
 const mapLoadingStatus = document.getElementById('maploadingstatus');
+const mapLoadingTrack = document.getElementById('maploadingtrack');
+const mapLoadingBar = document.getElementById('maploadingbar');
+const mapLoadingPercent = document.getElementById('maploadingpercent');
 let mapLoadingToken = 0;
+let mapLoadingProgress = 0;
 
 function setMapLoadingStatus(message) {
   setText(mapLoadingStatus, message);
 }
 
+function setMapLoadingProgress(percent, message = null, token = mapLoadingToken) {
+  if (token !== mapLoadingToken) return false;
+  const next = Math.max(mapLoadingProgress, Math.min(100, Math.round(Number(percent) || 0)));
+  mapLoadingProgress = next;
+  if (message) setMapLoadingStatus(message);
+  if (mapLoadingBar) mapLoadingBar.style.transform = `scaleX(${next / 100})`;
+  if (mapLoadingTrack) {
+    mapLoadingTrack.setAttribute('aria-valuenow', String(next));
+    if (message) mapLoadingTrack.setAttribute('aria-valuetext', `${next}% — ${message}`);
+  }
+  setText(mapLoadingPercent, `${next}%`);
+  return true;
+}
+
 function showMapLoading(mapDef) {
-  mapLoadingToken++;
+  const token = ++mapLoadingToken;
+  mapLoadingProgress = 0;
   setText(mapLoadingTitle, mapDef?.name || 'PREPARING ARENA');
-  setMapLoadingStatus('Building the battlefield and warming combat effects');
+  setMapLoadingProgress(0, 'Preparing shared arena assets', token);
   if (mapLoadingScreen) mapLoadingScreen.hidden = false;
+  return token;
 }
 
 function hideMapLoading() {
@@ -241,15 +290,18 @@ function hideMapLoading() {
   if (mapLoadingScreen) mapLoadingScreen.hidden = true;
 }
 
-function finishMapLoading() {
-  if (!mapLoadingScreen || mapLoadingScreen.hidden) return;
-  const token = mapLoadingToken;
-  setMapLoadingStatus('Arena ready');
+function finishMapLoading(token = mapLoadingToken) {
+  if (!mapLoadingScreen || mapLoadingScreen.hidden || token !== mapLoadingToken) return;
+  setMapLoadingProgress(100, 'Arena ready', token);
   // Keep the cover through the first completed game frame. That prevents a
   // flash of an unrendered scene after the synchronous arena build finishes.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (token === mapLoadingToken) mapLoadingScreen.hidden = true;
   }));
+}
+
+function paintLoadingStage() {
+  return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -385,9 +437,10 @@ const composer = new EffectComposer(renderer,
 const renderPass = new RenderPass(new THREE.Scene(), camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.58, 0.94);
 bloomPass.enabled = initialGraphicsPreset?.postprocessing ?? performanceProfile.postprocessing;
+const outputPass = new OutputPass();
 composer.addPass(renderPass);
 composer.addPass(bloomPass);
-composer.addPass(new OutputPass());
+composer.addPass(outputPass);
 
 // Soft studio environment for PBR reflections (metal medals, station panels)
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -417,6 +470,7 @@ const adaptiveRender = {
   cooldown: 0,
   fastestFrameMs: Infinity,
   sampleT: 0,
+  adjustmentQueued: false,
   visualTier: initialGraphicsPreset?.tier ?? (initialAutoGraphicsScale < 0.76
     ? 'low'
     : initialAutoGraphicsScale < 0.92 ? 'standard' : 'high'),
@@ -489,6 +543,7 @@ function resetAdaptiveRenderScale({ preserveDetection = false } = {}) {
   // for the monitor's native cadence and never trigger its emergency scale.
   if (!preserveDetection) adaptiveRender.fastestFrameMs = Infinity;
   adaptiveRender.sampleT = 0;
+  adaptiveRender.adjustmentQueued = false;
   perfTelemetry.frameMs.length = 0;
   perfTelemetry.workMs.length = 0;
   perfTelemetry.sampleCounter = 0;
@@ -545,21 +600,27 @@ function updateAdaptiveRenderScale(frameMs, workMs) {
     adaptiveRender.clearT = 0;
   }
   const downscaleAfter = calibrationOpen ? 0.75 : AUTO_EMERGENCY_DOWNSCALE_SECONDS;
-  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= downscaleAfter &&
-      adaptiveRender.scale > ADAPTIVE_RENDER_MIN_SCALE) {
-    adaptiveRender.scale = Math.max(ADAPTIVE_RENDER_MIN_SCALE, adaptiveRender.scale - 0.08);
-    adaptiveRender.detectedScale = adaptiveRender.scale;
+  if (!adaptiveRender.adjustmentQueued && !adaptiveRender.cooldown &&
+      adaptiveRender.slowT >= downscaleAfter &&
+      adaptiveRender.detectedScale > ADAPTIVE_RENDER_MIN_SCALE) {
+    adaptiveRender.detectedScale = Math.max(
+      ADAPTIVE_RENDER_MIN_SCALE,
+      adaptiveRender.detectedScale - 0.08,
+    );
     adaptiveRender.slowT = 0;
     adaptiveRender.cooldown = 0.65;
-    applyAdaptiveRenderScale();
+    adaptiveRender.adjustmentQueued = true;
+    // Resizing the renderer and both post-processing targets during live play
+    // can synchronously block the browser and graphics driver even on a fast
+    // GPU. Learn the safer scale now, then apply it once at the next covered
+    // arena transition.
     if (!calibrationOpen && autoGraphicsTestStage === 'game') persistAutoGraphicsTest('game');
-  } else if (calibrationOpen && !adaptiveRender.cooldown &&
-      adaptiveRender.clearT >= 5 && adaptiveRender.scale < 1) {
-    adaptiveRender.scale = Math.min(1, adaptiveRender.scale + 0.04);
-    adaptiveRender.detectedScale = adaptiveRender.scale;
+  } else if (calibrationOpen && !adaptiveRender.adjustmentQueued && !adaptiveRender.cooldown &&
+      adaptiveRender.clearT >= 5 && adaptiveRender.detectedScale < 1) {
+    adaptiveRender.detectedScale = Math.min(1, adaptiveRender.detectedScale + 0.04);
     adaptiveRender.clearT = 0;
     adaptiveRender.cooldown = 0.8;
-    applyAdaptiveRenderScale();
+    adaptiveRender.adjustmentQueued = true;
   }
 }
 
@@ -588,6 +649,7 @@ const foliageFx = document.getElementById('foliageFx');
 let G = null; // current match state (or the lobby)
 let rafId = 0;
 let mapLoadInProgress = false;
+let sharedFxPool = null;
 let selectedMode = 'ffa';
 let openingMultiplayer = false;
 let multiplayerVotingTimer = 0;
@@ -595,6 +657,12 @@ let mobilePauseOpen = false;
 let mobilePauseOpenedAt = 0;
 const lastSpawnByKey = new Map();
 const lastSpawnFaceByKey = new Map();
+
+function fxPoolForScene(scene) {
+  if (!sharedFxPool) sharedFxPool = new FXPool(scene);
+  else sharedFxPool.setScene(scene);
+  return sharedFxPool;
+}
 
 function usesMobileControls() {
   return mobileControls.active;
@@ -733,17 +801,36 @@ function modeLabel(mode = selectedMode) {
   return mode === 'tdm' ? 'MODE: TEAM DEATHMATCH' : 'MODE: FREE FOR ALL';
 }
 
-function queueMapLoad(mapDef, mode = selectedMode) {
+async function queueMapLoad(mapDef, mode = selectedMode) {
   if (!mapDef || mapLoadInProgress) return;
   mapLoadInProgress = true;
-  showMapLoading(mapDef);
+  const token = showMapLoading(mapDef);
   setStyle(clickcatch, 'display', 'none');
-  // Yield twice so the dedicated loading screen reaches the compositor before
-  // synchronous map construction and GPU prewarming occupy the main thread.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  prioritizeTextureLoading();
+  const updateSharedProgress = ({ ready, total }) => {
+    const ratio = total ? ready / total : 1;
+    setMapLoadingProgress(
+      ready >= total ? 20 : Math.floor(ratio * 20),
+      ready < total ? `Preparing shared assets (${ready}/${total})` : 'Shared assets ready',
+      token,
+    );
+  };
+  let unsubscribe = () => {};
+  try {
+    // Let a real 0% frame paint before reporting anything already prepared in
+    // the Atrium. Otherwise a warm load can replace 0% in the same browser task
+    // and the bar appears to begin partway across.
+    await paintLoadingStage();
+    unsubscribe = onTextureLoadProgress(updateSharedProgress);
+    await texturesReady;
+    if (token !== mapLoadingToken) return;
+    updateSharedProgress(getTextureLoadProgress());
+    await paintLoadingStage();
+    await startMatchProgressively(mapDef, mode, token);
+  } finally {
+    unsubscribe();
     mapLoadInProgress = false;
-    startMatch(mapDef, mode);
-  }));
+  }
 }
 
 function syncAtriumModeSign(world = G?.world) {
@@ -784,7 +871,7 @@ function teardown() {
   }
   G.projectiles.clear();
   G.pickups.clear();
-  G.fxPool.dispose();
+  G.fxPool.clear();
   clearEventVisualPools();
   G.meteors = [];
   G.comets = [];
@@ -824,8 +911,7 @@ function cameraUnderwater() {
   if (!zones?.length) return false;
   const p = camera.position;
   return zones.some(z => (
-    p.x >= z.minX && p.x <= z.maxX &&
-    p.z >= z.minZ && p.z <= z.maxZ &&
+    pointInZoneXZ(z, p.x, p.z) &&
     p.y >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
     p.y < z.surfaceY - 0.04
   ));
@@ -931,8 +1017,17 @@ function updateDeathCamera(dt) {
 }
 
 // THE LOBBY: a walkable atrium — stroll into a glowing gate to start a match.
-function startAtrium() {
-  hideMapLoading();
+async function startAtrium(existingLoadingToken = null) {
+  const loadingToken = existingLoadingToken ??
+    (mapLoadingScreen?.hidden ? showMapLoading({ name: 'NERF ARENA BLAST' }) : mapLoadingToken);
+  setStyle(clickcatch, 'display', 'none');
+  // When returning from a match, give 0% a chance to reach the compositor
+  // before teardown or the queued Auto-quality resize begins.
+  await paintLoadingStage();
+  if (loadingToken !== mapLoadingToken) return;
+  setMapLoadingProgress(10, 'Applying the queued graphics profile', loadingToken);
+  await paintLoadingStage();
+  if (loadingToken !== mapLoadingToken) return;
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   musicStop();
@@ -943,6 +1038,7 @@ function startAtrium() {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = buildAtrium(scene);
+  setMapLoadingProgress(60, 'Atrium geometry built', loadingToken);
   renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   syncAtriumModeSign(world);
@@ -951,7 +1047,7 @@ function startAtrium() {
   scene.add(camera);
   renderPass.scene = scene;
 
-  const fxPool = new FXPool(scene);
+  const fxPool = fxPoolForScene(scene);
   const player = new Player(camera, world);
   player.color = '#ffd23c';
   player.team = 'ffa-you';
@@ -965,6 +1061,7 @@ function startAtrium() {
     onTargetDamage: (target, dmg, attacker, ctx) => damageWorldTarget(target, dmg, attacker, ctx),
   });
   const pickups = new PickupManager(scene, [], { onPickup });
+  setMapLoadingProgress(82, 'Atrium routes and player ready', loadingToken);
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
   world.onSecretFountainReveal = () => {
     sfx('powerup');
@@ -1001,7 +1098,18 @@ function startAtrium() {
   player.spawn(perch);
   player.yaw = 0; // face the courtyard
   player.update(0, () => {});      // set the camera NOW — paused frames render this view
-  renderer.compile(scene, camera);
+  setMapLoadingProgress(88, 'Warming Atrium shaders', loadingToken);
+  await paintLoadingStage();
+  if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(scene, camera);
+  else renderer.compile(scene, camera);
+  setMapLoadingProgress(90, 'Uploading Atrium textures', loadingToken);
+  await prewarmSceneTexturesAsync(scene, loadingToken);
+  setMapLoadingProgress(94, 'Preparing graphics buffers', loadingToken);
+  await prewarmPostProcessingAsync(loadingToken);
+  setMapLoadingProgress(98, 'Rendering the first Atrium frame', loadingToken);
+  await paintLoadingStage();
+  renderFrame();
+  setMapLoadingProgress(99, 'Atrium ready', loadingToken);
 
   hud.show(true);
   hud.clearAwards();
@@ -1010,8 +1118,10 @@ function startAtrium() {
   setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
+  G.lastT = performance.now();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
+  finishMapLoading(loadingToken);
 }
 
 async function refreshHallLeaderboard(world = G?.world) {
@@ -1047,7 +1157,7 @@ function startHallOfFame() {
   scene.add(camera);
   renderPass.scene = scene;
 
-  const fxPool = new FXPool(scene);
+  const fxPool = fxPoolForScene(scene);
   const player = new Player(camera, world);
   player.color = '#ffd75e';
   player.team = 'ffa-you';
@@ -1103,9 +1213,7 @@ function startHallOfFame() {
   rafId = requestAnimationFrame(tick);
 }
 
-function startMatch(mapDef, mode = 'ffa') {
-  if (mapLoadingScreen?.hidden) showMapLoading(mapDef);
-  setMapLoadingStatus('Building arena geometry');
+function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken) {
   finishAtriumAutoGraphicsTest();
   inGameAutoTestStarted = false;
   teardown();
@@ -1117,7 +1225,7 @@ function startMatch(mapDef, mode = 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
-  setMapLoadingStatus('Connecting routes and preparing combatants');
+  yield { progress: 48, status: 'Arena geometry built' };
   renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   bindWorldPresentation(world, false);
@@ -1125,8 +1233,9 @@ function startMatch(mapDef, mode = 'ffa') {
   buildWaypointGraph(world);
   scene.add(camera);
   renderPass.scene = scene;
+  yield { progress: 62, status: 'Routes and collision ready' };
 
-  const fxPool = new FXPool(scene);
+  const fxPool = fxPoolForScene(scene);
   const player = new Player(camera, world);
   player.color = '#ffd23c';
 
@@ -1236,6 +1345,7 @@ function startMatch(mapDef, mode = 'ffa') {
   };
   syncRenderQuality();
   updateGraphicsUI();
+  yield { progress: 82, status: 'Combatants and pickups ready' };
 
   G.spawnBatchUsed = new Map();
   G.spawnBatchUsedFaces = new Map();
@@ -1244,18 +1354,66 @@ function startMatch(mapDef, mode = 'ffa') {
   G.spawnBatchUsedFaces = null;
 
   player.update(0, () => {});      // camera on the spawn point before the first tick
-  setMapLoadingStatus('Warming weapons, powerups, and arena effects');
-  prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
-  prewarmEventVisuals();
+  yield {
+    progress: 88,
+    status: 'Warming weapons, powerups, and arena effects',
+    syncWork: () => {
+      prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
+      prewarmEventVisuals();
+    },
+    asyncWork: async () => {
+      await prewarmMatchVisualsAsync(scene, player, characters, projectiles, fxPool);
+      await prewarmEventVisualsAsync();
+    },
+  };
+  yield {
+    progress: 90,
+    status: 'Uploading arena textures',
+    syncWork: () => initializeSceneTextures(collectSceneTextures(scene)),
+    asyncWork: () => prewarmSceneTexturesAsync(scene, loadingToken),
+  };
+  yield {
+    progress: 94,
+    status: 'Preparing graphics buffers',
+    syncWork: prewarmPostProcessing,
+    asyncWork: () => prewarmPostProcessingAsync(loadingToken),
+  };
+  yield {
+    progress: 98,
+    status: 'Rendering the first arena frame',
+    syncWork: renderFrame,
+  };
+  yield { progress: 99, status: 'Arena frame ready' };
   hud.show(true);
   hud.clearAwards();
   setStyle(document.getElementById('scores'), 'display', '');
   setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   musicPlay();
+  // Loading/compilation time is not a gameplay frame and must not influence
+  // Auto's frame sampler when the first requestAnimationFrame arrives.
+  G.lastT = performance.now();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
-  finishMapLoading();
+  finishMapLoading(loadingToken);
+}
+
+function startMatch(mapDef, mode = 'ffa') {
+  const token = mapLoadingScreen?.hidden ? showMapLoading(mapDef) : mapLoadingToken;
+  setMapLoadingProgress(20, 'Shared assets ready', token);
+  for (const stage of createMatchStages(mapDef, mode, token)) {
+    setMapLoadingProgress(stage.progress, stage.status, token);
+    stage.syncWork?.();
+  }
+}
+
+async function startMatchProgressively(mapDef, mode = 'ffa', token = mapLoadingToken) {
+  for (const stage of createMatchStages(mapDef, mode, token)) {
+    if (!setMapLoadingProgress(stage.progress, stage.status, token)) return;
+    await paintLoadingStage();
+    if (stage.asyncWork) await stage.asyncWork();
+    else stage.syncWork?.();
+  }
 }
 
 function multiplayerSlotById(id = multiplayer.slotId) {
@@ -1284,8 +1442,8 @@ function addTeamMarker(ch) {
 }
 
 function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
-  if (mapLoadingScreen?.hidden) showMapLoading(mapDef);
-  setMapLoadingStatus('Building multiplayer arena');
+  const loadingToken = mapLoadingScreen?.hidden ? showMapLoading(mapDef) : mapLoadingToken;
+  setMapLoadingProgress(20, 'Shared assets ready', loadingToken);
   finishAtriumAutoGraphicsTest();
   inGameAutoTestStarted = false;
   teardown();
@@ -1297,7 +1455,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
-  setMapLoadingStatus('Connecting routes and synchronizing combatants');
+  setMapLoadingProgress(48, 'Multiplayer arena geometry built', loadingToken);
   renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
   bindWorldPresentation(world, true);
@@ -1305,8 +1463,9 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   buildWaypointGraph(world);
   scene.add(camera);
   renderPass.scene = scene;
+  setMapLoadingProgress(62, 'Routes and collision ready', loadingToken);
 
-  const fxPool = new FXPool(scene);
+  const fxPool = fxPoolForScene(scene);
   const player = new Player(camera, world);
   const playerSlot = multiplayerSlotById();
   const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
@@ -1407,12 +1566,20 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   };
   syncRenderQuality();
   updateGraphicsUI();
+  setMapLoadingProgress(82, 'Network combatants and pickups ready', loadingToken);
 
   respawnCharacter(player, true);
   player.update(0, () => {});
-  setMapLoadingStatus('Warming weapons, powerups, and arena effects');
+  setMapLoadingProgress(88, 'Spawn point and camera ready', loadingToken);
   prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
   prewarmEventVisuals();
+  setMapLoadingProgress(90, 'Uploading arena textures', loadingToken);
+  initializeSceneTextures(collectSceneTextures(scene));
+  setMapLoadingProgress(94, 'Preparing graphics buffers', loadingToken);
+  prewarmPostProcessing();
+  setMapLoadingProgress(98, 'Rendering the first arena frame', loadingToken);
+  renderFrame();
+  setMapLoadingProgress(99, 'Arena frame ready', loadingToken);
   hud.show(true);
   setStyle(document.getElementById('scores'), 'display', '');
   setStyle(document.getElementById('endscreen'), 'display', 'none');
@@ -1420,9 +1587,10 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   musicPlay();
+  G.lastT = performance.now();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
-  finishMapLoading();
+  finishMapLoading(loadingToken);
 }
 
 function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa', resumeSnapshot = null) {
@@ -2376,10 +2544,19 @@ function spawnHasSupport(pos, ch) {
   const footSlack = 0.45;
   const sideSlack = ch.radius * 0.45;
   for (const c of G.world.colliders) {
-    if (c.type !== 'box') continue;
-    if (pos.x < c.min.x - sideSlack || pos.x > c.max.x + sideSlack ||
-        pos.z < c.min.z - sideSlack || pos.z > c.max.z + sideSlack) continue;
-    const drop = pos.y - c.max.y;
+    let surfaceY = null;
+    if (c.type === 'box') {
+      if (pos.x < c.min.x - sideSlack || pos.x > c.max.x + sideSlack ||
+          pos.z < c.min.z - sideSlack || pos.z > c.max.z + sideSlack) continue;
+      surfaceY = c.max.y;
+    } else if (c.type === 'ellipsoid') {
+      surfaceY = ellipsoidSurfaceY(c, pos.x, pos.z);
+      if (surfaceY == null) continue;
+    } else if (c.type === 'cylinderShell') {
+      surfaceY = cylinderShellSurfaceY(c, pos.x, pos.z);
+      if (surfaceY == null) continue;
+    } else continue;
+    const drop = pos.y - surfaceY;
     if (drop >= -0.08 && drop <= footSlack) return true;
   }
   for (const ramp of G.world.ramps) {
@@ -2402,6 +2579,10 @@ function spawnIsClear(pos, ch) {
       if (c.type === 'box') {
         if (sphereOverlapsBox(probe, ch.radius, c)) return false;
       } else if (c.type === 'sphere' && probe.distanceToSquared(c.center) < (ch.radius + c.radius) ** 2) {
+        return false;
+      } else if (c.type === 'ellipsoid' && sphereHitsEllipsoid(probe, ch.radius, c)) {
+        return false;
+      } else if (c.type === 'cylinderShell' && sphereHitsCylinderShell(probe, ch.radius, c)) {
         return false;
       }
     }
@@ -3515,6 +3696,8 @@ document.addEventListener('pointerlockchange', () => {
   }
 });
 clickcatch.addEventListener('click', () => {
+  warmAudioSamplesInBackground();
+  if (G?.atrium) prepareMusic();
   if (G?.mpConnectionPaused) return;
   if (usesMobileControls()) {
     if (performance.now() - mobilePauseOpenedAt < 350) return;
@@ -3954,6 +4137,12 @@ function meteorSurfaceY(world, x, z) {
       if (radialSq <= c.radius * c.radius) {
         best = Math.max(best, c.center.y + Math.sqrt(c.radius * c.radius - radialSq));
       }
+    } else if (c.type === 'ellipsoid') {
+      const surfaceY = ellipsoidSurfaceY(c, x, z);
+      if (surfaceY != null) best = Math.max(best, surfaceY);
+    } else if (c.type === 'cylinderShell') {
+      const surfaceY = cylinderShellSurfaceY(c, x, z);
+      if (surfaceY != null) best = Math.max(best, surfaceY);
     }
   }
   for (const ramp of ramps) {
@@ -4243,7 +4432,7 @@ function clearEventVisualPools() {
   G.cometVisualPool = [];
 }
 
-function prewarmMatchVisuals(scene, player, characters, projectiles, fxPool) {
+function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPool) {
   // WebGLRenderer.compile() traverses visible objects only. Temporarily reveal
   // every hidden weapon, powerup-skin probe, and equipped-jetpack part so the
   // loading phase really compiles the variants that can appear mid-match.
@@ -4284,16 +4473,187 @@ function prewarmMatchVisuals(scene, player, characters, projectiles, fxPool) {
   const warmPos = camera.getWorldPosition(new THREE.Vector3())
     .addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 4);
   fxPool.spawnPuff(warmPos, 0xffffff, 0.1);
-  renderer.compile(scene, camera);
-
-  fxPool.clear();
-  camera.remove(probes);
-  for (const geometry of probeGeometries) geometry.dispose();
-  for (const [object, visible] of visibility) object.visible = visible;
+  return () => {
+    fxPool.clear();
+    camera.remove(probes);
+    for (const geometry of probeGeometries) geometry.dispose();
+    for (const [object, visible] of visibility) object.visible = visible;
+  };
 }
 
-function prewarmEventVisuals() {
-  if (!G?.world) return;
+function prewarmMatchVisuals(scene, player, characters, projectiles, fxPool) {
+  const cleanup = prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPool);
+  try { renderer.compile(scene, camera); } finally { cleanup(); }
+}
+
+async function prewarmMatchVisualsAsync(scene, player, characters, projectiles, fxPool) {
+  const cleanup = prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPool);
+  try {
+    if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(scene, camera);
+    else renderer.compile(scene, camera);
+  } finally {
+    cleanup();
+  }
+}
+
+function collectSceneTextures(scene) {
+  const textures = new Set();
+  const sourceVariants = new WeakMap();
+  const addValue = value => {
+    if (value?.isTexture && !value.isRenderTargetTexture) {
+      const source = value.source;
+      if (!source || (typeof source !== 'object' && typeof source !== 'function')) {
+        textures.add(value);
+        return;
+      }
+      const cacheKey = [
+        value.wrapS, value.wrapT, value.wrapR || 0, value.magFilter, value.minFilter,
+        value.anisotropy, value.internalFormat, value.format, value.type,
+        value.generateMipmaps, value.premultiplyAlpha, value.flipY,
+        value.unpackAlignment, value.colorSpace,
+      ].join();
+      let variants = sourceVariants.get(source);
+      if (!variants) {
+        variants = new Set();
+        sourceVariants.set(source, variants);
+      }
+      if (!variants.has(cacheKey)) {
+        variants.add(cacheKey);
+        textures.add(value);
+      }
+    } else if (Array.isArray(value)) value.forEach(addValue);
+  };
+  addValue(scene.background);
+  addValue(scene.environment);
+  scene.traverse(object => {
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material) continue;
+      for (const value of Object.values(material)) addValue(value);
+      for (const uniform of Object.values(material.uniforms || {})) addValue(uniform?.value);
+    }
+  });
+  return [...textures];
+}
+
+function initializeSceneTextures(textures) {
+  for (const texture of textures) renderer.initTexture(texture);
+}
+
+async function prewarmSceneTexturesAsync(scene, loadingToken = mapLoadingToken) {
+  const textures = collectSceneTextures(scene);
+  const perSlice = 3;
+  for (let i = 0; i < textures.length; i += perSlice) {
+    initializeSceneTextures(textures.slice(i, i + perSlice));
+    const completed = Math.min(textures.length, i + perSlice);
+    setMapLoadingProgress(
+      90 + (completed / Math.max(1, textures.length)) * 3,
+      `Uploading arena textures (${completed}/${textures.length})`,
+      loadingToken,
+    );
+    await paintLoadingStage();
+  }
+}
+
+function prepareOutputPassMaterial() {
+  if (outputPass._outputColorSpace === renderer.outputColorSpace &&
+      outputPass._toneMapping === renderer.toneMapping) return;
+  outputPass._outputColorSpace = renderer.outputColorSpace;
+  outputPass._toneMapping = renderer.toneMapping;
+  outputPass.material.defines = {};
+  if (renderer.outputColorSpace === THREE.SRGBColorSpace) {
+    outputPass.material.defines.SRGB_TRANSFER = '';
+  }
+  if (renderer.toneMapping === THREE.ACESFilmicToneMapping) {
+    outputPass.material.defines.ACES_FILMIC_TONE_MAPPING = '';
+  }
+  outputPass.material.needsUpdate = true;
+}
+
+function preparePostProcessingShaderPrewarm() {
+  prepareOutputPassMaterial();
+  const scene = new THREE.Scene();
+  const warmCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const geometry = new THREE.PlaneGeometry(2, 2);
+  const materials = [
+    bloomPass.materialHighPassFilter,
+    ...bloomPass.separableBlurMaterials,
+    bloomPass.compositeMaterial,
+    bloomPass.blendMaterial,
+    outputPass.material,
+  ];
+  for (const material of materials) {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+  }
+  return {
+    scene,
+    camera: warmCamera,
+    cleanup: () => {
+      scene.clear();
+      geometry.dispose();
+    },
+  };
+}
+
+function postProcessingTargets() {
+  return [
+    composer.renderTarget1,
+    composer.renderTarget2,
+    bloomPass.renderTargetBright,
+    ...bloomPass.renderTargetsHorizontal,
+    ...bloomPass.renderTargetsVertical,
+  ].filter(Boolean);
+}
+
+function initializePostProcessingTargets(targets = postProcessingTargets()) {
+  if (usesLightRenderPath()) return;
+  for (const target of targets) {
+    renderer.setRenderTarget(target);
+    renderer.clear(true, true, true);
+  }
+  renderer.setRenderTarget(null);
+}
+
+function prewarmPostProcessing() {
+  if (usesLightRenderPath()) return;
+  const probe = preparePostProcessingShaderPrewarm();
+  try { renderer.compile(probe.scene, probe.camera); } finally { probe.cleanup(); }
+  initializePostProcessingTargets();
+}
+
+async function prewarmPostProcessingAsync(loadingToken = mapLoadingToken) {
+  if (usesLightRenderPath()) return;
+  const probe = preparePostProcessingShaderPrewarm();
+  try {
+    if (typeof renderer.compileAsync === 'function') {
+      await renderer.compileAsync(probe.scene, probe.camera);
+    } else {
+      renderer.compile(probe.scene, probe.camera);
+    }
+  } finally {
+    probe.cleanup();
+  }
+  const targets = postProcessingTargets();
+  // Allocate a couple of framebuffers per browser turn. Large half-float/MSAA
+  // targets can involve a driver synchronization; chunking keeps the loading
+  // bar responsive and ensures the live match never pays this cost.
+  for (let i = 0; i < targets.length; i += 2) {
+    initializePostProcessingTargets(targets.slice(i, i + 2));
+    const completed = Math.min(targets.length, i + 2);
+    setMapLoadingProgress(
+      94 + (completed / targets.length) * 3,
+      `Allocating graphics buffers (${completed}/${targets.length})`,
+      loadingToken,
+    );
+    await paintLoadingStage();
+  }
+}
+
+function prepareEventVisualPrewarm() {
+  if (!G?.world) return { scene: null, needsCompile: false, cleanup: () => {} };
+  const eventScene = G.scene;
   const direction = camera.getWorldDirection(new THREE.Vector3());
   const warmPos = camera.position.clone().addScaledVector(direction, 6);
   const warmMeteors = [];
@@ -4319,7 +4679,7 @@ function prewarmEventVisuals() {
     if (pickupProbes?.children.length) {
       pickupProbes.position.copy(warmPos);
       pickupProbes.scale.setScalar(0.01);
-      G.scene.add(pickupProbes);
+      eventScene.add(pickupProbes);
     }
   }
   if (G.world.cometField) {
@@ -4333,10 +4693,36 @@ function prewarmEventVisuals() {
       warmComets.push(comet);
     }
   }
-  if (warmMeteors.length || warmComets.length) renderer.compile(G.scene, camera);
-  for (const meteor of warmMeteors) releaseMeteorVisual(meteor);
-  for (const comet of warmComets) releaseCometVisual(comet);
-  if (pickupProbes) G.scene.remove(pickupProbes);
+  return {
+    scene: eventScene,
+    needsCompile: warmMeteors.length > 0 || warmComets.length > 0,
+    cleanup: () => {
+      for (const meteor of warmMeteors) releaseMeteorVisual(meteor);
+      for (const comet of warmComets) releaseCometVisual(comet);
+      if (pickupProbes) eventScene.remove(pickupProbes);
+    },
+  };
+}
+
+function prewarmEventVisuals() {
+  const warm = prepareEventVisualPrewarm();
+  try {
+    if (warm.needsCompile) renderer.compile(warm.scene, camera);
+  } finally {
+    warm.cleanup();
+  }
+}
+
+async function prewarmEventVisualsAsync() {
+  const warm = prepareEventVisualPrewarm();
+  try {
+    if (warm.needsCompile) {
+      if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(warm.scene, camera);
+      else renderer.compile(warm.scene, camera);
+    }
+  } finally {
+    warm.cleanup();
+  }
 }
 
 function retireComet(comet) {
@@ -4734,8 +5120,7 @@ function step(dt) {
       if (!ch.alive) continue;
       const eyeY = ch.pos.y + (ch.eyeHeight ?? 1.55);
       const underwater = G.world.waterZones.some(zn =>
-        ch.pos.x > zn.minX && ch.pos.x < zn.maxX &&
-        ch.pos.z > zn.minZ && ch.pos.z < zn.maxZ &&
+        pointInZoneXZ(zn, ch.pos.x, ch.pos.z) &&
         eyeY < zn.surfaceY - 0.04 &&
         ch.pos.y > (zn.bottomY ?? zn.surfaceY - 4) - 0.6);
       if (underwater) {
@@ -5021,6 +5406,23 @@ window.__hall = () => startHallOfFame();
 }
 
 // Boot straight into the lobby — pick your arena by walking into its gate.
-// (Wait for textures so the first build isn't placeholder canvases; 3s cap.)
+// Shared weapon/Atrium textures must settle before Player caches its materials;
+// the remaining arena art continues in bounded idle slices once the lobby runs.
 document.getElementById('menu').style.display = 'none';
-Promise.race([texturesReady, new Promise(r => setTimeout(r, 3000))]).then(() => startAtrium());
+const atriumLoadingToken = showMapLoading({ name: 'NERF ARENA BLAST' });
+const updateAtriumLoading = () => {
+  const { ready, total } = getSharedTextureLoadProgress();
+  setMapLoadingProgress(
+    total ? (ready / total) * 60 : 60,
+    ready < total ? `Preparing shared assets (${ready}/${total})` : 'Shared assets ready',
+    atriumLoadingToken,
+  );
+};
+const stopAtriumLoadingProgress = onTextureLoadProgress(updateAtriumLoading);
+sharedTexturesReady.then(async () => {
+  stopAtriumLoadingProgress();
+  if (atriumLoadingToken !== mapLoadingToken) return;
+  updateAtriumLoading();
+  await paintLoadingStage();
+  if (atriumLoadingToken === mapLoadingToken) await startAtrium(atriumLoadingToken);
+});

@@ -1,7 +1,9 @@
 // Weapon definitions + shared projectile system (used by player and bots).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { pointHitsWorld, rand, shellInnerNormal } from './engine.js';
+import {
+  pointHitsWorld, rand, rayHitsCylinderShell, rayHitsEllipsoid, shellInnerNormal,
+} from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
@@ -530,6 +532,8 @@ export class ProjectileSystem {
         ? this.rayShell(origin, dir, c, maxDist)
         : this.rayBox(origin, dir, c, maxDist);
       else if (c.type === 'sphere') hit = this.raySphere(origin, dir, c, maxDist);
+      else if (c.type === 'ellipsoid') hit = rayHitsEllipsoid(origin, dir, c, maxDist);
+      else if (c.type === 'cylinderShell') hit = rayHitsCylinderShell(origin, dir, c, maxDist);
       if (hit && (!best || hit.t < best.t)) best = hit;
     }
     return best;
@@ -1266,6 +1270,13 @@ export class FXPool {
     this.geo = new THREE.SphereGeometry(1, 8, 6);
     this.ringGeo = new THREE.TorusGeometry(1, 0.09, 5, 18);
     for (let i = 0; i < capacity; i++) this.free.push(this.createPuff());
+  }
+  setScene(scene) {
+    if (!scene || scene === this.scene) return;
+    // Release active effects from the previous world before rebinding. The
+    // geometry and materials stay warm and are reused by the next arena.
+    this.clear();
+    this.scene = scene;
   }
   createPuff() {
     const coreMat = new THREE.MeshBasicMaterial({

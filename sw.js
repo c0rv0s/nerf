@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'nerf-arena-v6';
+const CACHE_VERSION = 'nerf-arena-v7';
 const CORE_CACHE = `${CACHE_VERSION}-core`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CORE_ASSETS = [
@@ -26,6 +26,7 @@ const CORE_ASSETS = [
   './src/player.js',
   './src/pwa.js',
   './src/secret-maps.js',
+  './src/water-movement.js',
   './src/weapons.js',
   'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
   'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js',
@@ -83,6 +84,21 @@ async function staleWhileRevalidate(request) {
   return cached || (await update) || Response.error();
 }
 
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  try {
+    const response = await fetch(request);
+    if (response.ok || response.type === 'opaque') {
+      const cache = await caches.open(RUNTIME_CACHE);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    return Response.error();
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -91,6 +107,17 @@ self.addEventListener('fetch', (event) => {
   if (url.origin === self.location.origin && (url.pathname.startsWith('/api/') || url.pathname === '/ws')) return;
   if (request.mode === 'navigate') {
     event.respondWith(networkFirst(request));
+    return;
+  }
+  if (url.origin === self.location.origin && (
+    url.pathname.startsWith('/textures/') ||
+    url.pathname.startsWith('/assets/sfx/') ||
+    url.pathname.startsWith('/music/')
+  )) {
+    // These versioned runtime caches are immutable for the lifetime of this
+    // service worker. Avoid redownloading and rewriting every large media file
+    // during the first match of each browser session.
+    event.respondWith(cacheFirst(request));
     return;
   }
   if (url.origin === self.location.origin && (url.pathname.endsWith('.js') || url.pathname.endsWith('.webmanifest'))) {

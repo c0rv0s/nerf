@@ -317,40 +317,160 @@ export function aiTex(name, rx = 1, ry = 1) {
   const ai = AI_TEX[name];
   if (!ai) return {};
   const map = ai.map.clone(); map.needsUpdate = true; map.repeat.set(rx, ry);
+  if (!ai.normal) return { map };
   const normalMap = ai.normal.clone(); normalMap.needsUpdate = true; normalMap.repeat.set(rx, ry);
   return { map, normalMap, normalScale: new THREE.Vector2(0.7, 0.7) };
 }
 
-// Resolves when every texture is loaded (or confirmed missing) — the boot
-// waits on this so the first scene isn't built with placeholder canvases.
-export const texturesReady = Promise.all(
-  ['checker', 'panel', 'crate', 'rock', 'suit', 'plastic', 'neonwall', 'neonfloor', 'arcade',
-   'fortress-royal', 'crocodile-scales', 'canopy-bark', 'canopy-wall',
-   'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
-   'target', 'hazard', 'grass', 'atrium-grass', 'dirt', 'flowers', 'door', 'lava',
-   'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'refractor',
-   'power-gold', 'power-silver',
-   'tidebreaker-deck', 'tidebreaker-orange-steel',
-   'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
-   'infinite-bloom-surface', 'infinite-bloom-faces', 'infinite-bloom-sky-eyeless', 'infinite-bloom-eye-atlas',
-   'atrium-gate-frame-atlas']
-    .map((name) => new Promise((done) => {
-      const url = AI_TEX_SOURCES[name] || `./textures/${name}.webp`;
-      fetch(url, { method: 'HEAD' }).then((r) => {
-        if (!r.ok) return done();
-        new THREE.TextureLoader().load(url, (t) => {
-          // mirrored repeat hides any seams in not-quite-tileable AI images
+// Load shared/Atrium assets first, then keep filling the cache while the player
+// explores the lobby. A small worker pool avoids a cold launch decoding fifty
+// images at once, and normal maps are finalized one idle slice at a time.
+const TEXTURE_NAMES = Object.freeze([
+  'panel', 'plastic', 'suit', 'blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka',
+  'whomper', 'hyper', 'parasite', 'refractor', 'power-gold', 'power-silver',
+  'infinite-bloom-surface', 'neonwall', 'neonfloor', 'atrium-grass', 'flowers', 'poster1', 'target',
+  'canopy-bark', 'tidebreaker-deck', 'atrium-gate-frame-atlas',
+  'checker', 'crate', 'rock', 'arcade', 'fortress-royal', 'crocodile-scales',
+  'canopy-wall', 'grass', 'dirt', 'door', 'lava', 'poster2', 'poster3', 'poster4',
+  'poster5', 'poster6', 'poster7', 'hazard', 'tidebreaker-orange-steel',
+  'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
+  'infinite-bloom-faces', 'infinite-bloom-sky-eyeless',
+  'infinite-bloom-eye-atlas',
+]);
+const SHARED_TEXTURE_NAMES = new Set(TEXTURE_NAMES.slice(0, 24));
+const textureSettledResolvers = new Map();
+const textureSettledPromises = new Map(TEXTURE_NAMES.map((name) => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  textureSettledResolvers.set(name, resolve);
+  return [name, promise];
+}));
+const COLOR_ONLY_TEXTURES = new Set([
+  'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
+  'target', 'hazard', 'atrium-gate-frame-atlas',
+  'infinite-bloom-sky-eyeless', 'infinite-bloom-eye-atlas',
+]);
+const textureLoader = new THREE.TextureLoader();
+const textureProgressListeners = new Set();
+const textureFinalizeQueue = [];
+let textureFinalizeScheduled = false;
+let textureFinalizeScheduleVersion = 0;
+let textureLoadingUrgent = true;
+let textureReadyCount = 0;
+let sharedTextureReadyCount = 0;
+
+export function getTextureLoadProgress() {
+  return { ready: textureReadyCount, total: TEXTURE_NAMES.length };
+}
+
+export function getSharedTextureLoadProgress() {
+  return { ready: sharedTextureReadyCount, total: SHARED_TEXTURE_NAMES.size };
+}
+
+export const sharedTexturesReady = Promise.all(
+  [...SHARED_TEXTURE_NAMES].map(name => textureSettledPromises.get(name)),
+).then(() => undefined);
+
+export function onTextureLoadProgress(listener) {
+  if (typeof listener !== 'function') return () => {};
+  textureProgressListeners.add(listener);
+  listener(getTextureLoadProgress());
+  return () => textureProgressListeners.delete(listener);
+}
+
+function markTextureSettled(name) {
+  const settle = textureSettledResolvers.get(name);
+  if (!settle) return;
+  textureReadyCount++;
+  settle();
+  textureSettledResolvers.delete(name);
+  if (SHARED_TEXTURE_NAMES.has(name)) {
+    sharedTextureReadyCount++;
+    if (sharedTextureReadyCount >= SHARED_TEXTURE_NAMES.size) textureLoadingUrgent = false;
+  }
+  const progress = getTextureLoadProgress();
+  for (const listener of textureProgressListeners) listener(progress);
+}
+
+function scheduleTextureFinalize() {
+  if (textureFinalizeScheduled || !textureFinalizeQueue.length) return;
+  textureFinalizeScheduled = true;
+  const version = ++textureFinalizeScheduleVersion;
+  const run = (deadline = null) => {
+    if (version !== textureFinalizeScheduleVersion) return;
+    textureFinalizeScheduled = false;
+    if (!textureLoadingUrgent && deadline && deadline.timeRemaining() < 6) {
+      scheduleTextureFinalize();
+      return;
+    }
+    textureFinalizeQueue.shift()?.();
+    scheduleTextureFinalize();
+  };
+  if (textureLoadingUrgent) setTimeout(run, 0);
+  else if (typeof requestIdleCallback === 'function') requestIdleCallback(run);
+  else setTimeout(run, 120);
+}
+
+export function prioritizeTextureLoading() {
+  textureLoadingUrgent = true;
+  if (textureFinalizeScheduled) {
+    textureFinalizeScheduled = false;
+    textureFinalizeScheduleVersion++;
+  }
+  scheduleTextureFinalize();
+}
+
+function enqueueTextureFinalize(finalize) {
+  textureFinalizeQueue.push(finalize);
+  scheduleTextureFinalize();
+}
+
+function loadTexture(name) {
+  return new Promise((done) => {
+    const url = AI_TEX_SOURCES[name] || `./textures/${name}.webp`;
+    textureLoader.load(url, (t) => {
+      const finalize = () => {
+        try {
+          // Mirrored repeat hides seams in not-quite-tileable source images.
           t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping;
           t.colorSpace = THREE.SRGBColorSpace;
           t.anisotropy = 16;
-          const n = makeNormalMap(t.image);
-          n.wrapS = n.wrapT = THREE.MirroredRepeatWrapping;
-          n.anisotropy = 16;
-          AI_TEX[name] = { map: t, normal: n };
+          let normal = null;
+          // Decals, atlases, and sky art are never lit as repeating surfaces;
+          // deriving a normal map for them was pure cold-start CPU work.
+          if (!COLOR_ONLY_TEXTURES.has(name)) {
+            normal = makeNormalMap(t.image);
+            normal.wrapS = normal.wrapT = THREE.MirroredRepeatWrapping;
+            normal.anisotropy = 16;
+          }
+          AI_TEX[name] = { map: t, normal };
+        } finally {
+          markTextureSettled(name);
           done();
-        }, undefined, () => done());
-      }).catch(() => done());
-    })));
+        }
+      };
+      if (COLOR_ONLY_TEXTURES.has(name)) finalize();
+      else enqueueTextureFinalize(finalize);
+    }, undefined, () => {
+      markTextureSettled(name);
+      done();
+    });
+  });
+}
+
+let nextTextureJob = 0;
+async function runTextureWorker() {
+  while (nextTextureJob < TEXTURE_NAMES.length) {
+    const name = TEXTURE_NAMES[nextTextureJob++];
+    await loadTexture(name);
+  }
+}
+
+// Resolves once all background jobs have either loaded or failed. Match entry
+// awaits this same promise, so decode/normal-map work cannot spill into play.
+export const texturesReady = Promise.all(
+  Array.from({ length: Math.min(6, TEXTURE_NAMES.length) }, () => runTextureWorker()),
+).then(() => undefined);
 
 // Loud 90s wall art (posters / targets / hazard banners), unlit for punch.
 // Pure decoration — no collider, mounted a few cm off the wall face.
@@ -419,7 +539,7 @@ function mat(color, opts = {}) {
     t.needsUpdate = true;
     t.repeat.set(rx, ry);
     params.map = t;
-    if (ai) {
+    if (ai?.normal) {
       const n = ai.normal.clone();
       n.needsUpdate = true;
       n.repeat.set(rx, ry);
@@ -805,11 +925,13 @@ function waterNormalTex() {
 
 function addWater(scene, world, x, y, z, w, d, depth = 4, opts = {}) {
   world.waterZones ||= [];
-  world.waterZones.push({
+  const zone = {
     minX: x - w / 2, maxX: x + w / 2,
     minZ: z - d / 2, maxZ: z + d / 2,
     surfaceY: y, bottomY: y - depth,
-  });
+  };
+  if (opts.points?.length) zone.points = opts.points.map(point => [...point]);
+  world.waterZones.push(zone);
 
   const n = opts.unlit ? null : waterNormalTex().clone();
   if (n) {
@@ -827,11 +949,131 @@ function addWater(scene, world, x, y, z, w, d, depth = 4, opts = {}) {
       envMapIntensity: 1.15, emissive: 0x06283f, emissiveIntensity: 0.12,
       depthWrite: false,
     });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), material);
+  let geometry;
+  if (opts.points?.length) {
+    const shape = new THREE.Shape();
+    opts.points.forEach(([px, pz], index) => {
+      const sx = px - x;
+      const sy = -(pz - z);
+      if (index === 0) shape.moveTo(sx, sy);
+      else shape.lineTo(sx, sy);
+    });
+    shape.closePath();
+    geometry = new THREE.ShapeGeometry(shape);
+    material.side = THREE.DoubleSide;
+  } else geometry = new THREE.PlaneGeometry(w, d);
+  const mesh = new THREE.Mesh(geometry, material);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(x, y, z);
   scene.add(mesh);
   if (n) world.anim.push((dt, t) => n.offset.set(t * 0.018, t * 0.03));
+}
+
+function addMyceliumPondBasin(scene, world, points, centerX, centerZ, bottomY = -4.4) {
+  const innerScale = 0.5;
+  const outer = points.map(([x, z]) => V(x, 0.02, z));
+  const inner = points.map(([x, z]) => V(
+    centerX + (x - centerX) * innerScale,
+    bottomY + 0.22,
+    centerZ + (z - centerZ) * innerScale,
+  ));
+  const positions = [];
+  const indices = [];
+  for (const point of [...outer, ...inner, V(centerX, bottomY, centerZ)]) {
+    positions.push(point.x, point.y, point.z);
+  }
+  const count = points.length;
+  const centerIndex = count * 2;
+  for (let i = 0; i < count; i++) {
+    const next = (i + 1) % count;
+    indices.push(i, next, count + i, next, count + next, count + i);
+    indices.push(centerIndex, count + i, count + next);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const basin = new THREE.Mesh(geometry, mat(0x29463a, {
+    tex: 'rock', repeat: [5, 5], roughness: 0.99, side: THREE.DoubleSide,
+  }));
+  basin.receiveShadow = true;
+  scene.add(basin);
+
+  // The arena floor around this irregular cutout is assembled from broad
+  // rectangular beds. Bridge their triangular corner gaps with one continuous
+  // apron that follows the actual shoreline and overlaps the surrounding
+  // grass. A matching grid of shallow support cells prevents visual fixes from
+  // hiding places where a player could still fall through.
+  const apronWidth = 4.2;
+  const apronPoints = points.map(([x, z]) => {
+    const dx = x - centerX;
+    const dz = z - centerZ;
+    const distance = Math.hypot(dx, dz) || 1;
+    return [x + dx / distance * apronWidth, z + dz / distance * apronWidth];
+  });
+  const shoreShape = new THREE.Shape();
+  apronPoints.forEach(([x, z], index) => {
+    if (index === 0) shoreShape.moveTo(x, -z);
+    else shoreShape.lineTo(x, -z);
+  });
+  shoreShape.closePath();
+  const pondHole = new THREE.Path();
+  [...points].reverse().forEach(([x, z], index) => {
+    if (index === 0) pondHole.moveTo(x, -z);
+    else pondHole.lineTo(x, -z);
+  });
+  pondHole.closePath();
+  shoreShape.holes.push(pondHole);
+  const apron = new THREE.Mesh(
+    new THREE.ShapeGeometry(shoreShape),
+    mat(0x31583f, { tex: 'grass', repeat: [9, 9], roughness: 0.99, side: THREE.DoubleSide }),
+  );
+  apron.rotation.x = -Math.PI / 2;
+  apron.position.y = 0.025;
+  apron.receiveShadow = true;
+  scene.add(apron);
+
+  const shoreZone = { points: apronPoints, holes: [points] };
+  // Use a fine, overlapping grid and keep every cell that intersects the
+  // shoreline ring. Center-only selection left thin diagonal slivers between
+  // the polygon and the square grid, which is exactly where the visible pond
+  // gaps appeared. The half-size overlap is small enough to remain a natural
+  // shallow bank rather than creating a broad invisible shelf over the water.
+  const cellSize = 1;
+  const cellHalf = 0.52;
+  const minX = Math.min(...apronPoints.map(point => point[0]));
+  const maxX = Math.max(...apronPoints.map(point => point[0]));
+  const minZ = Math.min(...apronPoints.map(point => point[1]));
+  const maxZ = Math.max(...apronPoints.map(point => point[1]));
+  for (let x = minX + cellSize / 2; x < maxX; x += cellSize) {
+    for (let z = minZ + cellSize / 2; z < maxZ; z += cellSize) {
+      const intersectsShore = [
+        [0, 0], [-cellHalf, -cellHalf], [cellHalf, -cellHalf],
+        [-cellHalf, cellHalf], [cellHalf, cellHalf],
+        [-cellHalf, 0], [cellHalf, 0], [0, -cellHalf], [0, cellHalf],
+      ].some(([dx, dz]) => pointInZoneXZ(shoreZone, x + dx, z + dz));
+      if (!intersectsShore) continue;
+      world.colliders.push({
+        type: 'box',
+        min: V(x - cellHalf, -0.32, z - cellHalf),
+        max: V(x + cellHalf, 0.035, z + cellHalf),
+        debugName: 'mycelium-pond-shore-support',
+      });
+    }
+  }
+
+  // A deep central floor plus four broad slopes makes the pool genuinely
+  // swimmable while keeping multiple natural walk-in/walk-out edges.
+  world.colliders.push({
+    type: 'box', min: V(centerX - 8.7, bottomY - 0.7, centerZ - 7.1),
+    max: V(centerX + 8.7, bottomY, centerZ + 7.1),
+  });
+  world.ramps.push(
+    { axis: 'x', minX: -17.4, maxX: -6.7, minZ: -43.2, maxZ: -28.2, h0: 0, h1: bottomY },
+    { axis: 'x', minX: 11.2, maxX: 21.3, minZ: -43.2, maxZ: -28.2, h0: bottomY, h1: 0 },
+    { axis: 'z', minX: -6.8, maxX: 11.8, minZ: -50, maxZ: -42.6, h0: 0, h1: bottomY },
+    { axis: 'z', minX: -6.8, maxX: 11.8, minZ: -28.4, maxZ: -20.8, h0: bottomY, h1: 0 },
+  );
 }
 
 function addMinnowSchool(scene, world, x, z, travel = 13, phase = 0) {
@@ -1355,14 +1597,16 @@ function addWaterfall(scene, world, x, z, w, h, bottomY, topY, flowZ = 0, style 
   const worldPosition = (across, y, outward) => flowsAlongX
     ? new THREE.Vector3(x + outward, y, z + across)
     : new THREE.Vector3(x + across, y, z + outward);
-  world.waterfallZones ||= [];
-  world.waterfallZones.push({
-    minX: flowsAlongX ? x - 1.35 : x - w / 2,
-    maxX: flowsAlongX ? x + 1.35 : x + w / 2,
-    minZ: flowsAlongX ? z - w / 2 : z - 1.35,
-    maxZ: flowsAlongX ? z + w / 2 : z + 1.35,
-    minY: bottomY - 0.4, maxY: topY + 0.4,
-  });
+  if (!style.passThrough) {
+    world.waterfallZones ||= [];
+    world.waterfallZones.push({
+      minX: flowsAlongX ? x - 1.35 : x - w / 2,
+      maxX: flowsAlongX ? x + 1.35 : x + w / 2,
+      minZ: flowsAlongX ? z - w / 2 : z - 1.35,
+      maxZ: flowsAlongX ? z + w / 2 : z + 1.35,
+      minY: bottomY - 0.4, maxY: topY + 0.4,
+    });
+  }
 
   if (!style.skipLip) {
     addBox(
@@ -14941,6 +15185,10 @@ function addMyceliumPatch(scene, world, count = 72) {
 }
 
 function addBouncyMushroom(scene, world, x, baseY, z, stemHeight, radius, vy, color, vx = 0, vz = 0) {
+  // The old launch speeds only cleared the first canopy tier by a narrow
+  // margin. Multiplying velocity by sqrt(1.5) makes the ballistic apex about
+  // 50% higher without making the mushrooms feel like teleporters.
+  const launchVy = vy * Math.sqrt(1.5);
   const stemMaterial = mat(0xdacbd2, { roughness: 0.8, flatShading: true });
   const capMaterial = new THREE.MeshStandardMaterial({
     color,
@@ -15004,7 +15252,7 @@ function addBouncyMushroom(scene, world, x, baseY, z, stemHeight, radius, vy, co
   const pad = {
     x, y: topY, z,
     r: radius * 0.82,
-    vy, vx, vz,
+    vy: launchVy, vx, vz,
     playersOnly: false,
     disabled: false,
     kind: 'mushroom',
@@ -15040,15 +15288,68 @@ function addMyceliumBranch(scene, start, end, radius = 0.65) {
   scene.add(branch);
 }
 
-// A branch route uses the tree itself as the visible bridge. Short overlapping
-// collision cells follow the curved-looking cylinder closely enough to walk,
-// while avoiding the black rectangular catwalks that made the old grove feel
-// constructed instead of grown.
-function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05) {
-  const visualDrop = V(0, -radius * 0.62, 0);
-  addMyceliumBranch(scene, start.clone().add(visualDrop), end.clone().add(visualDrop), radius);
+// A branch route uses a broad, shallow bark plank as the visible bridge. Short
+// overlapping collision cells follow that slope closely enough to walk while
+// keeping the route grown-looking instead of turning it into a catwalk.
+function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, options = {}) {
+  // These are primary traversal lanes, so make the usable limb substantially
+  // broader than the decorative branch arms around each crown. The additional
+  // 1.5 multiplier is the requested second widening pass.
+  const walkRadius = radius * 1.58 * 1.5;
   const delta = end.clone().sub(start);
   const horizontalLength = Math.hypot(delta.x, delta.z);
+  const plankWidth = walkRadius * 1.5;
+  const plankBodyDepth = Math.max(0.7, walkRadius * 0.32);
+  const crownDepth = Math.max(0.18, walkRadius * 0.1);
+  const plankDepth = plankBodyDepth + crownDepth;
+
+  // A shallow structural body replaces the old full-radius cylinder. Its cap
+  // remains separately trimmable where a route merges into the hollow log, so
+  // the junction stays clean without making the rest of the limb bulky.
+  if (horizontalLength > 0.01) {
+    const forward = delta.clone().normalize();
+    const right = V(delta.z / horizontalLength, 0, -delta.x / horizontalLength);
+    const up = forward.clone().cross(right).normalize();
+    const orientation = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(right, up, forward),
+    );
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(plankWidth, plankBodyDepth, delta.length()),
+      mat(0xffffff, {
+        tex: 'canopy-bark', repeat: [2, Math.max(1, delta.length() / 6)], roughness: 0.96,
+      }),
+    );
+    body.quaternion.copy(orientation);
+    body.position.copy(start).add(end).multiplyScalar(0.5)
+      .addScaledVector(up, -crownDepth - plankBodyDepth / 2);
+    body.name = options.debugName ? `${options.debugName}-body` : 'mycelium-branch-plank-body';
+    body.castShadow = body.receiveShadow = true;
+    scene.add(body);
+
+    const maxInset = Math.max(0, delta.length() - 0.2);
+    const crownStartInset = Math.min(Math.max(0, options.crownStartInset || 0), maxInset);
+    const crownEndInset = Math.min(
+      Math.max(0, options.crownEndInset || 0),
+      maxInset - crownStartInset,
+    );
+    const crownLength = delta.length() - crownStartInset - crownEndInset;
+    const crownStart = start.clone().addScaledVector(forward, crownStartInset);
+    const crownEnd = crownStart.clone().addScaledVector(forward, crownLength);
+    const crown = new THREE.Mesh(
+      new THREE.BoxGeometry(plankWidth, crownDepth, crownLength),
+      mat(0xffffff, {
+        tex: 'canopy-bark', repeat: [2, Math.max(1, crownLength / 6)], roughness: 0.96,
+      }),
+    );
+    crown.quaternion.copy(orientation);
+    crown.position.copy(crownStart).add(crownEnd).multiplyScalar(0.5)
+      .addScaledVector(up, -crownDepth / 2);
+    crown.name = options.debugName || 'mycelium-branch-crown';
+    crown.userData.routeStart = crownStart.toArray();
+    crown.userData.routeEnd = crownEnd.toArray();
+    crown.castShadow = crown.receiveShadow = true;
+    scene.add(crown);
+  }
   const steps = Math.max(2, Math.ceil(horizontalLength / 2.4));
   const stepX = delta.x / steps;
   const stepZ = delta.z / steps;
@@ -15060,10 +15361,10 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05) {
     const z = start.z + delta.z * t;
     world.colliders.push({
       type: 'box',
-      min: V(x - Math.abs(stepX) * 0.62 - radius * 0.48, y - radius * 1.3,
-        z - Math.abs(stepZ) * 0.62 - radius * 0.48),
-      max: V(x + Math.abs(stepX) * 0.62 + radius * 0.48, y,
-        z + Math.abs(stepZ) * 0.62 + radius * 0.48),
+      min: V(x - Math.abs(stepX) * 0.62 - walkRadius * 0.48, y - plankDepth,
+        z - Math.abs(stepZ) * 0.62 - walkRadius * 0.48),
+      max: V(x + Math.abs(stepX) * 0.62 + walkRadius * 0.48, y,
+        z + Math.abs(stepZ) * 0.62 + walkRadius * 0.48),
     });
     if (i % 2 === 0 || i === steps) {
       wp(world, x, y, z);
@@ -15075,25 +15376,297 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05) {
   }
 }
 
-function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed) {
-  const deck = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.82, radius, 0.72, 13, 2),
-    mat(0xffffff, { tex: 'canopy-bark', repeat: [3, 2], roughness: 0.98 }),
+function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) {
+  // Platform caps can stand over pond slopes and other uneven terrain. Sink
+  // the stalk well below the lowest playable ground so its flat end is never
+  // exposed when viewed from underwater or downhill.
+  const stemBottomY = -6;
+  const stemTopY = topY - 0.25;
+  const stemHeight = Math.max(2.4, stemTopY - stemBottomY);
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.2, radius * 0.31, stemHeight, 12, 3),
+    mat(0xe1d2d9, { roughness: 0.86, flatShading: true }),
   );
-  deck.position.set(x, y - 0.36, z);
+  stem.position.set(x, (stemBottomY + stemTopY) / 2, z);
+  stem.rotation.z = Math.sin(seed * 2.1) * 0.035;
+  stem.castShadow = stem.receiveShadow = true;
+
+  const capMaterial = new THREE.MeshStandardMaterial({
+    color, roughness: 0.62, emissive: new THREE.Color(color), emissiveIntensity: 0.16,
+    flatShading: true,
+  });
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.9, radius, 0.82, 20, 2),
+    capMaterial,
+  );
+  cap.position.set(x, topY - 0.41, z);
+  cap.rotation.y = seed * 0.83;
+  cap.castShadow = cap.receiveShadow = true;
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    capMaterial,
+  );
+  // Keep the visible dome apex exactly on the walkable collision plane.
+  dome.position.set(x, topY - 0.5, z);
+  dome.scale.set(radius * 0.97, 0.5, radius * 0.97);
+  dome.castShadow = dome.receiveShadow = true;
+  scene.add(stem, cap, dome);
+
+  const stemRadius = radius * 0.26;
+  world.colliders.push(
+    { type: 'box', min: V(x - stemRadius, stemBottomY, z - stemRadius), max: V(x + stemRadius, topY - 0.75, z + stemRadius) },
+    { type: 'box', min: V(x - radius * 0.78, topY - 0.82, z - radius * 0.78), max: V(x + radius * 0.78, topY, z + radius * 0.78) },
+  );
+  wp(world, x, topY, z);
+  world.anim.push((_dt, t) => {
+    capMaterial.emissiveIntensity = 0.13 + Math.sin(t * 0.75 + seed) * 0.045;
+  });
+  return { x, y: topY, z, radius };
+}
+
+function addHollowMyceliumLogTunnel(scene, world, x, z, length = 48, radius = 5.4) {
+  const bark = mat(0xffffff, {
+    tex: 'canopy-bark', repeat: [2, Math.max(5, length / 5)], roughness: 0.98,
+    side: THREE.DoubleSide,
+  });
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 22, 5, true), bark);
+  shell.rotation.z = Math.PI / 2;
+  shell.position.set(x, radius - 0.2, z);
+  shell.castShadow = shell.receiveShadow = true;
+  scene.add(shell);
+  for (const endX of [x - length / 2, x + length / 2]) {
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(radius, 0.48, 8, 22),
+      mat(0x59402d, { roughness: 0.98, flatShading: true }),
+    );
+    rim.rotation.y = Math.PI / 2;
+    rim.position.set(endX, radius - 0.2, z);
+    rim.castShadow = rim.receiveShadow = true;
+    scene.add(rim);
+  }
+
+  // Match the visible tube with one analytic hollow-cylinder collider. The
+  // former stack of rectangular bands made both the outside and the tunnel
+  // wall feel like stairs even though the rendered log was perfectly round.
+  const half = length / 2;
+  world.colliders.push({
+    type: 'cylinderShell',
+    center: V(x, radius - 0.2, z),
+    axis: 'x',
+    halfLength: half,
+    innerRadius: radius - 0.38,
+    outerRadius: radius,
+    debugName: 'mycelium-hollow-log-shell',
+  });
+  for (const px of [x - half - 2, x, x + half + 2]) wp(world, px, 0.1, z);
+  for (const px of [x - half + 2, x, x + half - 2]) wp(world, px, radius * 1.94, z);
+  const leftVineX = x - Math.min(10, half - 2);
+  // The east bank rises under the log, so keep this climb nearer the center
+  // where its full capsule clears both the hill and the rounded bark bands.
+  const rightVineX = x + Math.min(4, half - 2);
+  const leftVineZ = z - radius - 1.35;
+  const rightVineZ = z + radius + 1.35;
+  addVine(scene, world, leftVineX, leftVineZ, 0.1, radius * 1.94 + 0.1,
+    0.95, 0, -0.18, 0, 1, 0.18, 1.35, 0x65ef9b);
+  addVine(scene, world, rightVineX, rightVineZ, 0.1, radius * 1.94 + 0.1,
+    0.95, 0, 0.18, 0, -1, 0.18, 1.35, 0x9c78ff);
+  wp(world, leftVineX, 0.1, leftVineZ);
+  wp(world, rightVineX, 0.1, rightVineZ);
+  wp(world, leftVineX, radius * 1.94, z);
+  wp(world, rightVineX, radius * 1.94, z);
+  world.manualLinks.push(
+    [x - half - 2, 0.1, z, x, 0.1, z], [x, 0.1, z, x + half + 2, 0.1, z],
+    [leftVineX, 0.1, leftVineZ, leftVineX, radius * 1.94, z],
+    [rightVineX, 0.1, rightVineZ, rightVineX, radius * 1.94, z],
+    [leftVineX, radius * 1.94, z, x, radius * 1.94, z],
+    [rightVineX, radius * 1.94, z, x, radius * 1.94, z],
+    [x - half + 2, radius * 1.94, z, x, radius * 1.94, z],
+    [x, radius * 1.94, z, x + half - 2, radius * 1.94, z],
+  );
+}
+
+function addMyceliumRingDeck(scene, world, x, y, z, outerRadius, innerRadius, color) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(innerRadius, outerRadius, 28),
+    mat(color, { tex: 'canopy-bark', repeat: [3, 3], roughness: 0.98, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, y - 0.03, z);
+  ring.receiveShadow = true;
+  scene.add(ring);
+  const band = outerRadius - innerRadius;
+  const mid = (outerRadius + innerRadius) / 2;
+  // Follow the circular deck with short tangent cells. The previous four-box
+  // approximation filled the square corners outside the visible ring and
+  // created invisible walls across the route.
+  const segments = 40;
+  const radialHalf = band / 2;
+  const tangentHalf = Math.PI * mid / segments * 1.08;
+  for (let i = 0; i < segments; i++) {
+    const angle = i * Math.PI * 2 / segments;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const extentX = Math.abs(cos) * radialHalf + Math.abs(sin) * tangentHalf;
+    const extentZ = Math.abs(sin) * radialHalf + Math.abs(cos) * tangentHalf;
+    const cx = x + cos * mid;
+    const cz = z + sin * mid;
+    world.colliders.push({
+      type: 'box',
+      min: V(cx - extentX, y - 0.7, cz - extentZ),
+      max: V(cx + extentX, y, cz + extentZ),
+    });
+  }
+  for (const [dx, dz] of [[-mid, 0], [mid, 0], [0, -mid], [0, mid]]) wp(world, x + dx, y, z + dz);
+  world.manualLinks.push(
+    [x - mid, y, z, x, y, z - mid], [x, y, z - mid, x + mid, y, z],
+    [x + mid, y, z, x, y, z + mid], [x, y, z + mid, x - mid, y, z],
+  );
+  return { band };
+}
+
+function addHollowMyceliumTree(scene, world, x, baseY, z) {
+  const radius = 9.6;
+  const innerRadius = 7.35;
+  const trunkHeight = 25;
+  (world.myceliumTreeRoots ||= []).push({ x, z, baseY, radius, kind: 'hollow-elder' });
+  const wallThickness = radius - innerRadius;
+  const wallMidRadius = (radius + innerRadius) / 2;
+  const wallSegments = 36;
+  const tangentWidth = Math.PI * 2 * wallMidRadius / wallSegments * 1.08;
+  const branchDoors = [0, Math.PI, Math.PI / 4, Math.PI * 3 / 4];
+  const tunnelDoors = [Math.PI / 2, Math.PI * 3 / 2];
+  const angleDistance = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  const wallBands = [
+    [baseY, baseY + 4.2, tunnelDoors, 0.34],
+    [baseY + 4.2, baseY + 7.05, [], 0],
+    [baseY + 7.05, baseY + 10.35, branchDoors, 0.36],
+    [baseY + 10.35, baseY + 14.05, [], 0],
+    [baseY + 14.05, baseY + 17.35, branchDoors, 0.36],
+    [baseY + 17.35, baseY + trunkHeight, [], 0],
+  ];
+  const wallPieces = [];
+  for (const [minY, maxY, doors, doorHalfAngle] of wallBands) {
+    for (let i = 0; i < wallSegments; i++) {
+      const angle = i * Math.PI * 2 / wallSegments;
+      if (doors.some(door => angleDistance(angle, door) < doorHalfAngle)) continue;
+      wallPieces.push({ angle, minY, maxY });
+    }
+  }
+  const bark = mat(0xffffff, {
+    tex: 'canopy-bark', repeat: [2, 7], roughness: 0.99,
+  });
+  const shell = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), bark, wallPieces.length);
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  wallPieces.forEach((piece, index) => {
+    const { angle, minY, maxY } = piece;
+    const yaw = Math.PI / 2 - angle;
+    const height = maxY - minY;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    position.set(x + cos * wallMidRadius, (minY + maxY) / 2, z + sin * wallMidRadius);
+    rotation.setFromAxisAngle(V(0, 1, 0), yaw);
+    scale.set(tangentWidth, height, wallThickness);
+    matrix.compose(position, rotation, scale);
+    shell.setMatrixAt(index, matrix);
+    const halfTangent = tangentWidth / 2;
+    const halfWall = wallThickness / 2;
+    const extentX = Math.abs(Math.cos(yaw)) * halfTangent + Math.abs(Math.sin(yaw)) * halfWall;
+    const extentZ = Math.abs(Math.sin(yaw)) * halfTangent + Math.abs(Math.cos(yaw)) * halfWall;
+    world.colliders.push({
+      type: 'box',
+      min: V(position.x - extentX, minY, position.z - extentZ),
+      max: V(position.x + extentX, maxY, position.z + extentZ),
+    });
+  });
+  shell.instanceMatrix.needsUpdate = true;
+  shell.castShadow = shell.receiveShadow = true;
+  scene.add(shell);
+
+  addMyceliumRingDeck(scene, world, x, baseY + 8, z, 7.25, 3.15, 0x5b4638);
+  addMyceliumRingDeck(scene, world, x, baseY + 15, z, 7.05, 3.15, 0x654a3a);
+  addJumpPad(scene, world, x, baseY, z, 29, 2.8, 0, 0xa86cff);
+  wp(world, x, baseY + 0.1, z + radius + 2.5);
+  wp(world, x, baseY + 0.1, z - radius - 2.5);
+  world.manualLinks.push(
+    [x, baseY + 0.1, z + radius + 2.5, x, baseY + 0.1, z],
+    [x, baseY + 0.1, z - radius - 2.5, x, baseY + 0.1, z],
+  );
+
+  // An exterior vine keeps the lower ring reachable in either direction; the
+  // launcher is the fast interior route to the upper canopy.
+  const vineAngle = Math.PI * 3 / 4;
+  const vineRadius = radius + 1.35;
+  const vineX = x + Math.cos(vineAngle) * vineRadius;
+  const vineZ = z + Math.sin(vineAngle) * vineRadius;
+  addVine(scene, world, vineX, vineZ, baseY + 0.1, baseY + 8.15, 0.95,
+    -0.18, 0.18, Math.SQRT1_2, -Math.SQRT1_2, 0.18, 1.35, 0x65ef9b);
+  wp(world, vineX, baseY + 0.1, vineZ);
+  world.manualLinks.push([vineX, baseY + 0.1, vineZ, x - 5, baseY + 8, z + 5]);
+
+  const crownMaterial = new THREE.MeshStandardMaterial({
+    color: 0x315b58, roughness: 0.93, emissive: 0x18383a, emissiveIntensity: 0.2, flatShading: true,
+  });
+  for (const [ox, oy, oz, r] of [[0, 0, 0, 12], [-8, -1, 3, 7.2], [8, -0.5, -3, 7.5], [0, -1, -8, 7]]) {
+    const lobe = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), crownMaterial);
+    lobe.position.set(x + ox, baseY + trunkHeight + oy, z + oz);
+    lobe.scale.y = 0.68;
+    lobe.castShadow = lobe.receiveShadow = true;
+    scene.add(lobe);
+  }
+  (world.foliageZones ||= []).push({ x, y: baseY + trunkHeight, z, r: 16 });
+}
+
+function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed, trunkRadius = 2.35) {
+  // `radius` described the old outer edge. Preserve the trunk footprint while
+  // Keep the expanded balcony substantial without letting it dominate the
+  // surrounding branches: 25% back from the previous 3x treatment leaves the
+  // exposed walking band at 2.25x its original width.
+  const balconyRadius = trunkRadius + (radius - trunkRadius) * 2.25;
+  const thickness = 1.45;
+  const deck = new THREE.Mesh(
+    new THREE.CylinderGeometry(balconyRadius * 0.94, balconyRadius, thickness, 24, 2),
+    mat(0xffffff, {
+      tex: 'canopy-bark', repeat: [Math.max(4, balconyRadius / 2), 2], roughness: 0.98,
+    }),
+  );
+  deck.position.set(x, y - thickness / 2, z);
   deck.rotation.y = seed * 0.61;
   deck.castShadow = deck.receiveShadow = true;
   scene.add(deck);
-  world.colliders.push({
-    type: 'box',
-    min: V(x - radius * 0.76, y - 0.72, z - radius * 0.76),
-    max: V(x + radius * 0.76, y, z + radius * 0.76),
-  });
+
+  // Follow the circular balcony instead of filling its bounding square with
+  // an invisible floor. Short tangent cells provide full-width support while
+  // keeping the outer edge and the trunk opening faithful to the mesh.
+  const innerSupportRadius = trunkRadius * 0.76;
+  const radialHalf = (balconyRadius - innerSupportRadius) / 2;
+  const midRadius = (balconyRadius + innerSupportRadius) / 2;
+  const segments = 48;
+  const tangentHalf = Math.PI * midRadius / segments * 1.08;
+  for (let i = 0; i < segments; i++) {
+    const angle = i * Math.PI * 2 / segments;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const extentX = Math.abs(cos) * radialHalf + Math.abs(sin) * tangentHalf;
+    const extentZ = Math.abs(sin) * radialHalf + Math.abs(cos) * tangentHalf;
+    const cx = x + cos * midRadius;
+    const cz = z + sin * midRadius;
+    world.colliders.push({
+      type: 'box',
+      min: V(cx - extentX, y - thickness, cz - extentZ),
+      max: V(cx + extentX, y, cz + extentZ),
+    });
+  }
   wp(world, x, y, z);
+  return { radius: balconyRadius, thickness };
 }
 
 function addMyceliumRockField(scene, world, specs) {
-  const geometry = new THREE.IcosahedronGeometry(1, 1);
+  // Detail 2 keeps the faceted silhouette while closely following the exact
+  // oriented ellipsoid used by gameplay collision.
+  const geometry = new THREE.IcosahedronGeometry(1, 2);
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff, vertexColors: true, roughness: 0.98, flatShading: true,
   });
@@ -15111,14 +15684,49 @@ function addMyceliumRockField(scene, world, specs) {
     matrix.compose(position, rotation, scale);
     rocks.setMatrixAt(index, matrix);
     rocks.setColorAt(index, new THREE.Color(palette[index % palette.length]));
-    if (collide) world.colliders.push({
-      type: 'sphere', center: V(x, y, z), radius: Math.min(rx, ry, rz) * 0.86,
-    });
+    if (collide) {
+      world.colliders.push({
+        type: 'ellipsoid',
+        center: V(x, y, z),
+        radii: V(rx, ry, rz),
+        rotation: rotation.clone(),
+        inverseRotation: rotation.clone().invert(),
+        debugName: 'mycelium-boulder',
+      });
+    }
   });
   rocks.instanceMatrix.needsUpdate = true;
   if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
   rocks.castShadow = rocks.receiveShadow = true;
   scene.add(rocks);
+}
+
+function myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius) {
+  // Hills in this map are huge buried spheres. Their curved surface often
+  // sits a little below a tree's authored base height on the downhill side,
+  // so a trunk that ends exactly at baseY appears to float. Find the nearby
+  // terrain surface and extend the trunk well through it while leaving the
+  // authored canopy, decks, and branch heights unchanged.
+  let terrainSurface = -Infinity;
+  for (const collider of world.colliders) {
+    if (collider.type !== 'sphere' || collider.radius < 12) continue;
+    const dx = x - collider.center.x;
+    const dz = z - collider.center.z;
+    const horizontalSq = dx * dx + dz * dz;
+    if (horizontalSq >= collider.radius * collider.radius) continue;
+    const surfaceY = collider.center.y
+      + Math.sqrt(collider.radius * collider.radius - horizontalSq);
+    // A buried sphere whose cap never rises through the arena's y=0 ground is
+    // not the tree's visible hillside and should not make the trunk needlessly
+    // extend far underground.
+    if (surfaceY <= 0.05) continue;
+    // Ignore distant buried spheres beneath unrelated platforms or tunnels.
+    if (Math.abs(surfaceY - baseY) > 8) continue;
+    terrainSurface = Math.max(terrainSurface, surfaceY);
+  }
+  const naturalEmbed = Math.max(2.4, trunkRadius * 0.72);
+  if (!Number.isFinite(terrainSurface)) return Math.max(1.35, trunkRadius * 0.38);
+  return Math.max(naturalEmbed, baseY - terrainSurface + naturalEmbed);
 }
 
 function addDenseMyceliumForest(scene, world, specs) {
@@ -15137,15 +15745,20 @@ function addDenseMyceliumForest(scene, world, specs) {
   const scale = new THREE.Vector3();
   const colors = [0x245449, 0x2e6250, 0x31546a, 0x4b4774, 0x386f55];
   specs.forEach(([x, baseY, z, height, radius], index) => {
-    (world.myceliumTreeRoots ||= []).push({ x, z, baseY, radius, kind: 'forest' });
+    const burialDepth = myceliumTreeBurialDepth(world, x, baseY, z, radius);
+    const renderedHeight = height + burialDepth;
+    const visualBaseY = baseY - burialDepth;
+    (world.myceliumTreeRoots ||= []).push({
+      x, z, baseY, visualBaseY, radius, kind: 'forest',
+    });
     rotation.setFromAxisAngle(V(0, 1, 0), index * 1.73);
-    position.set(x, baseY + height / 2, z);
-    scale.set(radius * 0.34, height, radius * 0.34);
+    position.set(x, visualBaseY + renderedHeight / 2, z);
+    scale.set(radius * 0.34, renderedHeight, radius * 0.34);
     matrix.compose(position, rotation, scale);
     trunks.setMatrixAt(index, matrix);
     world.colliders.push({
       type: 'box',
-      min: V(x - radius * 0.27, baseY, z - radius * 0.27),
+      min: V(x - radius * 0.27, visualBaseY, z - radius * 0.27),
       max: V(x + radius * 0.27, baseY + height, z + radius * 0.27),
     });
     for (let lobe = 0; lobe < 3; lobe++) {
@@ -15195,39 +15808,67 @@ function addMyceliumLog(scene, world, x, z, width, depth) {
 }
 
 function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
-  (world.myceliumTreeRoots ||= []).push({ x, z, baseY, radius: 2.35, kind: 'elder' });
   const topDeck = Math.max(...deckHeights);
   const trunkHeight = topDeck - baseY + 8;
   const trunkRadius = 2.35;
+  const burialDepth = myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius);
+  const renderedTrunkHeight = trunkHeight + burialDepth;
+  const visualBaseY = baseY - burialDepth;
+  (world.myceliumTreeRoots ||= []).push({
+    x, z, baseY, visualBaseY, radius: trunkRadius, kind: 'elder',
+  });
   const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(trunkRadius * 0.72, trunkRadius, trunkHeight, 11, 5),
-    mat(0xffffff, { tex: 'canopy-bark', repeat: [2, Math.max(3, trunkHeight / 4)], roughness: 0.98 }),
+    new THREE.CylinderGeometry(trunkRadius * 0.72, trunkRadius, renderedTrunkHeight, 11, 5),
+    mat(0xffffff, {
+      tex: 'canopy-bark', repeat: [2, Math.max(3, renderedTrunkHeight / 4)], roughness: 0.98,
+    }),
   );
-  trunk.position.set(x, baseY + trunkHeight / 2, z);
+  trunk.position.set(x, visualBaseY + renderedTrunkHeight / 2, z);
   trunk.rotation.y = seed * 0.73;
   trunk.castShadow = trunk.receiveShadow = true;
   scene.add(trunk);
   world.colliders.push({
     type: 'box',
-    min: V(x - 1.8, baseY, z - 1.8),
+    min: V(x - 1.8, visualBaseY, z - 1.8),
     max: V(x + 1.8, baseY + trunkHeight, z + 1.8),
   });
 
   deckHeights.forEach((deckY, index) => {
-    const deckRadius = index ? 5.2 : 6.2;
-    addMyceliumCanopyDeck(scene, world, x, deckY, z, deckRadius, seed + index);
+    const oldDeckRadius = index ? 5.2 : 6.2;
+    const { radius: deckRadius } = addMyceliumCanopyDeck(
+      scene, world, x, deckY, z, oldDeckRadius, seed + index, trunkRadius,
+    );
     const dir = (seed + index) % 2 === 0 ? 1 : -1;
     const alongX = index % 2 === 0;
     // Keep the climb volume just beyond the landing collider, with the sheet
     // visibly hooked over the canopy rim. The exit impulse points inward, so
     // reaching the top always pops the climber onto the deck instead of into
     // its underside.
-    const vineX = x + (alongX ? dir * (deckRadius * 0.76 + 0.58) : 0);
-    const vineZ = z + (alongX ? 0 : dir * (deckRadius * 0.76 + 0.58));
+    // A few decks sit directly under inter-tree branches. Give those climbs a
+    // clear face of the canopy instead of letting the widened branch cross the
+    // vine volume. Other elder trees retain their seeded cardinal placement.
+    const clearFaces = {
+      '1:0': -Math.PI / 2,
+      '1:1': Math.PI / 3,
+      '3:0': 0,
+      '3:1': 0,
+      '4:0': Math.PI / 12,
+      '4:1': Math.PI / 2,
+      '5:0': 0,
+    };
+    const clearFace = clearFaces[`${seed}:${index}`];
+    const vineAngle = clearFace ?? (alongX
+      ? (dir > 0 ? 0 : Math.PI)
+      : (dir > 0 ? Math.PI / 2 : -Math.PI / 2));
+    const vineOffset = deckRadius + 1.45;
+    const outwardX = Math.cos(vineAngle);
+    const outwardZ = Math.sin(vineAngle);
+    const vineX = x + outwardX * vineOffset;
+    const vineZ = z + outwardZ * vineOffset;
     const y0 = index === 0 ? baseY + 0.2 : deckHeights[index - 1] + 0.15;
     addVine(scene, world, vineX, vineZ, y0, deckY + 0.15, 0.86,
-      alongX ? dir * 0.18 : 0, alongX ? 0 : dir * 0.18,
-      alongX ? -dir : 0, alongX ? 0 : -dir,
+      outwardX * 0.18, outwardZ * 0.18,
+      -outwardX, -outwardZ,
       0.2, 1.18, index % 2 ? 0x9a74ff : 0x55efba);
     wp(world, vineX, y0, vineZ);
     if (index > 0) world.manualLinks.push([x, deckHeights[index - 1], z, vineX, y0, vineZ]);
@@ -15304,19 +15945,45 @@ function buildMyceliumGrove(scene) {
   // The low slab is now only a safety bed. Moss hills, the pond basin, tunnel
   // ridge, grotto, rocks, roots, and dense trees cover and subdivide it so no
   // sightline reads as an empty rectangular arena.
-  addBox(scene, world, 0, -0.72, 0, 164, 1.44, 164, 0x183d2d, {
-    tex: 'grass', repeat: [24, 24], debugName: 'mycelium-understory-bed',
+  // Leave a real opening beneath the pond instead of placing water over the
+  // arena's ground slab. Four outer beds and four corner shelves frame the
+  // irregular basin without changing the rest of the map's floor.
+  for (const [x, z, w, d, repeat] of [
+    [-50, 0, 64, 164, [10, 24]], [52, 0, 60, 164, [10, 24]],
+    [2, -66, 40, 32, [7, 5]], [2, 30.6, 40, 102.8, [7, 16]],
+    [-12.1, -46.6, 10.6, 6.8, [2, 1]], [16.55, -46.6, 9.5, 6.8, [2, 1]],
+    [-12.1, -24.5, 10.6, 7.4, [2, 1]], [16.55, -24.5, 9.5, 7.4, [2, 1]],
+    [-17.7, -35.4, 0.6, 29.2, [1, 5]], [21.65, -35.4, 0.7, 29.2, [1, 5]],
+  ]) addBox(scene, world, x, -0.72, z, w, 1.44, d, 0x183d2d, {
+    tex: 'grass', repeat, debugName: 'mycelium-understory-bed',
   });
+  // The perimeter must contain players launched from the upper branch network,
+  // not only people walking at ground level. Raise the continuous rock ring
+  // above every playable canopy route and bury its foot below the safety bed so
+  // there is no ledge or lower seam to slip through.
+  const boundaryWallBottom = -2;
+  const boundaryWallTop = 36;
+  const boundaryWallHeight = boundaryWallTop - boundaryWallBottom;
   for (const [x, z, w, d] of [[0, -82, 168, 4], [0, 82, 168, 4], [-82, 0, 4, 168], [82, 0, 4, 168]]) {
-    addBox(scene, world, x, 3.5, z, w, 8, d, 0x203a34, { tex: 'rock', repeat: [12, 2] });
+    addBox(scene, world, x, boundaryWallBottom + boundaryWallHeight / 2, z,
+      w, boundaryWallHeight, d, 0x203a34, {
+        tex: 'rock', repeat: [12, 8], debugName: 'mycelium-perimeter-wall',
+      });
   }
 
-  // Broad convex landforms make the ground itself playable. Their buried
-  // lower halves create continuous mossy slopes instead of raised boxes.
-  for (const [x, y, z, radius] of [
-    [-61, -13.5, -49, 21], [60, -14.5, -49, 22],
-    [66, -15, 25, 23], [-28, -14.5, 69, 21], [29, -15, 70, 21],
-  ]) addAsteroid(scene, world, x, y, z, radius, 0x31583f);
+  // Very large spheres buried almost completely below grade leave broad,
+  // gentle caps above the floor. The old smaller spheres reached similar
+  // heights over much tighter footprints, producing slopes too steep to walk.
+  for (const [x, z, radius, height] of [
+    [-61, -49, 46, 6.5], [60, -49, 48, 6.5],
+    [66, 25, 48, 7], [-28, 69, 44, 6], [29, 70, 44, 6],
+    [-21, 14, 19, 2.8], [23, 18, 20, 2.8],
+    [-12, 38, 18, 2.5], [14, 43, 19, 2.6],
+  ]) addAsteroid(scene, world, x, height - radius, z, radius, 0x31583f);
+
+  // The central clearing now has a landmark at ground and canopy height: a
+  // full-size hollow trunk through the terrain whose roof doubles as a ridge.
+  addHollowMyceliumLogTunnel(scene, world, 0, 31, 50, 5.4);
 
   // A real tunnel passes beneath the western ridge. The planted roof is an
   // upper fighting route, while the two rock-framed mouths lead through a
@@ -15355,16 +16022,22 @@ function buildMyceliumGrove(scene) {
   tunnelLightB.position.set(-52, 2.8, 49);
   scene.add(tunnelLightA, tunnelLightB);
 
-  // Waterfall grove: an irregular boulder shore encloses the pond. Behind the
+  // Waterfall grove: an irregular boulder shore encloses a genuinely deep,
+  // rounded pond. Behind the
   // falling water, a low passage opens into the purple-lit secret chamber;
   // the same rock mass is a climbable shelf above the grotto.
-  addWater(scene, world, 2, 0.2, -35.5, 36, 24, 2.2);
+  const myceliumPondPoints = [
+    [2, -20.8], [10.5, -22.4], [18.3, -27.8], [21.3, -35.2],
+    [18.8, -42.7], [11.8, -48.1], [2.5, -50], [-6.8, -48.4],
+    [-14.7, -43.4], [-17.4, -36], [-15.2, -28.7], [-7, -23],
+  ];
+  addMyceliumPondBasin(scene, world, myceliumPondPoints, 2, -35.5, -4.4);
+  addWater(scene, world, 2, 0.2, -35.4, 40, 29.2, 4.6, { points: myceliumPondPoints });
   addAsteroid(scene, world, -25, -7, -62, 18, 0x2f4d3d);
   addAsteroid(scene, world, 25, -7, -62, 18, 0x2f4d3d);
   // Only the interior collision shell is box-shaped. The visible exterior is
   // the pair of rounded cliff masses plus the broken boulder arch below.
   world.colliders.push(
-    { type: 'box', min: V(-9, 6.6, -78), max: V(9, 9.7, -48) },
     { type: 'box', min: V(-9, 0, -77.3), max: V(9, 7.4, -75.5) },
   );
   const grottoShelf = new THREE.Mesh(
@@ -15376,17 +16049,48 @@ function buildMyceliumGrove(scene) {
   grottoShelf.rotation.y = 0.16;
   grottoShelf.castShadow = grottoShelf.receiveShadow = true;
   scene.add(grottoShelf);
-  addBox(scene, world, 0, 0.05, -63, 17.5, 0.1, 28, 0x284b3d, { tex: 'rock', repeat: [4, 6] });
+  // Match the shelf's visible elliptical top instead of supporting only a
+  // narrow rectangle through its center. Thin cells preserve the open cave
+  // beneath while making the complete green surface reliably walkable.
+  const shelfRadiusX = 11.5;
+  const shelfRadiusZ = 11.5 * 1.22;
+  const shelfRowDepth = 3.4;
+  for (let row = -4; row <= 4; row++) {
+    const offsetZ = row * 3.15;
+    const halfWidth = shelfRadiusX * Math.sqrt(Math.max(0,
+      1 - (offsetZ * offsetZ) / (shelfRadiusZ * shelfRadiusZ)));
+    world.colliders.push({
+      type: 'box',
+      min: V(-halfWidth, 8.85, -63 + offsetZ - shelfRowDepth / 2),
+      max: V(halfWidth, 9.7, -63 + offsetZ + shelfRowDepth / 2),
+    });
+  }
+  // Begin the cave floor where the pond's north ramp reaches ground height;
+  // starting it a meter earlier created a submerged step that blocked players.
+  // The irregular pond is slightly wider than the walkable cave floor at this
+  // seam. Deep, visual-only rock skirts fill those two side slivers so looking
+  // behind the waterfall never exposes the world void, while the full central
+  // swim-through remains physically open.
+  const grottoSeamMaterial = mat(0x284b3d, {
+    tex: 'rock', repeat: [2, 6], roughness: 0.99,
+  });
+  for (const side of [-1, 1]) {
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(4.5, 5.2, 28), grottoSeamMaterial);
+    seam.position.set(side * 10.75, -2.6, -63.5);
+    seam.castShadow = seam.receiveShadow = true;
+    scene.add(seam);
+  }
+  addBox(scene, world, 0, 0.05, -63.5, 17.5, 0.1, 27, 0x284b3d, { tex: 'rock', repeat: [4, 6] });
   addWaterfall(scene, world, 0, -48, 13, 9.5, 0.2, 9.7, 0.8, {
-    skipLip: true, lipColor: 0x315141,
+    skipLip: true, passThrough: true, lipColor: 0x315141,
   });
   addRamp(scene, world, {
-    axis: 'x', minX: -50, maxX: -24, minZ: -72, maxZ: -55,
-    h0: 0, h1: 10, color: 0x315a42, tex: 'grass',
+    axis: 'x', minX: -50, maxX: -10.5, minZ: -72, maxZ: -55,
+    h0: 0, h1: 9.7, color: 0x315a42, tex: 'grass',
   });
   addRamp(scene, world, {
-    axis: 'x', minX: 24, maxX: 50, minZ: -72, maxZ: -55,
-    h0: 10, h1: 0, color: 0x315a42, tex: 'grass',
+    axis: 'x', minX: 10.5, maxX: 50, minZ: -72, maxZ: -55,
+    h0: 9.7, h1: 0, color: 0x315a42, tex: 'grass',
   });
   const caveLight = new THREE.PointLight(0x9b6cff, 48, 33);
   caveLight.position.set(0, 3.8, -66);
@@ -15432,22 +16136,22 @@ function buildMyceliumGrove(scene) {
     const angle = Math.PI * i / 9;
     const radius = 1.8 + (i % 3) * 0.4;
     rockSpecs.push([-52 + Math.cos(angle) * 10.6, 3.2 + Math.sin(angle) * 4.6,
-      z, radius, radius * 0.8, radius, i === 0 || i === 9]);
+      z, radius, radius * 0.8, radius, true]);
   }
   // The tunnel collision remains simple and dependable, but these overlapping
   // stones are its exterior. They hide every rectangular roof/side edge and
   // make the upper route read as a planted ridge with a hollow beneath it.
   for (const z of [21, 32, 44, 55]) {
-    rockSpecs.push([-65, 3.1, z, 5.8, 4.6, 6.8, false]);
-    rockSpecs.push([-39, 3.0, z + 1.4, 5.6, 4.5, 6.5, false]);
+    rockSpecs.push([-65, 3.1, z, 5.8, 4.6, 6.8, true]);
+    rockSpecs.push([-39, 3.0, z + 1.4, 5.6, 4.5, 6.5, true]);
   }
   for (const [z, offset] of [[22, -1.4], [34, 1.1], [46, -0.6], [54, 1.5]]) {
-    rockSpecs.push([-52 + offset, 7.2, z, 10.2, 3.2, 6.8, false]);
+    rockSpecs.push([-52 + offset, 7.2, z, 10.2, 3.2, 6.8, true]);
   }
   for (const spec of [
     [-73, 1.4, -8, 3.4, 2.1, 4.1], [-68, 1.2, -17, 2.7, 1.8, 3.2],
     [71, 1.4, 3, 3.5, 2.1, 4], [57, 1.2, 55, 3, 1.8, 3.6],
-    [-19, 1.2, 56, 3.1, 1.7, 3.8], [18, 1.3, 58, 3.4, 1.9, 3.2],
+    [-28, 1.2, 66, 3.1, 1.7, 3.8], [18, 1.3, 58, 3.4, 1.9, 3.2],
   ]) rockSpecs.push([...spec, true]);
   addMyceliumRockField(scene, world, rockSpecs);
 
@@ -15455,7 +16159,7 @@ function buildMyceliumGrove(scene) {
   // branches cross the pond and reach the waterfall shelf, so vertical combat
   // is a route network rather than isolated square platforms.
   const elderTrees = [
-    [-37, 0, -5, [7, 14], 1], [0, 0, 8, [8, 15], 2], [37, 0, -4, [7, 14], 3],
+    [-37, 0, -5, [7, 14], 1], [37, 0, -4, [7, 14], 3],
     [-31, 0, 44, [7, 13], 4], [29, 0, 43, [8, 15], 5],
     [-23, 0, -34, [7, 14], 6], [24, 0, -34, [7, 14], 7],
     [0, 10, -63, [16, 23], 8],
@@ -15463,14 +16167,21 @@ function buildMyceliumGrove(scene) {
   for (const [x, baseY, z, decks, seed] of elderTrees) {
     addMyceliumTree(scene, world, x, baseY, z, decks, seed);
   }
-  for (const [a, b, radius] of [
-    [V(-37, 7, -5), V(0, 8, 8), 1.18], [V(0, 8, 8), V(37, 7, -4), 1.18],
+  addHollowMyceliumTree(scene, world, 0, 0, 8);
+  for (const [a, b, radius, options] of [
+    [V(-37, 7, -5), V(-7, 8, 8), 1.18], [V(7, 8, 8), V(37, 7, -4), 1.18],
     [V(-37, 7, -5), V(-31, 7, 44), 1.12], [V(37, 7, -4), V(29, 8, 43), 1.12],
     [V(-37, 7, -5), V(-23, 7, -34), 1.05], [V(37, 7, -4), V(24, 7, -34), 1.05],
     [V(-31, 13, 44), V(29, 15, 43), 1.02],
     [V(-23, 14, -34), V(0, 16, -63), 1.08], [V(24, 14, -34), V(0, 16, -63), 1.08],
-    [V(-37, 14, -5), V(0, 15, 8), 0.98], [V(0, 15, 8), V(37, 14, -4), 0.98],
-  ]) addWalkableMyceliumBranch(scene, world, a, b, radius);
+    [V(-37, 14, -5), V(-7, 15, 8), 0.98], [V(7, 15, 8), V(37, 14, -4), 0.98],
+    [V(-31, 7, 44), V(-20, 10.55, 31), 1.08,
+      { crownEndInset: 4.6, debugName: 'hollow-log-west-approach' }],
+    [V(20, 10.55, 31), V(29, 8, 43), 1.08,
+      { crownStartInset: 4.6, debugName: 'hollow-log-east-approach' }],
+    [V(-31, 13, 44), V(-5, 15, 13), 1.0], [V(5, 15, 13), V(29, 15, 43), 1.0],
+    [V(-37, 14, -5), V(-31, 13, 44), 0.98], [V(37, 14, -4), V(29, 15, 43), 0.98],
+  ]) addWalkableMyceliumBranch(scene, world, a, b, radius, options);
 
   addDenseMyceliumForest(scene, world, [
     [-73, 0, 67, 15, 4.7], [-61, 0, 65, 17, 5.2], [-49, 7.5, 35, 15, 4.7],
@@ -15479,7 +16190,7 @@ function buildMyceliumGrove(scene) {
     [35, 7.1, -67, 18, 5.4], [56, 5.2, -58, 16, 5], [69, 2.9, -39, 17, 5.3],
     [72, 0, -7, 15, 4.6], [70, 7.1, 20, 17, 5.2], [68, 0, 57, 17, 5],
     [53, 0, 67, 15, 4.6], [12, 0, 70, 15, 4.8], [-8, 0, 72, 16, 5],
-    [-46, 0, 66, 15, 4.7], [-17, 0, 28, 13, 4.2], [17, 0, 28, 14, 4.3],
+    [-46, 0, 66, 15, 4.7],
     [-56, 0, 3, 13, 4.2], [57, 0, 4, 14, 4.4], [-50, 0, -24, 14, 4.6],
     [50, 0, -24, 13, 4.3], [-70, 0, 34, 15, 4.7], [70, 0, 40, 15, 4.7],
   ]);
@@ -15490,10 +16201,83 @@ function buildMyceliumGrove(scene) {
   addBouncyMushroom(scene, world, 18, 0, -13, 0.5, 3.6, 19.5, 0x4fd6ff, 4.2, -7.2);
   addBouncyMushroom(scene, world, -63, 0, -3, 0.7, 3.2, 16.5, 0xff789e, 6.8, 3.2);
   addBouncyMushroom(scene, world, 62, 0, 12, 0.65, 3.4, 17.5, 0x6ff0ad, -6.7, 2.8);
-  addBouncyMushroom(scene, world, -19, 0, 58, 0.65, 3.3, 16.5, 0xffbd55, 4.8, -2.4);
+  // Clears the nearby tall-cap chain: the descending arc lands around the
+  // broad platform at (-10, 15, 55), rather than peaking below its rim.
+  addBouncyMushroom(scene, world, -19, 0, 58, 0.65, 3.3, 22.5, 0xffbd55, 4.8, -2.4);
   addBouncyMushroom(scene, world, 17, 0, 59, 0.58, 3.5, 17.5, 0x8c77ff, -4.8, -2.6);
   addBouncyMushroom(scene, world, -52, 7.5, 37, 0.65, 3.1, 17.5, 0x65f2d1, 5.6, -2.2);
   addBouncyMushroom(scene, world, 29, 10, -60, 0.7, 3.2, 17.5, 0x67f0cf, -5.2, 4.8);
+
+  // The grassy shelf above the waterfall sits beneath the rear elder tree's
+  // first balcony. Launch inward from beyond the balcony rim so players rise
+  // past its outer edge and land on top instead of striking its underside.
+  const waterfallShelfLauncher = addBouncyMushroom(
+    scene, world, 15, 8.6, -62, 0.5, 1.8, 16.5, 0x72f2da, -6.2, 0,
+  );
+  wp(world, 15, waterfallShelfLauncher.topY, -62);
+  world.manualLinks.push([15, waterfallShelfLauncher.topY, -62, 0, 16, -63, true]);
+
+  // Broad, non-bouncy caps form real mid-air rooms and stepping-stone routes.
+  // The lower trio wraps around the log ridge; the rear chain gives the upper
+  // village a second route that is exposed and jump-based instead of a limb.
+  for (const spec of [
+    [-16, 8, 22, 4.6, 0x8b69df, 1], [0, 9.5, 21, 4.8, 0x4dbfa9, 2], [16, 8, 22, 4.6, 0xd269a9, 3],
+    [-20, 14, 51, 4.3, 0xb667d5, 4], [-10, 15, 55, 4.2, 0x5caed4, 5],
+    [0, 15.5, 56, 4.4, 0xe17aa7, 6], [10, 15, 55, 4.2, 0x6ccf9b, 7],
+    [20, 14.5, 51, 4.3, 0xb08bea, 8],
+    [-12, 18.5, -44, 4.1, 0x5dbfc0, 9], [-7.5, 20, -52, 4.4, 0xad75e8, 10],
+    [7.5, 20, -52, 4.4, 0x6cbfd6, 11], [12, 18.5, -44, 4.1, 0xeb7caa, 12],
+  ]) addPlatformMushroom(scene, world, ...spec);
+
+  // The outer east and west clearings were visually flat compared with the
+  // center canopy. These mirrored, non-bouncy platforms create side routes
+  // that rise back toward the elder-tree branches instead of ending at the
+  // perimeter wall.
+  for (const spec of [
+    [-63, 5.5, -19, 5.2, 0x58c9b0, 21],
+    [-54, 9, -9, 5.0, 0xb06ddd, 22],
+    [-46, 12.5, 1, 4.8, 0xe27fa9, 23],
+    [63, 5.5, -18, 5.2, 0x69bfe1, 24],
+    [54, 9, -8, 5.0, 0xc873df, 25],
+    [46, 12.5, 2, 4.8, 0x66d39f, 26],
+  ]) addPlatformMushroom(scene, world, ...spec);
+
+  // Small directional caps carry players up each new three-platform chain;
+  // exterior vines make both routes reversible from ground level.
+  addBouncyMushroom(scene, world, -63, 5.5, -19, 0.35, 1.25, 13.5, 0x7af2cf, 7.9, 8.8);
+  addBouncyMushroom(scene, world, -54, 9, -9, 0.35, 1.25, 13.5, 0xd58aff, 7.0, 8.8);
+  addBouncyMushroom(scene, world, 63, 5.5, -18, 0.35, 1.25, 13.5, 0x7edcff, -7.9, 8.8);
+  addBouncyMushroom(scene, world, 54, 9, -8, 0.35, 1.25, 13.5, 0xe08bff, -7.0, 8.8);
+  addVine(scene, world, -66, -24, 0.1, 5.65, 0.95, -0.12, -0.1, 0.514, 0.857,
+    0.18, 1.3, 0x66e6a0);
+  addVine(scene, world, 68.2, -18, 0.1, 5.65, 0.95, 0.12, 0, -1, 0,
+    0.18, 1.3, 0x9c78ff);
+  wp(world, -66, 0.1, -24);
+  wp(world, 68.2, 0.1, -18);
+  world.manualLinks.push(
+    [-66, 0.1, -24, -63, 5.5, -19],
+    [-63, 5.5, -19, -54, 9, -9],
+    [-54, 9, -9, -46, 12.5, 1],
+    [-46, 12.5, 1, -37, 14, -5],
+    [68.2, 0.1, -18, 63, 5.5, -18],
+    [63, 5.5, -18, 54, 9, -8],
+    [54, 9, -8, 46, 12.5, 2],
+    [46, 12.5, 2, 37, 14, -4],
+  );
+
+  // Mini caps on the lower platforms are directional elevators to the upper
+  // ring and its outgoing branches, rather than generic straight-up pads.
+  addBouncyMushroom(scene, world, -16, 8, 22, 0.35, 1.35, 16.5, 0x73f1cf, 5.2, -5.2);
+  addBouncyMushroom(scene, world, 16, 8, 22, 0.35, 1.35, 16.5, 0xff85bd, -5.2, -5.2);
+  addBouncyMushroom(scene, world, -12, 18.5, -44, 0.3, 1.25, 14.5, 0x7bf5de, 4.8, -3.5);
+  addBouncyMushroom(scene, world, 12, 18.5, -44, 0.3, 1.25, 14.5, 0xff92c8, -4.8, -3.5);
+
+  // Vines make each new chain reversible and create deliberate up/down loops.
+  addVine(scene, world, -20.1, 23.4, 0.1, 8.15, 0.9, -0.15, 0.1, 1, -0.15, 0.18, 1.25, 0x66e6a0);
+  addVine(scene, world, 10.69, 23.42, 0.1, 8.15, 0.9, -0.17, 0.05, 0.966, -0.259, 0.18, 1.25, 0xa878ef);
+  addVine(scene, world, -14.5, 51, 7.1, 14.15, 0.9, 0.18, 0, -1, 0, 0.18, 1.25, 0x67efb2);
+  addVine(scene, world, 14.5, 51, 8.1, 14.65, 0.9, -0.18, 0, 1, 0, 0.18, 1.25, 0x9c76ed);
+  addVine(scene, world, -7.5, -46.5, 10.1, 20.15, 0.95, 0, 0.18, 0, -1, 0.18, 1.35, 0x7fe6bd);
 
   addMyceliumPatch(scene, world, 118);
   addMyceliumSpores(scene, world);
@@ -15502,7 +16286,7 @@ function buildMyceliumGrove(scene) {
   // obstacle course; each is embedded at the foot of a hill or tree cluster.
   for (const [x, z, w, d] of [
     [-66, 12, 15, 2.3], [65, 51, 14, 2.2], [-12, 53, 13, 2.2],
-    [51, -16, 2.2, 14], [-48, -20, 2.2, 13], [0, 27, 12, 2.2],
+    [51, -16, 2.2, 14], [-48, -20, 2.2, 13],
   ]) addMyceliumLog(scene, world, x, z, w, d);
 
   world.spawns.blue.push(
@@ -15513,7 +16297,7 @@ function buildMyceliumGrove(scene) {
   );
   world.spawns.ffa.push(
     ...world.spawns.blue, ...world.spawns.red,
-    V(0, 0.1, 63), V(0, 0.1, 3), V(3.1, 8.2, 8), V(3.1, 15.2, 8),
+    V(0, 0.1, 63), V(0, 0.1, 18), V(3.1, 8.2, 8), V(3.1, 15.2, 8),
     V(0, 0.25, -63), V(-52, 7.7, 43),
   );
 
@@ -15536,7 +16320,7 @@ function buildMyceliumGrove(scene) {
   pk(world, 'shield', 0, 0.2, 36);
   pk(world, 'speed', -25, 0.2, -19);
   pk(world, 'djump', 27, 0.2, -18);
-  pk(world, 'silver', -5, 0.25, -59);
+  pk(world, 'silver', -4, 0.25, -72);
   pk(world, 'gold', 5, 23.2, -66);
   pk(world, 'star', 0, 0.25, -73, { hidden: true });
   pk(world, 'star', -52, 7.7, 30, { hidden: true });
@@ -15548,7 +16332,7 @@ function buildMyceliumGrove(scene) {
     [-18, 0, -24], [18, 0, -24], [-15, 0.2, -43], [15, 0.2, -43],
     [0, 0.2, -52], [0, 0.2, -63], [0, 0.2, -71],
     [-52, 0, 18], [-52, 0, 28], [-52, 0, 40], [-52, 0, 54], [-52, 7.5, 37],
-    [-61, 7, -49], [60, 7, -49], [66, 8, 25], [-28, 6, 69], [29, 6, 70],
+    [-61, 6.4, -49], [60, 6.4, -49], [66, 6.9, 25], [-28, 5.9, 69], [29, 5.9, 70],
     [-24, 10, -63], [0, 10, -63], [24, 10, -63],
     [-66, 0, 30], [66, 0, 30], [-72, 0, -25], [72, 0, -25],
     [-10, 0, -8], [10, 0, -8], [-50, 0, -63], [50, 0, -63],
@@ -15569,14 +16353,23 @@ function buildMyceliumGrove(scene) {
   linkRoute([[-66, 0, 30], [-52, 0, 18], [-52, 0, 28], [-52, 0, 40], [-52, 0, 54], [-60, 0, 58]]);
   linkRoute([[-76, 0, 37], [-52, 7.5, 37], [-52, 7.5, 43], [-28, 0, 37]]);
   linkRoute([[-50, 0, -63], [-24, 10, -63], [0, 10, -63], [24, 10, -63], [50, 0, -63]]);
-  linkRoute([[-72, 0, -25], [-61, 7, -49], [-50, 0, -63]]);
-  linkRoute([[72, 0, -25], [60, 7, -49], [50, 0, -63]]);
-  linkRoute([[70, 0, 5], [66, 8, 25], [66, 0, 30]]);
-  linkRoute([[-34, 0, 60], [-28, 6, 69]]);
-  linkRoute([[34, 0, 60], [29, 6, 70]]);
+  linkRoute([[-72, 0, -25], [-61, 6.4, -49], [-50, 0, -63]]);
+  linkRoute([[72, 0, -25], [60, 6.4, -49], [50, 0, -63]]);
+  linkRoute([[70, 0, 5], [66, 6.9, 25], [66, 0, 30]]);
+  linkRoute([[-34, 0, 60], [-28, 5.9, 69]]);
+  linkRoute([[34, 0, 60], [29, 5.9, 70]]);
+  linkRoute([[-31, 13, 44], [-20, 14, 51], [-10, 15, 55], [0, 15.5, 56], [10, 15, 55], [20, 14.5, 51], [29, 15, 43]]);
+  linkRoute([[-23, 14, -34], [-12, 18.5, -44], [-7.5, 20, -52], [7.5, 20, -52], [12, 18.5, -44], [24, 14, -34]]);
+  linkRoute([[-31, 7, 44], [-16, 8, 22], [0, 9.5, 21], [16, 8, 22], [29, 8, 43]]);
   world.manualLinks.push(
     [-52, 0, 18, -52, 0, 28], [-52, 0, 40, -52, 0, 54],
     [-52, 0, 28, -52, 7.5, 37], [0, 0.2, -52, 0, 10, -63],
+    [0, 0.1, 8, 4.2, 15, 8, true],
+    [-20, 0, 26, 0, 0, 28], [20, 0, 26, 0, 0, 28],
+    [-20.1, 0.1, 23.4, -16, 8, 22, true], [20.1, 0.1, 23.4, 16, 8, 22, true],
+    [-16, 8, 22, -4.7, 15, 8, true], [16, 8, 22, 4.7, 15, 8, true],
+    [-23.8, 7.1, 51, -20, 14, 51, true], [23.8, 8.1, 51, 20, 14.5, 51, true],
+    [-7.5, 10.1, -56.1, -7.5, 20, -52, true],
   );
 
   mergeStatic(scene, world);

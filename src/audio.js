@@ -9,7 +9,8 @@ let _sourceAt = null;
 const noiseBuffers = new Map();
 const sampleBuffers = new Map();
 const sampleSequence = new Map();
-let samplesWarmed = false;
+const sampleLoads = new Map();
+let sampleWarmPromise = null;
 const SAMPLE_GROUPS = {
   small: Array.from({ length: 5 }, (_, i) => `laserSmall_${String(i).padStart(3, '0')}.ogg`),
   retro: Array.from({ length: 5 }, (_, i) => `laserRetro_${String(i).padStart(3, '0')}.ogg`),
@@ -22,19 +23,51 @@ const SAMPLE_GROUPS = {
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') ctx.resume();
-  if (!samplesWarmed) warmSampleBank();
   return ctx;
 }
 
-function warmSampleBank() {
-  samplesWarmed = true;
-  for (const file of Object.values(SAMPLE_GROUPS).flat()) {
-    fetch(`./assets/sfx/${file}`)
-      .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('sample unavailable')))
-      .then(data => ctx.decodeAudioData(data))
-      .then(buffer => sampleBuffers.set(file, buffer))
-      .catch(() => {});
-  }
+function loadSampleFile(file) {
+  if (sampleBuffers.has(file)) return Promise.resolve(sampleBuffers.get(file));
+  if (sampleLoads.has(file)) return sampleLoads.get(file);
+  const load = fetch(`./assets/sfx/${file}`)
+    .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('sample unavailable')))
+    .then(data => ctx?.decodeAudioData(data))
+    .then((buffer) => {
+      if (buffer) sampleBuffers.set(file, buffer);
+      return buffer;
+    })
+    .catch(() => null);
+  sampleLoads.set(file, load);
+  return load;
+}
+
+function waitForAudioIdleSlice() {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(resolve, { timeout: 1200 });
+    else setTimeout(resolve, 16);
+  });
+}
+
+// Called from the player's first Atrium interaction, when creating/resuming an
+// AudioContext is allowed. Decode one short sample per idle slice instead of
+// releasing 28 concurrent decodes during the gate transition.
+export function warmAudioSamplesInBackground() {
+  if (sampleWarmPromise) return sampleWarmPromise;
+  try { ac(); } catch { return Promise.resolve(); }
+  const all = Object.values(SAMPLE_GROUPS).flat();
+  const priority = [
+    SAMPLE_GROUPS.small[0], SAMPLE_GROUPS.impact[0], SAMPLE_GROUPS.large[0],
+    SAMPLE_GROUPS.explosion[0], SAMPLE_GROUPS.retro[0],
+    SAMPLE_GROUPS.splashstep[0], SAMPLE_GROUPS.chomp[0],
+  ];
+  const queue = [...new Set([...priority, ...all])];
+  sampleWarmPromise = (async () => {
+    for (const file of queue) {
+      await waitForAudioIdleSlice();
+      await loadSampleFile(file);
+    }
+  })();
+  return sampleWarmPromise;
 }
 // All sfx route through a limiter — a busy firefight used to sum a dozen raw
 // oscillators past 0dB and clip into a horrible buzz.
@@ -145,7 +178,12 @@ function sample(group, { vol = 0.12, rate = 1, delay = 0, alternate = false } = 
     const file = files[index % files.length];
     if (alternate) sampleSequence.set(group, index + 1);
     const buffer = sampleBuffers.get(file);
-    if (!buffer) return;
+    if (!buffer) {
+      // Keep the procedural layer audible now; this sample joins the existing
+      // background queue and will be available on a later shot.
+      loadSampleFile(file);
+      return;
+    }
     const source = a.createBufferSource();
     source.buffer = buffer;
     source.playbackRate.value = rate * (0.97 + Math.random() * 0.06);

@@ -5,6 +5,7 @@ import { moveCharacter, moveCharacterUp, cardinal, clamp, pointInZoneXZ } from '
 import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, updateWeaponWarmupVisual, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx, startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
+import { waterSpeedMultiplier } from './water-movement.js';
 
 export class Player {
   constructor(camera, world) {
@@ -540,8 +541,7 @@ export class Player {
     if (!lava && !waterfall) {
       for (const z of this.world.waterZones || []) {
         if (
-          px >= z.minX && px <= z.maxX &&
-          pz >= z.minZ && pz <= z.maxZ &&
+          pointInZoneXZ(z, px, pz) &&
           midY >= (z.bottomY ?? z.surfaceY - 4) - 0.4 &&
           py < z.surfaceY + 0.35
         ) { water = z; break; }
@@ -581,7 +581,7 @@ export class Player {
       water,
       foliage,
       vine,
-      speedMult: lava ? 0.34 : waterfall ? 0.58 : water ? 0.68 : foliage ? 0.84 : 1,
+      speedMult: lava ? 0.34 : waterfall ? 0.58 : water ? waterSpeedMultiplier(this, water) : foliage ? 0.84 : 1,
     };
   }
 
