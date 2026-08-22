@@ -255,6 +255,8 @@ export function moveCharacter(char, world, dt) {
 
 function moveCharacterStep(char, world, dt) {
   const gravity = world.gravityAt?.(char.pos, char) ?? world.gravity;
+  const previousY = char.pos.y;
+  char._contactPadCooldown = Math.max(0, (char._contactPadCooldown || 0) - dt);
   char.vel.y -= gravity * dt;
   char.pos.addScaledVector(char.vel, dt);
 
@@ -336,10 +338,62 @@ function moveCharacterStep(char, world, dt) {
     }
   }
 
-  // Jump pads: {x, y, z, r, vy, vx?, vz?}
+  // Living mushrooms react to the whole player capsule, not only to feet
+  // landing on their top. A short per-character cooldown prevents the four
+  // movement substeps from retriggering the same cap while still making a
+  // sideways sprint into its rim launch immediately.
+  if (world.jumpPads && char._contactPadCooldown <= 0) {
+    for (const pad of world.jumpPads) {
+      if (!pad.contactBounce || pad.disabled) continue;
+      if (pad.playersOnly && !char.isPlayer) continue;
+      const dx = char.pos.x - pad.x;
+      const dz = char.pos.z - pad.z;
+      const contactRadius = (pad.contactRadius ?? pad.r) + r * 0.65;
+      const capsuleTop = char.pos.y + char.height;
+      if (dx * dx + dz * dz > contactRadius * contactRadius ||
+          capsuleTop < pad.contactMinY || char.pos.y > pad.contactMaxY) continue;
+
+      const horizontalLength = Math.hypot(dx, dz);
+      const velocityLength = Math.hypot(char.vel.x, char.vel.z);
+      const nx = horizontalLength > 0.001 ? dx / horizontalLength
+        : velocityLength > 0.001 ? -char.vel.x / velocityLength : 1;
+      const nz = horizontalLength > 0.001 ? dz / horizontalLength
+        : velocityLength > 0.001 ? -char.vel.z / velocityLength : 0;
+      char.vel.y = pad.vy;
+      if (pad.vx) char.vel.x = pad.vx;
+      else char.vel.x += nx * (pad.sideImpulse || 3.5);
+      if (pad.vz) char.vel.z = pad.vz;
+      else char.vel.z += nz * (pad.sideImpulse || 3.5);
+      char._contactPadCooldown = pad.cooldown || 0.34;
+      pad.onTrigger?.(char);
+      world.onPad?.(char, pad);
+      return false;
+    }
+  }
+
+  // One-way cap tops can still be jumped through from below, then catch the
+  // character's feet on the way down. Contact bounce above handles their rim.
+  if (char.vel.y <= 0 && world.jumpPads) {
+    for (const pad of world.jumpPads) {
+      if (!pad.oneWay || pad.disabled) continue;
+      if (pad.playersOnly && !char.isPlayer) continue;
+      const dx = char.pos.x - pad.x;
+      const dz = char.pos.z - pad.z;
+      if (dx * dx + dz * dz > pad.r * pad.r || previousY < pad.y || char.pos.y > pad.y) continue;
+      char.pos.y = pad.y;
+      char.vel.y = pad.vy;
+      if (pad.vx) char.vel.x = pad.vx;
+      if (pad.vz) char.vel.z = pad.vz;
+      pad.onTrigger?.(char);
+      world.onPad?.(char, pad);
+      return false;
+    }
+  }
+
+  // Ground jump pads: {x, y, z, r, vy, vx?, vz?}
   if (grounded && world.jumpPads) {
     for (const pad of world.jumpPads) {
-      if (pad.disabled) continue;
+      if (pad.oneWay || pad.disabled) continue;
       if (pad.playersOnly && !char.isPlayer) continue;
       if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
           Math.abs(char.pos.y - pad.y) < 1.2) {
@@ -347,7 +401,8 @@ function moveCharacterStep(char, world, dt) {
         if (pad.vx) char.vel.x = pad.vx;
         if (pad.vz) char.vel.z = pad.vz;
         grounded = false;
-        world.onPad?.(char);
+        pad.onTrigger?.(char);
+        world.onPad?.(char, pad);
         break;
       }
     }
@@ -422,14 +477,15 @@ export function moveCharacterUp(char, world, dt, nOut) {
   // Jump pads still fire when you're stood on a +Y surface (the arena floor)
   if (grounded && up.y > 0.9 && world.jumpPads) {
     for (const pad of world.jumpPads) {
-      if (pad.disabled) continue;
+      if (pad.oneWay || pad.disabled) continue;
       if (Math.abs(char.pos.x - pad.x) < pad.r && Math.abs(char.pos.z - pad.z) < pad.r &&
           Math.abs(char.pos.y - pad.y) < 1.2) {
         char.vel.y = pad.vy;
         if (pad.vx) char.vel.x = pad.vx;
         if (pad.vz) char.vel.z = pad.vz;
         grounded = false;
-        world.onPad?.(char);
+        pad.onTrigger?.(char);
+        world.onPad?.(char, pad);
         break;
       }
     }

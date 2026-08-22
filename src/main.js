@@ -4969,6 +4969,22 @@ window.__mapVisualAudit = () => {
     maxDepthLane: boxes.length ? Math.max(...boxes.map(box => box.depthLane ?? 0)) : 0,
   };
 };
+window.__mapDebug = () => ({
+  map: G?.mapDef?.id ?? null,
+  player: G?.player ? {
+    position: G.player.pos.toArray(),
+    velocity: G.player.vel.toArray(),
+    grounded: G.player.grounded,
+  } : null,
+  mushroomPads: (G?.world?.jumpPads || [])
+    .filter(pad => pad.kind === 'mushroom')
+    .map(pad => ({ x: pad.x, y: pad.y, z: pad.z, vy: pad.vy, vx: pad.vx || 0, vz: pad.vz || 0 })),
+  spawns: (G?.world?.spawns?.ffa || []).map(pos => pos.toArray()),
+  pickups: (G?.world?.pickups || []).map(item => ({
+    kind: item.kind,
+    position: item.pos.toArray(),
+  })),
+});
 window.__setGraphics = mode => {
   setGraphicsMode(mode, false, false);
   return window.__perf();
