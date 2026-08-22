@@ -166,22 +166,8 @@
       radial-gradient(circle at 50% 42%, rgba(42,80,138,.42), transparent 28%),
       radial-gradient(circle at 50% 50%, #111a2c 0%, #070b14 58%, #03050a 100%); }
   #maploading[hidden] { display:none; }
-  #maploading::before { content:""; position:absolute; inset:-20%; opacity:.28;
-    background:repeating-conic-gradient(from 12deg at 50% 50%, rgba(127,208,255,.22) 0 1deg, transparent 1deg 11deg);
-    animation:loading-rays 18s linear infinite; }
   .maploading-card { position:relative; display:flex; flex-direction:column; align-items:center;
     width:min(620px,88vw); text-align:center; }
-  .maploading-orbit { position:relative; width:112px; height:112px; margin-bottom:25px;
-    border:2px solid rgba(127,208,255,.18); border-radius:50%;
-    box-shadow:inset 0 0 35px rgba(40,216,255,.08),0 0 42px rgba(40,216,255,.09); }
-  .maploading-orbit::before { content:""; position:absolute; inset:9px; border-radius:50%;
-    border:3px solid transparent; border-top-color:#ffd23c; border-right-color:rgba(255,210,60,.25);
-    animation:loading-orbit 1.15s linear infinite; }
-  .maploading-orbit::after { content:""; position:absolute; left:50%; top:-5px; width:10px; height:10px;
-    margin-left:-5px; border-radius:50%; background:#28d8ff; box-shadow:0 0 18px #28d8ff;
-    transform-origin:5px 61px; animation:loading-orbit 1.8s linear infinite reverse; }
-  #maploadingicon { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    font-size:43px; filter:drop-shadow(0 5px 12px rgba(0,0,0,.55)); }
   #maploadingtitle { max-width:100%; font-size:clamp(30px,6vw,58px); line-height:1;
     color:#ffd23c; letter-spacing:2px; text-shadow:0 4px 0 #8d321d,0 10px 30px rgba(0,0,0,.7); }
   #maploadingstatus { margin-top:15px; color:#cbd8ef; font:800 13px/1.5 Arial,sans-serif;
@@ -191,11 +177,9 @@
   .maploading-track::after { content:""; position:absolute; inset:0; width:42%; border-radius:5px;
     background:linear-gradient(90deg,#28d8ff,#ffd23c); box-shadow:0 0 15px rgba(40,216,255,.65);
     animation:loading-sweep 1.25s ease-in-out infinite; }
-  @keyframes loading-rays { to { transform:rotate(360deg); } }
-  @keyframes loading-orbit { to { transform:rotate(360deg); } }
   @keyframes loading-sweep { from { transform:translateX(-115%); } to { transform:translateX(340%); } }
   @media (prefers-reduced-motion:reduce) {
-    #maploading::before,.maploading-orbit::before,.maploading-orbit::after,.maploading-track::after { animation:none; }
+    .maploading-track::after { animation:none; }
     .maploading-track::after { width:100%; opacity:.72; }
   }
   #pausevolume { display:none; position:absolute; left:50%; bottom:17%; transform:translateX(-50%);
@@ -504,7 +488,6 @@
 <canvas id="game"></canvas>
 <div id="maploading" role="status" aria-live="polite" aria-label="Loading arena" hidden>
   <div class="maploading-card">
-    <div class="maploading-orbit" aria-hidden="true"><div id="maploadingicon">🎯</div></div>
     <div id="maploadingtitle">PREPARING ARENA</div>
     <div id="maploadingstatus">Building the battlefield and warming combat effects</div>
     <div class="maploading-track" aria-hidden="true"></div>

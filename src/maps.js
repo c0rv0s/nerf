@@ -13466,21 +13466,47 @@ function buildOlympusMons(scene) {
 
   // Slow embers make the full sixty-metre chamber legible without adding
   // collision or turning the view into particle noise.
+  const emberCount = 40;
   const emberMat = new THREE.MeshBasicMaterial({ color: 0xff9a3c });
   const emberRnd = seededRandom(0x48414445);
-  for (let i = 0; i < 40; i++) {
-    const ember = new THREE.Mesh(new THREE.SphereGeometry(0.07 + emberRnd() * 0.09, 5, 4), emberMat);
-    const ex = -62 + emberRnd() * 124;
-    const ez = -62 + emberRnd() * 124;
-    const startY = 1 + emberRnd() * 54;
-    const speed = 0.6 + emberRnd() * 1.1;
-    const drift = emberRnd() * Math.PI * 2;
-    scene.add(ember);
-    world.anim.push((dt, t) => {
-      const y = 1 + ((startY + t * speed) % 55);
-      ember.position.set(ex + Math.sin(t * 0.7 + drift) * 0.55, y, ez + Math.cos(t * 0.5 + drift) * 0.35);
-    });
-  }
+  const emberSpecs = Array.from({ length: emberCount }, () => ({
+    radius: 0.07 + emberRnd() * 0.09,
+    x: -62 + emberRnd() * 124,
+    z: -62 + emberRnd() * 124,
+    startY: 1 + emberRnd() * 54,
+    speed: 0.6 + emberRnd() * 1.1,
+    drift: emberRnd() * Math.PI * 2,
+  }));
+  const embers = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 5, 4),
+    emberMat,
+    emberCount,
+  );
+  embers.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  // The full cavern-wide cloud is cheap as one draw and should not disappear
+  // because its instance bounds were computed before a later wraparound.
+  embers.frustumCulled = false;
+  const emberMatrix = new THREE.Matrix4();
+  const emberPosition = new THREE.Vector3();
+  const emberScale = new THREE.Vector3();
+  const emberRotation = new THREE.Quaternion();
+  const updateEmbers = t => {
+    for (let i = 0; i < emberSpecs.length; i++) {
+      const ember = emberSpecs[i];
+      emberPosition.set(
+        ember.x + Math.sin(t * 0.7 + ember.drift) * 0.55,
+        1 + ((ember.startY + t * ember.speed) % 55),
+        ember.z + Math.cos(t * 0.5 + ember.drift) * 0.35,
+      );
+      emberScale.setScalar(ember.radius);
+      emberMatrix.compose(emberPosition, emberRotation, emberScale);
+      embers.setMatrixAt(i, emberMatrix);
+    }
+    embers.instanceMatrix.needsUpdate = true;
+  };
+  updateEmbers(0);
+  scene.add(embers);
+  world.anim.push((_dt, t) => updateEmbers(t));
 
   // Three-stage internal lift links cave/lower hall -> mid deck -> storm
   // gallery -> palace court. Restore the two readable rectangular slabs: the

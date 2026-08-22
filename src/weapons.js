@@ -6,6 +6,7 @@ import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const BEAM_SAMPLE_HEIGHTS = [0.35, 0.55, 0.8];
 
 export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'loophole', 'refractor', 'thunderbolt'];
 
@@ -403,6 +404,22 @@ export class ProjectileSystem {
     this.geoBall = new THREE.SphereGeometry(1, 8, 6);
     this.mats = {};
     this.beamMats = {};
+    this._beamDirection = new THREE.Vector3();
+    this._beamStart = new THREE.Vector3();
+    this._homingDesired = new THREE.Vector3();
+    this._homingCurrent = new THREE.Vector3();
+    this._segmentAB = new THREE.Vector3();
+    this._segmentOffset = new THREE.Vector3();
+    this._segmentClosest = new THREE.Vector3();
+    this._segmentPoint = new THREE.Vector3();
+    this._bodyFoot = new THREE.Vector3();
+    this._bodyHead = new THREE.Vector3();
+    this._headCenter = new THREE.Vector3();
+    this._headOffset = new THREE.Vector3();
+    this._headClosest = new THREE.Vector3();
+    this._step = new THREE.Vector3();
+    this._previous = new THREE.Vector3();
+    this._probe = new THREE.Vector3();
   }
 
   makeShotGroup(owner, weapon) {
@@ -597,7 +614,8 @@ export class ProjectileSystem {
     seg.group.visible = len > 0.05;
     if (!seg.group.visible) return;
     seg.group.position.copy(start).lerp(end, 0.5).multiplyScalar(seg.displayScale || 1);
-    seg.group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
+    this._beamDirection.subVectors(end, start).normalize();
+    seg.group.quaternion.setFromUnitVectors(WORLD_UP, this._beamDirection);
     for (const m of seg.group.children) m.scale.y = len * (seg.displayScale || 1);
   }
 
@@ -842,11 +860,12 @@ export class ProjectileSystem {
   }
 
   distancePointToSegment(point, a, b) {
-    const ab = b.clone().sub(a);
+    const ab = this._segmentAB.subVectors(b, a);
     const d2 = ab.lengthSq();
     if (d2 < 1e-6) return point.distanceTo(a);
-    const t = Math.max(0, Math.min(1, point.clone().sub(a).dot(ab) / d2));
-    return point.distanceTo(a.clone().addScaledVector(ab, t));
+    const t = Math.max(0, Math.min(1,
+      this._segmentOffset.subVectors(point, a).dot(ab) / d2));
+    return point.distanceTo(this._segmentClosest.copy(a).addScaledVector(ab, t));
   }
 
   segmentTouchesTarget(target, a, b, pad = 0) {
@@ -880,25 +899,28 @@ export class ProjectileSystem {
   }
 
   characterTouchesSegment(ch, a, b, pad = 0.25) {
-    const up = ch.up || new THREE.Vector3(0, 1, 0);
+    const up = ch.up || WORLD_UP;
     const visualScale = this.world.characterVisualScale?.(ch) || 1;
-    const samples = [0.35, 0.55, 0.8].map(f =>
-      ch.pos.clone().addScaledVector(up, ch.height * f * visualScale));
     const r = (ch.radius || 0.45) * visualScale + pad;
-    return samples.some(p => this.distancePointToSegment(p, a, b) < r);
+    for (const fraction of BEAM_SAMPLE_HEIGHTS) {
+      this._segmentPoint.copy(ch.pos)
+        .addScaledVector(up, ch.height * fraction * visualScale);
+      if (this.distancePointToSegment(this._segmentPoint, a, b) < r) return true;
+    }
+    return false;
   }
 
   projectileHitCharacter(ch, p) {
-    const up = ch.up || new THREE.Vector3(0, 1, 0);
+    const up = ch.up || WORLD_UP;
     const visualScale = this.world.characterVisualScale?.(ch) || 1;
     const scaledRadius = (ch.radius || 0.45) * visualScale;
     const projectileRadius = (p.projectileSize || p.weapon.size || 0.12) * 0.6;
-    const foot = ch.pos.clone().addScaledVector(up, scaledRadius);
+    const foot = this._bodyFoot.copy(ch.pos).addScaledVector(up, scaledRadius);
     const headHeight = Math.max(
       (ch.height - (ch.radius || 0.45)) * visualScale,
       ch.height * 0.55 * visualScale,
     );
-    const head = ch.pos.clone().addScaledVector(up, headHeight);
+    const head = this._bodyHead.copy(ch.pos).addScaledVector(up, headHeight);
     if (this.distancePointToSegment(p.pos, foot, head) >= scaledRadius + projectileRadius + 0.35) {
       return null;
     }
@@ -907,13 +929,15 @@ export class ProjectileSystem {
     // point-only head test would resolve a head-bound dart as a body hit first.
     // Give the actual beige head sphere priority along the dart's travel ray.
     // Its centre and radius mirror buildBotMesh()'s visual head exactly.
-    const headCenter = ch.pos.clone().addScaledVector(up, ch.height * 0.9 * visualScale);
+    const headCenter = this._headCenter.copy(ch.pos)
+      .addScaledVector(up, ch.height * 0.9 * visualScale);
     const headRadius = ch.height * visualScale / 6;
     const hitRadius = headRadius + projectileRadius;
     const travelSq = p.vel.lengthSq();
-    const toHead = headCenter.clone().sub(p.pos);
+    const toHead = this._headOffset.copy(headCenter).sub(p.pos);
     const ahead = travelSq > 1e-6 ? toHead.dot(p.vel) / travelSq : 0;
-    const closestPoint = p.pos.clone().addScaledVector(p.vel, Math.max(0, ahead));
+    const closestPoint = this._headClosest.copy(p.pos)
+      .addScaledVector(p.vel, Math.max(0, ahead));
     const headshot = p.weapon.headshotDmg != null &&
       closestPoint.distanceToSquared(headCenter) < hitRadius ** 2;
     return { headshot };
@@ -962,12 +986,12 @@ export class ProjectileSystem {
 
     const speed = p.vel.length();
     if (speed < 1e-4) return;
-    const desired = target.pos.clone();
+    const desired = this._homingDesired.copy(target.pos);
     const targetVisualScale = this.world.characterVisualScale?.(target) || 1;
     desired.addScaledVector(target.up || WORLD_UP, target.height * 0.55 * targetVisualScale);
     desired.multiplyScalar(targetScale);
     desired.sub(p.pos).normalize();
-    const current = p.vel.clone().multiplyScalar(1 / speed);
+    const current = this._homingCurrent.copy(p.vel).multiplyScalar(1 / speed);
     const angle = current.angleTo(desired);
     if (angle < 1e-4) return;
 
@@ -990,7 +1014,7 @@ export class ProjectileSystem {
         if (segTail >= seg.len) {
           seg.group.visible = false;
         } else {
-          const start = seg.start.clone().lerp(seg.end, segTail / seg.len);
+          const start = this._beamStart.copy(seg.start).lerp(seg.end, segTail / seg.len);
           this.placeBeamSegment(seg, start, seg.end);
         }
         cursor += seg.len;
@@ -1000,9 +1024,14 @@ export class ProjectileSystem {
         for (const ch of characters) {
           if (!ch.alive || ch === b.owner || ch.team === b.owner.team) continue;
           if ((b.hitCooldowns.get(ch) || 0) > 0) continue;
-          const hitSegment = b.segments
-            .filter(seg => seg.group.visible && this.characterTouchesSegment(ch, seg.activeStart, seg.activeEnd))
-            .sort((a, c) => (c.damage ?? b.weapon.dmg) - (a.damage ?? b.weapon.dmg))[0];
+          let hitSegment = null;
+          for (const seg of b.segments) {
+            if (!seg.group.visible ||
+                !this.characterTouchesSegment(ch, seg.activeStart, seg.activeEnd)) continue;
+            if (!hitSegment || (seg.damage ?? b.weapon.dmg) > (hitSegment.damage ?? b.weapon.dmg)) {
+              hitSegment = seg;
+            }
+          }
           if (hitSegment) {
             this.fx.onDamage(
               ch,
@@ -1017,10 +1046,14 @@ export class ProjectileSystem {
         }
         for (const target of this.shootableTargets()) {
           if ((b.hitCooldowns.get(target) || 0) > 0) continue;
-          const hitSegment = b.segments
-            .filter(seg => seg.group.visible &&
-              this.segmentTouchesTarget(target, seg.activeStart, seg.activeEnd, 0.18))
-            .sort((a, c) => (c.damage ?? b.weapon.dmg) - (a.damage ?? b.weapon.dmg))[0];
+          let hitSegment = null;
+          for (const seg of b.segments) {
+            if (!seg.group.visible ||
+                !this.segmentTouchesTarget(target, seg.activeStart, seg.activeEnd, 0.18)) continue;
+            if (!hitSegment || (seg.damage ?? b.weapon.dmg) > (hitSegment.damage ?? b.weapon.dmg)) {
+              hitSegment = seg;
+            }
+          }
           if (hitSegment) {
             this.fx.onTargetDamage?.(
               target,
@@ -1047,9 +1080,10 @@ export class ProjectileSystem {
   update(dt, characters) {
     this.updateLightningArcs(dt);
     this.updateBeams(dt, characters);
-    const step = new THREE.Vector3();
-    const prev = new THREE.Vector3();
-    const probe = new THREE.Vector3();
+    const step = this._step;
+    const prev = this._previous;
+    const probe = this._probe;
+    const shootableTargets = this.projectiles.length ? this.shootableTargets() : null;
     for (let pi = this.projectiles.length - 1; pi >= 0; pi--) {
       const p = this.projectiles[pi];
       p.life -= dt;
@@ -1132,7 +1166,8 @@ export class ProjectileSystem {
         // sub-stepped collision path as characters, so Hyperstrike and other
         // fast rounds cannot tunnel through them between frames.
         if (!dead) {
-          for (const target of this.shootableTargets()) {
+          for (const target of shootableTargets) {
+            if (!target || target.active === false || target.destroyed === true) continue;
             if (p.pierced?.has(target) || p.ignore?.has(target)) continue;
             if (!this.projectileTouchesTarget(target, p, prev)) continue;
             this.fx.onTargetDamage?.(

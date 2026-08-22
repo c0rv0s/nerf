@@ -150,6 +150,7 @@ const TARGET_FPS = 90;
 const FPS_FLOOR = 80;
 const AUTO_MATCH_CALIBRATION_SECONDS = 10;
 const ADAPTIVE_RENDER_MIN_SCALE = 0.68;
+const AUTO_EMERGENCY_DOWNSCALE_SECONDS = 1.25;
 const TARGET_FRAME_MS = 1000 / TARGET_FPS;
 const FLOOR_FRAME_MS = 1000 / FPS_FLOOR;
 const graphicsAutoStorageKey = 'nerf-arena-graphics-auto-v1';
@@ -220,7 +221,6 @@ function setEffectsMix(value, persist = true) {
 
 const canvas = document.getElementById('game');
 const mapLoadingScreen = document.getElementById('maploading');
-const mapLoadingIcon = document.getElementById('maploadingicon');
 const mapLoadingTitle = document.getElementById('maploadingtitle');
 const mapLoadingStatus = document.getElementById('maploadingstatus');
 let mapLoadingToken = 0;
@@ -231,7 +231,6 @@ function setMapLoadingStatus(message) {
 
 function showMapLoading(mapDef) {
   mapLoadingToken++;
-  setText(mapLoadingIcon, mapDef?.emoji || '🎯');
   setText(mapLoadingTitle, mapDef?.name || 'PREPARING ARENA');
   setMapLoadingStatus('Building the battlefield and warming combat effects');
   if (mapLoadingScreen) mapLoadingScreen.hidden = false;
@@ -422,7 +421,7 @@ const adaptiveRender = {
     ? 'low'
     : initialAutoGraphicsScale < 0.92 ? 'standard' : 'high'),
 };
-const perfTelemetry = { frameMs: [], workMs: [], maxSamples: 360 };
+const perfTelemetry = { frameMs: [], workMs: [], maxSamples: 360, sampleCounter: 0 };
 
 function persistAutoGraphicsTest(tested) {
   if (tested !== 'atrium' && tested !== 'game') return;
@@ -485,13 +484,21 @@ function resetAdaptiveRenderScale({ preserveDetection = false } = {}) {
   adaptiveRender.slowT = 0;
   adaptiveRender.clearT = 0;
   adaptiveRender.cooldown = 0;
-  adaptiveRender.fastestFrameMs = Infinity;
+  // Keep the learned display cadence across arena swaps. A heavy map that
+  // starts out missing every other 60 Hz frame would otherwise mistake 33 ms
+  // for the monitor's native cadence and never trigger its emergency scale.
+  if (!preserveDetection) adaptiveRender.fastestFrameMs = Infinity;
   adaptiveRender.sampleT = 0;
   perfTelemetry.frameMs.length = 0;
   perfTelemetry.workMs.length = 0;
+  perfTelemetry.sampleCounter = 0;
   applyAdaptiveRenderScale();
 }
 function recordPerformanceSample(frameMs, workMs) {
+  // Debug telemetry does not need a 90–144 Hz history. Sampling every fourth
+  // frame avoids shifting two 360-entry arrays on every render while retaining
+  // several seconds of representative frame pacing for window.__perf().
+  if (perfTelemetry.sampleCounter++ % 4 !== 0) return;
   perfTelemetry.frameMs.push(frameMs);
   perfTelemetry.workMs.push(workMs);
   if (perfTelemetry.frameMs.length > perfTelemetry.maxSamples) perfTelemetry.frameMs.shift();
@@ -499,10 +506,13 @@ function recordPerformanceSample(frameMs, workMs) {
 }
 function updateAdaptiveRenderScale(frameMs, workMs) {
   // A fresh install tests once in the Atrium, then once during the opening of
-  // the first arena. The saved in-game result is reused on later launches so
-  // ordinary startup and combat do not repeat visible quality adjustments.
-  if (graphicsMode !== 'auto' || finishInGameAutoGraphicsTest() || !autoGraphicsCalibrationOpen()) return;
-  if (G && !G.atrium) inGameAutoTestStarted = true;
+  // the first arena. After that, quality never climbs mid-match, but sustained
+  // missed display frames may still lower it. That catches heavier later maps
+  // and 60 Hz machines, where a fixed 80 fps cadence test cannot work.
+  if (graphicsMode !== 'auto') return;
+  finishInGameAutoGraphicsTest();
+  const calibrationOpen = autoGraphicsCalibrationOpen();
+  if (calibrationOpen && G && !G.atrium) inGameAutoTestStarted = true;
   const dt = Math.min(0.1, Math.max(0, frameMs / 1000));
   adaptiveRender.cooldown = Math.max(0, adaptiveRender.cooldown - dt);
   adaptiveRender.sampleT += dt;
@@ -514,9 +524,15 @@ function updateAdaptiveRenderScale(frameMs, workMs) {
     adaptiveRender.sampleT = 0;
   }
   const highRefreshCadence = adaptiveRender.fastestFrameMs < FLOOR_FRAME_MS * 1.08;
-  const cadenceOverBudget = highRefreshCadence && frameMs > FLOOR_FRAME_MS * 1.08;
+  const missedDisplayFrame = Number.isFinite(adaptiveRender.fastestFrameMs) &&
+    frameMs > adaptiveRender.fastestFrameMs * 1.55 + 0.5;
+  const cadenceOverBudget = highRefreshCadence
+    ? frameMs > FLOOR_FRAME_MS * 1.08
+    : missedDisplayFrame;
   const workOverBudget = workMs > FLOOR_FRAME_MS;
-  const cadenceClear = !highRefreshCadence || frameMs < TARGET_FRAME_MS * 1.08;
+  const cadenceClear = highRefreshCadence
+    ? frameMs < TARGET_FRAME_MS * 1.08
+    : frameMs < adaptiveRender.fastestFrameMs * 1.22 + 0.5;
   const workClear = workMs < TARGET_FRAME_MS * 0.78;
   if (cadenceOverBudget || workOverBudget) {
     adaptiveRender.slowT += dt;
@@ -528,13 +544,17 @@ function updateAdaptiveRenderScale(frameMs, workMs) {
     adaptiveRender.slowT = Math.max(0, adaptiveRender.slowT - dt * 0.25);
     adaptiveRender.clearT = 0;
   }
-  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= 0.75 && adaptiveRender.scale > ADAPTIVE_RENDER_MIN_SCALE) {
+  const downscaleAfter = calibrationOpen ? 0.75 : AUTO_EMERGENCY_DOWNSCALE_SECONDS;
+  if (!adaptiveRender.cooldown && adaptiveRender.slowT >= downscaleAfter &&
+      adaptiveRender.scale > ADAPTIVE_RENDER_MIN_SCALE) {
     adaptiveRender.scale = Math.max(ADAPTIVE_RENDER_MIN_SCALE, adaptiveRender.scale - 0.08);
     adaptiveRender.detectedScale = adaptiveRender.scale;
     adaptiveRender.slowT = 0;
     adaptiveRender.cooldown = 0.65;
     applyAdaptiveRenderScale();
-  } else if (!adaptiveRender.cooldown && adaptiveRender.clearT >= 5 && adaptiveRender.scale < 1) {
+    if (!calibrationOpen && autoGraphicsTestStage === 'game') persistAutoGraphicsTest('game');
+  } else if (calibrationOpen && !adaptiveRender.cooldown &&
+      adaptiveRender.clearT >= 5 && adaptiveRender.scale < 1) {
     adaptiveRender.scale = Math.min(1, adaptiveRender.scale + 0.04);
     adaptiveRender.detectedScale = adaptiveRender.scale;
     adaptiveRender.clearT = 0;
