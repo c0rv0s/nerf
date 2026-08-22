@@ -26,6 +26,7 @@ import { HUD } from './hud.js';
 import {
   sfx, setEffectsVolume, setJetpackThrust, setListener, setMasterVolume,
   setRainAmbience, startWhomperWarmup, warmAudioSamplesInBackground,
+  warmOlympusImpactAudio,
 } from './audio.js';
 import { multiplayer } from './multiplayer.js';
 import { createJetpack } from './jetpack.js';
@@ -632,7 +633,12 @@ function usesLightRenderPath() {
 
 function syncRenderQuality() {
   const preset = GRAPHICS_PRESETS[graphicsMode];
-  renderer.shadowMap.enabled = preset?.shadows ?? presentationTier() !== 'low';
+  const tier = presentationTier();
+  const presetShadows = preset?.shadows ?? tier !== 'low';
+  // Exceptionally large arenas can opt Medium out of the duplicate shadow
+  // draw pass while leaving High completely intact. Low already disables it.
+  renderer.shadowMap.enabled = presetShadows &&
+    !(tier === 'standard' && G?.world?.mediumShadows === false);
   bloomPass.enabled = (preset?.postprocessing ?? presentationTier() !== 'low') && !usesLightRenderPath();
   const samples = usesLightRenderPath() ? 0 : performanceProfile.msaaSamples;
   for (const target of [composer.renderTarget1, composer.renderTarget2]) {
@@ -876,8 +882,9 @@ function teardown() {
   G.meteors = [];
   G.comets = [];
   G.mpTracerPool?.dispose();
-  for (const marker of dmgMarkers) disposeDmgMarker(marker, G.scene);
+  for (const marker of dmgMarkerPool) destroyDmgMarker(marker, G.scene);
   dmgMarkers = [];
+  dmgMarkerPool = [];
   camera.remove(G.player.viewmodel);
   hud.els.hud.classList.remove('endboard');
   setStyle(hud.els.board, 'display', 'none');
@@ -1362,6 +1369,7 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
       prewarmEventVisuals();
     },
     asyncWork: async () => {
+      if (mapDef.id === 'olympus') await warmOlympusImpactAudio();
       await prewarmMatchVisualsAsync(scene, player, characters, projectiles, fxPool);
       await prewarmEventVisualsAsync();
     },
@@ -2111,11 +2119,24 @@ function applyMultiplayerSnapshot(snap) {
         (ev.killerId === multiplayer.slotId ? G.player :
           ev.killerId === 'meteor' ? METEOR :
             ev.killerId === 'comet' ? COMET :
-              ev.killerId === 'shark' ? SHARK : { name: 'The Void', color: '#8899aa' });
+              ev.killerId === 'gator' ? GATOR :
+                ev.killerId === 'shark' ? SHARK :
+                  ev.killerId === 'lava' ? LAVA :
+                    ev.killerId === 'water' ? WATER :
+                      ev.killerId === 'storm' ? LIGHTNING :
+                        ev.killerId === 'solar' ? SOLAR_FLARE :
+                          { name: 'The Void', color: '#8899aa' });
       const victim = G.characters.find(c => c.id === ev.victimId) ||
         (ev.victimId === multiplayer.slotId ? G.player : { name: 'Player', color: '#ccc' });
       if (ev.killerId === 'gator' || ev.killerId === 'shark') hud.chompFeed(victim);
       else hud.killfeed(killer, victim);
+      if (ev.victimId === multiplayer.slotId) {
+        const weaponName = WEAPONS[ev.weapon]?.name || 'ENVIRONMENT';
+        const environmentText = ev.weapon === 'environment'
+          ? environmentalEliminationText(ev.killerId, killer.name)
+          : null;
+        hud.showRespawn(true, RESPAWN_TIME, killer.name, weaponName, environmentText);
+      }
       if (ev.killerId === multiplayer.slotId) sfx('kill');
     }
     if (ev.type === 'award') {
@@ -2240,6 +2261,29 @@ function characterNetworkId(ch) {
   if (ch.id) return ch.id;
   if (ch.isPlayer) return multiplayer.slotId;
   return ch.team || ch.name || null;
+}
+
+function eliminationWeaponName(attacker, ctx = {}) {
+  const weaponId = ctx.shotGroup?.weaponId;
+  if (weaponId && WEAPONS[weaponId]) return WEAPONS[weaponId].name;
+  if (attacker?.weapon && WEAPONS[attacker.weapon]) return WEAPONS[attacker.weapon].name;
+  return 'ENVIRONMENT';
+}
+
+function environmentalEliminationText(sourceId, sourceName = 'The Environment') {
+  const verbs = {
+    void: 'SWALLOWED',
+    shark: 'DEVOURED',
+    gator: 'DEVOURED',
+    water: 'DROWNED',
+    lava: 'MELTED',
+    storm: 'ELECTROCUTED',
+    meteor: 'CRUSHED',
+    comet: 'OBLITERATED',
+    solar: 'INCINERATED',
+  };
+  const verb = verbs[sourceId];
+  return verb ? `${String(sourceName).toUpperCase()} ${verb} YOU` : null;
 }
 
 function queueMultiplayerEvent(ev) {
@@ -3042,10 +3086,9 @@ function showVictoryPodium(result) {
   setStyle(volumeControl, 'display', 'none');
   setStyle(document.getElementById('scores'), 'display', 'none');
 
-  for (const marker of dmgMarkers) {
-    disposeDmgMarker(marker, oldScene);
-  }
+  for (const marker of dmgMarkerPool) destroyDmgMarker(marker, oldScene);
   dmgMarkers = [];
+  dmgMarkerPool = [];
   G.projectiles.clear();
   G.pickups.clear();
   G.fxPool.clear();
@@ -3109,8 +3152,65 @@ function updateVictoryPodium(dt) {
 
 /* ---------------- damage & kills ---------------- */
 // Floating damage numbers above whoever YOU hit. Rapid hits on the same
-// target within a beat accumulate into one growing number.
+// target within a beat accumulate into one growing number. Olympus can have
+// fifteen targets, so keep one reusable marker per possible opponent instead
+// of allocating and destroying a canvas texture on the impact frame.
+const DAMAGE_MARKER_POOL_SIZE = 16;
 let dmgMarkers = [];
+let dmgMarkerPool = [];
+
+function createDmgMarker(scene) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false, depthTest: false,
+  }));
+  sprite.visible = false;
+  sprite.renderOrder = 1000;
+  sprite.frustumCulled = false;
+  scene.add(sprite);
+  return {
+    target: null,
+    amount: 0,
+    age: 0,
+    active: false,
+    sprite,
+    tex,
+    canvas,
+    rise: new THREE.Vector3(0, 1, 0),
+  };
+}
+
+function initializeDmgMarkerPool(scene = G?.scene) {
+  if (!scene) return;
+  if (dmgMarkerPool.some(marker => marker.sprite.parent !== scene)) {
+    for (const marker of dmgMarkerPool) destroyDmgMarker(marker, marker.sprite.parent);
+    dmgMarkerPool = [];
+    dmgMarkers = [];
+  }
+  while (dmgMarkerPool.length < DAMAGE_MARKER_POOL_SIZE) {
+    dmgMarkerPool.push(createDmgMarker(scene));
+  }
+}
+
+function acquireDmgMarker(scene = G?.scene) {
+  initializeDmgMarkerPool(scene);
+  let marker = dmgMarkerPool.find(candidate => !candidate.active);
+  if (!marker) {
+    marker = dmgMarkers.reduce((oldest, candidate) =>
+      !oldest || candidate.age > oldest.age ? candidate : oldest, null);
+    const index = dmgMarkers.indexOf(marker);
+    if (index >= 0) dmgMarkers.splice(index, 1);
+  }
+  marker.active = true;
+  marker.sprite.visible = true;
+  marker.sprite.material.opacity = 1;
+  return marker;
+}
+
 function spawnDmgMarker(target, amount) {
   const recent = dmgMarkers.find(m => m.target === target && m.age < 0.4);
   if (recent) {
@@ -3119,25 +3219,17 @@ function spawnDmgMarker(target, amount) {
     drawDmg(recent);
     return;
   }
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: tex, transparent: true, depthWrite: false, depthTest: false }));
+  const m = acquireDmgMarker(G.scene);
   const visualScale = G.world.characterVisualScale?.(target) || 1;
   const rise = target.up?.clone?.() || new THREE.Vector3(0, 1, 0);
   if (rise.lengthSq() < 1e-6) rise.set(0, 1, 0);
   else rise.normalize();
-  sprite.scale.set(2 * visualScale, 2 * visualScale, 1);
-  sprite.position.copy(target.pos).addScaledVector(rise, 2.5 * visualScale);
-  sprite.renderOrder = 1000;
-  sprite.frustumCulled = false;
-  G.scene.add(sprite);
-  const m = {
-    target, amount, age: 0, sprite, tex, canvas: c,
-    rise: rise.multiplyScalar(visualScale),
-  };
+  m.target = target;
+  m.amount = amount;
+  m.age = 0;
+  m.sprite.scale.set(2 * visualScale, 2 * visualScale, 1);
+  m.sprite.position.copy(target.pos).addScaledVector(rise, 2.5 * visualScale);
+  m.rise.copy(rise).multiplyScalar(visualScale);
   drawDmg(m);
   dmgMarkers.push(m);
 }
@@ -3174,13 +3266,23 @@ function updateDmgMarkers(dt) {
     m.sprite.position.addScaledVector(m.rise, dt * 1.1);
     m.sprite.material.opacity = Math.min(1, 2.5 * (1 - m.age / DAMAGE_MARKER_LIFETIME));
     if (m.age > DAMAGE_MARKER_LIFETIME) {
-      disposeDmgMarker(m, G.scene);
+      releaseDmgMarker(m);
       dmgMarkers.splice(i, 1);
     }
   }
 }
 
-function disposeDmgMarker(marker, scene = G?.scene) {
+function releaseDmgMarker(marker) {
+  if (!marker) return;
+  marker.active = false;
+  marker.target = null;
+  marker.amount = 0;
+  marker.age = 0;
+  marker.sprite.visible = false;
+  marker.sprite.material.opacity = 0;
+}
+
+function destroyDmgMarker(marker, scene = G?.scene) {
   if (!marker) return;
   scene?.remove(marker.sprite);
   marker.sprite?.material?.dispose();
@@ -3327,7 +3429,11 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
     if (target.isPlayer) {
       target.alive = false;
       sfx('death');
-      hud.showRespawn(true, RESPAWN_TIME);
+      const weaponName = eliminationWeaponName(attacker, ctx);
+      const environmentText = weaponName === 'ENVIRONMENT'
+        ? environmentalEliminationText(characterNetworkId(attacker), attacker.name)
+        : null;
+      hud.showRespawn(true, RESPAWN_TIME, attacker.name, weaponName, environmentText);
     } else {
       target.die();
       sfx('death', target.pos);
@@ -3338,6 +3444,7 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
         type: 'kill',
         killerId: characterNetworkId(attacker),
         victimId: characterNetworkId(target),
+        weapon: ctx.shotGroup?.weaponId || 'environment',
       });
     }
     G.respawnTimers.set(target, RESPAWN_TIME);
@@ -4443,6 +4550,26 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
   });
   reveal(player.viewmodel);
   for (const character of characters) reveal(character.mesh);
+  reveal(projectiles.lightningArcPool?.[0]?.group);
+  const cleanupDropPrewarm = G?.pickups?.prepareDropPrewarm?.() || (() => {});
+
+  // Damage numbers used to allocate and upload a fresh canvas texture on the
+  // exact frame a dart connected. Keep their reusable GPU resources in the
+  // scene and compile one representative sprite while the loader is visible.
+  initializeDmgMarkerPool(scene);
+  const markerProbe = dmgMarkerPool[0];
+  const markerProbeState = markerProbe ? {
+    visible: markerProbe.sprite.visible,
+    position: markerProbe.sprite.position.clone(),
+    scale: markerProbe.sprite.scale.clone(),
+    opacity: markerProbe.sprite.material.opacity,
+  } : null;
+  if (markerProbe) {
+    markerProbe.sprite.visible = true;
+    markerProbe.sprite.position.copy(camera.position);
+    markerProbe.sprite.scale.setScalar(0.01);
+    markerProbe.sprite.material.opacity = 0.01;
+  }
 
   const probes = new THREE.Group();
   probes.position.set(0, 0, -2);
@@ -4475,23 +4602,49 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
   fxPool.spawnPuff(warmPos, 0xffffff, 0.1);
   return () => {
     fxPool.clear();
+    cleanupDropPrewarm();
     camera.remove(probes);
     for (const geometry of probeGeometries) geometry.dispose();
     for (const [object, visible] of visibility) object.visible = visible;
+    if (markerProbe && markerProbeState) {
+      markerProbe.sprite.visible = markerProbeState.visible;
+      markerProbe.sprite.position.copy(markerProbeState.position);
+      markerProbe.sprite.scale.copy(markerProbeState.scale);
+      markerProbe.sprite.material.opacity = markerProbeState.opacity;
+    }
+  };
+}
+
+function beginGameplayShaderCompile() {
+  const previousTarget = renderer.getRenderTarget();
+  // EffectComposer renders the arena into a linear render target before bloom
+  // and output conversion. Compiling probes against the default sRGB screen
+  // warms a different shader key, leaving the real gameplay variant to block
+  // on its first hit, death drop, or meteor reward.
+  const gameplayTarget = usesLightRenderPath() ? null : composer.renderTarget1;
+  if (previousTarget !== gameplayTarget) renderer.setRenderTarget(gameplayTarget);
+  return () => {
+    if (renderer.getRenderTarget() !== previousTarget) renderer.setRenderTarget(previousTarget);
   };
 }
 
 function prewarmMatchVisuals(scene, player, characters, projectiles, fxPool) {
   const cleanup = prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPool);
-  try { renderer.compile(scene, camera); } finally { cleanup(); }
+  const restoreTarget = beginGameplayShaderCompile();
+  try { renderer.compile(scene, camera); } finally {
+    restoreTarget();
+    cleanup();
+  }
 }
 
 async function prewarmMatchVisualsAsync(scene, player, characters, projectiles, fxPool) {
   const cleanup = prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPool);
+  const restoreTarget = beginGameplayShaderCompile();
   try {
     if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(scene, camera);
     else renderer.compile(scene, camera);
   } finally {
+    restoreTarget();
     cleanup();
   }
 }
@@ -4706,21 +4859,25 @@ function prepareEventVisualPrewarm() {
 
 function prewarmEventVisuals() {
   const warm = prepareEventVisualPrewarm();
+  const restoreTarget = beginGameplayShaderCompile();
   try {
     if (warm.needsCompile) renderer.compile(warm.scene, camera);
   } finally {
+    restoreTarget();
     warm.cleanup();
   }
 }
 
 async function prewarmEventVisualsAsync() {
   const warm = prepareEventVisualPrewarm();
+  const restoreTarget = beginGameplayShaderCompile();
   try {
     if (warm.needsCompile) {
       if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(warm.scene, camera);
       else renderer.compile(warm.scene, camera);
     }
   } finally {
+    restoreTarget();
     warm.cleanup();
   }
 }
@@ -5153,16 +5310,26 @@ function step(dt) {
     ch.hp = 0;
     ch.jetpack = null;
     ch.deaths++;
+    const source = sunHit
+      ? { id: 'solar', name: sunHit.name || 'The Sun', color: sunHit.color || '#ff8a24' }
+      : { id: 'void', name: 'The Void', color: '#8899aa' };
     if (ch.isPlayer) {
-      ch.alive = false; sfx('death'); hud.damageFlash(); hud.showRespawn(true, RESPAWN_TIME);
+      ch.alive = false; sfx('death'); hud.damageFlash();
+      hud.showRespawn(
+        true,
+        RESPAWN_TIME,
+        source.name,
+        'ENVIRONMENT',
+        environmentalEliminationText(source.id, source.name),
+      );
       if (sunHit) hud.message('INCINERATED', sunHit.color || '#ff8a24');
     } else ch.die();
-    hud.killfeed(
-      sunHit
-        ? { name: sunHit.name || 'The Sun', color: sunHit.color || '#ff8a24' }
-        : { name: 'The Void', color: '#8899aa' },
-      ch,
-    );
+    hud.killfeed(source, ch);
+    if (G.multiplayerHost) {
+      queueMultiplayerEvent({
+        type: 'kill', killerId: source.id, victimId: characterNetworkId(ch), weapon: 'environment',
+      });
+    }
     G.respawnTimers.set(ch, RESPAWN_TIME);
   }
 
@@ -5364,6 +5531,12 @@ window.__perf = () => {
     autoQualityLocked: graphicsMode === 'auto' && !autoGraphicsCalibrationOpen(),
   };
 };
+window.__renderPrograms = () => (renderer.info.programs || []).map(program => ({
+  name: program.name,
+  type: program.type,
+  cacheKey: program.cacheKey,
+  usedTimes: program.usedTimes,
+}));
 window.__mapVisualIssues = () => G?.world?.visualSurfaceIssues ?? [];
 window.__mapVisualAudit = () => {
   const boxes = G?.world?._visualBoxes ?? [];

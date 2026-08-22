@@ -277,6 +277,18 @@ export class PickupManager {
         phase: Math.random() * 6,
       };
     });
+    // Point rewards only exist after a death, so unlike weapons/powerups they
+    // cannot borrow a visible map pickup's first-frame GPU upload. Keep one
+    // hidden clone per badge value in the scene so the loading pass uploads
+    // the shared canvas textures and compiles their actual SpriteMaterial.
+    this.dropPrewarmGroup = new THREE.Group();
+    this.dropPrewarmGroup.visible = false;
+    for (const amount of [250, 500, 750, 1000]) {
+      const mesh = temporaryPickupMesh({ kind: 'points', amount });
+      mesh.visible = false;
+      this.dropPrewarmGroup.add(mesh);
+    }
+    scene.add(this.dropPrewarmGroup);
     this.t = 0;
   }
 
@@ -295,6 +307,21 @@ export class PickupManager {
     const group = new THREE.Group();
     for (const def of defs) group.add(temporaryPickupMesh(def));
     return group;
+  }
+
+  prepareDropPrewarm() {
+    const group = this.dropPrewarmGroup;
+    if (!group) return () => {};
+    const groupVisible = group.visible;
+    const childVisibility = group.children.map(child => child.visible);
+    group.visible = true;
+    for (const child of group.children) child.visible = true;
+    return () => {
+      group.visible = groupVisible;
+      group.children.forEach((child, index) => {
+        child.visible = childVisibility[index];
+      });
+    };
   }
 
   update(dt, characters) {
@@ -378,6 +405,7 @@ export class PickupManager {
       this.scene.remove(it.mesh);
       for (const L of it.lights) this.scene.remove(L);
     }
+    this.scene.remove(this.dropPrewarmGroup);
     this.items.length = 0;
   }
 }

@@ -14,6 +14,7 @@ export class HUD {
       awards: byId('awards'),
       vignette: byId('vignette'), hit: byId('hitmarker'),
       respawn: byId('respawn'), respawnCount: byId('respawncount'),
+      eliminationDetail: byId('eliminationdetail'),
       board: byId('scoreboard'),
     };
     this.msgTimer = 0;
@@ -268,8 +269,17 @@ export class HUD {
   hitmarker() { this.hitTimer = 0.12; }
   damageFlash() { this.vigTimer = 0.35; }
 
-  showRespawn(on, secs = 0) {
+  showRespawn(on, secs = 0, killer = null, weapon = null, eliminationText = null) {
     setStyle(this.els.respawn, 'display', on ? 'flex' : 'none');
-    if (on) setText(this.els.respawnCount, `Respawning in ${Math.ceil(secs)}…`);
+    if (!on) {
+      setText(this.els.eliminationDetail, '');
+      return;
+    }
+    if (eliminationText) {
+      setText(this.els.eliminationDetail, eliminationText);
+    } else if (killer || weapon) {
+      setText(this.els.eliminationDetail, `BY ${killer || 'Unknown'} · ${weapon || 'Unknown weapon'}`);
+    }
+    setText(this.els.respawnCount, `Respawning in ${Math.ceil(secs)}…`);
   }
 }

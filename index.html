@@ -146,6 +146,8 @@
   #respawn { position:absolute; inset:0; display:none; align-items:center; justify-content:center;
     background:rgba(120,0,0,.25); }
   #respawn div { font-size:34px; color:#fff; text-shadow:0 3px 8px #000; text-align:center; }
+  #eliminationdetail { display:block; margin-top:7px; font-size:17px; color:#fff;
+    font-family:Arial,sans-serif; font-weight:800; letter-spacing:.6px; }
 
   #scoreboard { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     padding:18px 26px; display:none; min-width:420px; }
@@ -524,7 +526,7 @@
     <div id="ammonum">∞</div>
     <div id="wslots"></div>
   </div>
-  <div id="respawn"><div>ELIMINATED!<br><span id="respawncount" style="font-size:20px;color:#ffd23c"></span></div></div>
+  <div id="respawn"><div>ELIMINATED!<span id="eliminationdetail"></span><span id="respawncount" style="display:block;margin-top:5px;font-size:20px;color:#ffd23c"></span></div></div>
   <div id="scoreboard" class="panel" tabindex="0" aria-label="Match scoreboard"></div>
 </div>
 
@@ -604,6 +606,6 @@
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
-<script type="module" src="./src/main.js?v=54"></script>
+<script type="module" src="./src/main.js?v=56"></script>
 </body>
 </html>

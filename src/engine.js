@@ -885,9 +885,9 @@ export function pointHitsWorld(p, radius, world, skipRamps = false) {
 }
 
 const _los = new THREE.Vector3();
-export function hasLOS(a, b, world) {
+export function hasLOS(a, b, world, sampleDistance = 1.2) {
   const dist = a.distanceTo(b);
-  const steps = Math.ceil(dist / 1.2);
+  const steps = Math.ceil(dist / Math.max(0.1, sampleDistance));
   for (let i = 1; i < steps; i++) {
     _los.lerpVectors(a, b, i / steps);
     if (pointHitsWorld(_los, 0.05, world, true)) return false;

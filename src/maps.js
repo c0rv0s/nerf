@@ -5548,7 +5548,10 @@ function addLava(scene, world, x, z, w, d, floorY = -1.1) {
 // A jagged lava lake whose damaging area follows the rendered polygon. This is
 // intentionally separate from the compact rectangular arena pits above: broad
 // natural caverns look artificial when every shoreline is ruler-straight.
-function addScragglyLava(scene, world, x, z, w, d, floorY, seed) {
+function addScragglyLava(scene, world, x, z, w, d, floorY, seed, {
+  pointLight = true,
+  qualityControlled = false,
+} = {}) {
   const rnd = seededRandom(seed);
   const outline = [
     [-0.50, -0.34], [-0.37, -0.49], [-0.13, -0.43], [0.10, -0.50], [0.34, -0.43],
@@ -5603,23 +5606,34 @@ function addScragglyLava(scene, world, x, z, w, d, floorY, seed) {
     const blob = new THREE.Mesh(new THREE.SphereGeometry(0.14 + rnd() * 0.12, 6, 5),
       new THREE.MeshBasicMaterial({ color: 0xffa030 }));
     scene.add(blob);
+    if (qualityControlled) (world._olympusLavaBlobs ||= []).push({ blob, index: i });
     const phase = rnd() * 4, period = 1.4 + rnd() * 1.3;
     world.anim.push((dt, t) => {
+      const tier = world._olympusVisualTier || 'high';
+      const detailVisible = !qualityControlled || tier === 'high' || (tier === 'standard' && i === 0);
+      if (!detailVisible) {
+        blob.visible = false;
+        return;
+      }
       const k = ((t + phase) % period) / period;
       blob.visible = k < 0.4;
       const kk = k / 0.4;
       blob.position.set(px, surfY + 6 * kk * (1 - kk), pz);
     });
   }
-  const glow = new THREE.PointLight(0xff5a20, 24, Math.max(18, Math.min(w, d)));
-  glow.position.set(x, floorY + 2.5, z);
-  scene.add(glow);
+  if (pointLight) {
+    const glow = new THREE.PointLight(0xff5a20, 24, Math.max(18, Math.min(w, d)));
+    glow.position.set(x, floorY + 2.5, z);
+    scene.add(glow);
+  }
 }
 
 // Continuous square-ring moat for Olympus's outer basin. The outside follows
 // the map boundary while the inner shoreline meanders naturally; the central
 // hole remains safe ground both visually and in hazard queries.
-function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -0.72) {
+function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -0.72, {
+  pointLights = true,
+} = {}) {
   const rnd = seededRandom(0x4d4f4154);
   const outer = [
     [-outerR, -outerR], [outerR, -outerR],
@@ -5674,10 +5688,12 @@ function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -
   ];
   (world.lavaZones ||= []).push({ points: outer, holes: [inner, riverCut], maxY: floorY + 1.0 });
 
-  for (const [x, z] of [[-158, -90], [158, 82], [-86, 158], [94, -158]]) {
-    const glow = new THREE.PointLight(0xff4a18, 18, 34);
-    glow.position.set(x, 2.2, z);
-    scene.add(glow);
+  if (pointLights) {
+    for (const [x, z] of [[-158, -90], [158, 82], [-86, 158], [94, -158]]) {
+      const glow = new THREE.PointLight(0xff4a18, 18, 34);
+      glow.position.set(x, 2.2, z);
+      scene.add(glow);
+    }
   }
 }
 
@@ -8994,8 +9010,8 @@ export function buildAtrium(scene) {
     ['tidebreaker', 'TIDEBREAKER', 0x35b9d0, 'w', -24, 'map'],
     ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', 24, 'map'],
     ['canopy', 'CANOPY', 0x4dbf6a, 'e', 0, 'map'],
-    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -24, 'map'],
-    ['mycelium', 'MYCELIUM GROVE', 0xa96eff, 'e', -40, 'map'],
+    ['mycelium', 'MYCELIUM GROVE', 0xa96eff, 'e', -24, 'map'],
+    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -40, 'map'],
     ['multiplayer', 'MULTIPLAYER', 0x30e0ff, 's', 0, 'multiplayer'],
   ];
   for (const [id, name, color, wall, off, kind] of bays) {
@@ -9692,8 +9708,8 @@ function addOlympusCavernShell(scene, world) {
   // Two broad, shadowless cross-lights reveal the baked facets without the
   // per-fragment cost of point-light pools. Olympus already owns strong global
   // lighting; these are restrained enough to keep the exterior palette intact.
-  const cavernHemi = new THREE.HemisphereLight(0x8a4b3c, 0x140405, 0.8);
-  const cavernRim = new THREE.DirectionalLight(0xff804d, 0.7);
+  const cavernHemi = new THREE.HemisphereLight(0x8a4b3c, 0x140405, 0.92);
+  const cavernRim = new THREE.DirectionalLight(0xff804d, 0.78);
   cavernRim.position.set(-70, 28, 52);
   cavernRim.castShadow = false;
   scene.add(cavernHemi, cavernRim);
@@ -10029,6 +10045,7 @@ function addOlympusCavernShell(scene, world) {
     outerVeins.renderOrder = 1;
     coreVeins.renderOrder = 2;
     scene.add(outerVeins, coreVeins);
+    world._olympusCoreVeins = coreVeins;
     world.anim.push((dt, t) => {
       const pulse = 0.5 + 0.5 * Math.sin(t * 2.15);
       outerVeinMaterial.opacity = 0.70 + pulse * 0.16;
@@ -13435,6 +13452,9 @@ function buildOlympusMons(scene) {
     },
   });
   world.toneMappingExposure = 1.25;
+  // Olympus's unusually dense PBR scene gets a cheaper Medium path; High
+  // keeps the full shadow pass, while Low already disables shadows globally.
+  world.mediumShadows = false;
   scene.background = new THREE.Color(0x7d3b2d);
   scene.fog = new THREE.Fog(0xa45b3c, 250, 660);
   baseLighting(scene, 0xffb879, 0x351a24, [-120, 175, 80], 220);
@@ -13449,7 +13469,7 @@ function buildOlympusMons(scene) {
     [-137.5, -92, 15, 104, 0x984932], [137.5, 78, 15, 116, 0x6f3027],
     [-90, 137.5, 112, 15, 0xa75635], [92, -137.5, 118, 15, 0x743126],
   ]) addBox(scene, world, x, 0.32, z, w, 0.65, d, c, { collide: false, tex: 'dirt' });
-  addOlympusLavaMoat(scene, world);
+  addOlympusLavaMoat(scene, world, 170, 151, -0.72, { pointLights: false });
 
   addOlympusMountain(scene, world);
 
@@ -13665,7 +13685,10 @@ function buildOlympusMons(scene) {
     [-16.5, -40, 17, 22, 401], [16.5, -40, 17, 22, 402],
     [-45, -4, 24, 34, 403], [45, -4, 24, 34, 404],
     [0, 36, 34, 24, 405], [-45, 40, 22, 18, 406], [45, 40, 22, 18, 407],
-  ]) addScragglyLava(scene, world, x, z, w, d, -0.72, seed);
+  ]) addScragglyLava(scene, world, x, z, w, d, -0.72, seed, {
+    pointLight: false,
+    qualityControlled: true,
+  });
 
   // The main cave-to-lift chain now crosses the large north lake; additional
   // fragments spread over the side and south lakes so the whole cavern has a
@@ -13734,8 +13757,12 @@ function buildOlympusMons(scene) {
   const emberPosition = new THREE.Vector3();
   const emberScale = new THREE.Vector3();
   const emberRotation = new THREE.Quaternion();
+  let lastEmberTime = 0;
   const updateEmbers = t => {
-    for (let i = 0; i < emberSpecs.length; i++) {
+    lastEmberTime = t;
+    const activeCount = Math.min(embers.count, emberSpecs.length);
+    if (activeCount === 0) return;
+    for (let i = 0; i < activeCount; i++) {
       const ember = emberSpecs[i];
       emberPosition.set(
         ember.x + Math.sin(t * 0.7 + ember.drift) * 0.55,
@@ -13775,11 +13802,9 @@ function buildOlympusMons(scene) {
   addJumpPad(scene, world, 0, 0.02, -26, 32.3, 10, 10, 0xff8a32);
   addJumpPad(scene, world, 22, 18.02, -8, 37, -14.04, 3.75, 0xffc24a);
   addJumpPad(scene, world, -4, 40.02, 0, 36, 1.9, 9.53, 0x72d8ff);
-  for (const [x, y, z] of [[-22, 5, -10], [30, 23, -2], [-19, 45, 7]]) {
-    const light = new THREE.PointLight(0xff8b3d, 13, 24);
-    light.position.set(x, y, z);
-    scene.add(light);
-  }
+  // The broad shadowless cavern lights above replace the former three
+  // overlapping point lights here. Emissive lava, cracks, and jump pads still
+  // provide the local warm landmarks without adding per-fragment light loops.
 
   // West Armory and East Storm Chapel: enclosed ground-floor combat rooms
   // whose internal ramps emerge onto the connected roof city.
@@ -14330,6 +14355,27 @@ function buildOlympusMons(scene) {
     [-38, 90.5, 71], [-38, 90.5, 38], [-38, 90.5, 10], [-38, 90.5, -20],
     [-17, 90.5, -26], [0, 90.5, -26],
   ]) wp(world, x, y, z);
+
+  world.setVisualQuality = tier => {
+    world._olympusVisualTier = tier;
+
+    // Keep every damaging lava surface visible at every tier; only the small
+    // decorative spit meshes scale down, so the hazard never becomes unclear.
+    const lavaBlobsPerLake = tier === 'high' ? 2 : tier === 'standard' ? 1 : 0;
+    for (const { blob, index } of world._olympusLavaBlobs || []) {
+      blob.visible = index < lavaBlobsPerLake;
+    }
+
+    const activeEmbers = tier === 'high' ? emberCount : tier === 'standard' ? 22 : 0;
+    embers.count = activeEmbers;
+    embers.visible = activeEmbers > 0;
+    if (activeEmbers > 0) updateEmbers(lastEmberTime);
+
+    // The broader outer crack network remains visible on Low, while its
+    // brighter inner overlay is optional decoration.
+    if (world._olympusCoreVeins) world._olympusCoreVeins.visible = tier !== 'low';
+  };
+  world.setVisualQuality('high');
 
   flushOlympusColumns(scene, world);
   buildMeteorSurfaceIndex(world);
@@ -15182,6 +15228,348 @@ function addMyceliumPatch(scene, world, count = 72) {
   world.anim.push((_dt, t) => {
     capMaterial.emissiveIntensity = 0.48 + Math.sin(t * 1.35) * 0.16;
   });
+}
+
+function addMyceliumFairyToads(scene, world) {
+  const palettes = [
+    { name: 'moonmint', body: 0x72d7aa, belly: 0xc8f3c7, accent: 0x9a7cff },
+    { name: 'violetcap', body: 0xa780e8, belly: 0xe4c8ff, accent: 0x61f0cf },
+    { name: 'roseglow', body: 0xe989b2, belly: 0xffd0d9, accent: 0xffd36c },
+    { name: 'pondstar', body: 0x69bfe5, belly: 0xc5efff, accent: 0xf18bc6 },
+    { name: 'ambermoss', body: 0xd6ad62, belly: 0xf5df9c, accent: 0x6fe0b7 },
+    { name: 'limewish', body: 0x94cf68, belly: 0xdff2a8, accent: 0xc083ef },
+    { name: 'coralspell', body: 0xdd806e, belly: 0xffc8a8, accent: 0x68dbe3 },
+    { name: 'dreamblue', body: 0x758bdc, belly: 0xcbd4ff, accent: 0xff91b8 },
+  ];
+  const patternNames = ['spots', 'twin-stripe', 'mosaic', 'constellation'];
+  const personalityProfiles = [
+    { name: 'mosey', mode: 'walk', speed: 0.46, cycle: 1.18 },
+    { name: 'patient-popper', mode: 'surprise', cycle: 4.2, hopStart: 0.72,
+      hopDuration: 0.18, stepDistance: 1.4, hopHeight: 0.58 },
+    { name: 'pitter-patter', mode: 'hop', cycle: 0.62, airTime: 0.64,
+      stepDistance: 0.48, hopHeight: 0.16 },
+    { name: 'big-bounder', mode: 'hop', cycle: 1.55, airTime: 0.78,
+      stepDistance: 1.85, hopHeight: 0.82 },
+    { name: 'excitable', mode: 'hop', cycle: 0.78, airTime: 0.7,
+      stepDistance: 1.05, hopHeight: 0.34 },
+    { name: 'wanderer', mode: 'walk', speed: 0.66, cycle: 0.88 },
+  ];
+  const unitBox = new THREE.BoxGeometry(1, 1, 1);
+  const shadowGeometry = new THREE.CircleGeometry(0.62, 12);
+  const shadowMaterial = new THREE.MeshBasicMaterial({
+    color: 0x06120f, transparent: true, opacity: 0.3, depthWrite: false,
+  });
+  const eyeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xf6efce, roughness: 0.6, emissive: 0x7869a6, emissiveIntensity: 0.12,
+  });
+  const pupilMaterial = new THREE.MeshBasicMaterial({ color: 0x10151c });
+  const mouthMaterial = new THREE.MeshBasicMaterial({ color: 0x35243b });
+  const makeBox = (parent, material, sx, sy, sz, x, y, z) => {
+    const piece = new THREE.Mesh(unitBox, material);
+    piece.scale.set(sx, sy, sz);
+    piece.position.set(x, y, z);
+    piece.castShadow = piece.receiveShadow = true;
+    parent.add(piece);
+    return piece;
+  };
+
+  const branchRoute = (a, b) => {
+    const delta = b.clone().sub(a);
+    const horizontalLength = Math.hypot(delta.x, delta.z);
+    const forward = delta.clone().normalize();
+    const right = V(delta.z / horizontalLength, 0, -delta.x / horizontalLength);
+    const normal = forward.clone().cross(right).normalize();
+    return { kind: 'branch', a, b, normal, length: delta.length(), closed: false };
+  };
+  const groundRoute = (a, b) => ({
+    kind: 'ground', a, b, normal: V(0, 1, 0), length: a.distanceTo(b), closed: false,
+  });
+  const circleRoute = (x, y, z, radius, phase = 0, kind = 'platform') => ({
+    kind, x, y, z, radius, phase, length: Math.PI * 2 * radius, closed: true,
+  });
+  const trunkRoute = (x, baseY, z, radius, maxY, angle, arc = 0.42) => ({
+    kind: 'trunk', x, baseY, z, radius, maxY, angle, arc,
+    length: Math.max(3, maxY - baseY + Math.abs(arc) * radius + 1.2), closed: false,
+  });
+
+  // Ground, branch, cap, balcony, and trunk routes make the creatures feel
+  // native to the whole playspace rather than confined to decorative pens.
+  // Every authored normal faces upward or sideways; ceilings are intentionally
+  // absent so a toad can climb a tree without ever becoming fully inverted.
+  const routes = [
+    groundRoute(V(-63, 0.12, 8), V(-44, 0.12, 8)),
+    groundRoute(V(44, 0.12, 10), V(64, 0.12, 12)),
+    groundRoute(V(-28, 0.12, 61), V(-10, 0.12, 68)),
+    groundRoute(V(10, 0.12, 67), V(31, 0.12, 59)),
+    groundRoute(V(-28, 0.12, -14), V(-8, 0.12, -10)),
+    branchRoute(V(-34.5, 7.08, -4), V(-9, 7.95, 7.2)),
+    branchRoute(V(9, 7.95, 7.2), V(34.5, 7.08, -3.2)),
+    branchRoute(V(-28.5, 13.12, 44), V(26.5, 14.92, 43.1)),
+    branchRoute(V(-21.5, 14.12, -35.4), V(-1.5, 15.9, -61)),
+    circleRoute(-20, 14.08, 51, 2.55, 0.4, 'mushroom-cap'),
+    circleRoute(0, 8.08, 8, 5.15, 1.2, 'tree-balcony'),
+    trunkRoute(-37, 0, -5, 2.62, 6.35, 0.15),
+    trunkRoute(37, 0, -4, 2.62, 6.3, 2.75, -0.38),
+    trunkRoute(-31, 0, 44, 2.62, 6.3, 1.2, 0.5),
+    trunkRoute(29, 0, 43, 2.62, 7.25, 3.65, -0.45),
+    trunkRoute(-23, 0, -34, 2.62, 6.35, 5.15, 0.4),
+    trunkRoute(0, 10, -63, 2.62, 15.35, 0.7, -0.42),
+    trunkRoute(0, 0, 8, 9.92, 7.25, 2.2, 0.32),
+  ];
+
+  const toads = [];
+  routes.forEach((route, index) => {
+    const palette = palettes[index % palettes.length];
+    const pattern = patternNames[index % patternNames.length];
+    const personality = personalityProfiles[index % personalityProfiles.length];
+    const root = new THREE.Group();
+    root.name = 'mycelium-fairy-toad';
+    root.userData.palette = palette.name;
+    root.userData.pattern = pattern;
+    root.userData.personality = personality.name;
+    root.userData.routeKind = route.kind;
+    root.userData.allowUpsideDown = false;
+    const model = new THREE.Group();
+    root.add(model);
+
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: palette.body,
+      roughness: 0.78,
+      emissive: new THREE.Color(palette.body).multiplyScalar(0.28),
+      emissiveIntensity: 0.18,
+      flatShading: true,
+    });
+    const bellyMaterial = new THREE.MeshStandardMaterial({
+      color: palette.belly, roughness: 0.82, flatShading: true,
+    });
+    const accentMaterial = new THREE.MeshStandardMaterial({
+      color: palette.accent,
+      roughness: 0.64,
+      emissive: palette.accent,
+      emissiveIntensity: 0.58,
+      flatShading: true,
+    });
+
+    makeBox(model, bodyMaterial, 1.08, 0.5, 0.9, 0, 0.36, -0.08);
+    makeBox(model, bodyMaterial, 1.2, 0.44, 0.58, 0, 0.48, 0.42);
+    makeBox(model, bellyMaterial, 0.82, 0.27, 0.08, 0, 0.37, 0.72);
+    const hindLegs = [
+      makeBox(model, bodyMaterial, 0.55, 0.18, 0.5, -0.53, 0.16, -0.3),
+      makeBox(model, bodyMaterial, 0.55, 0.18, 0.5, 0.53, 0.16, -0.3),
+    ];
+    const frontLegs = [
+      makeBox(model, bellyMaterial, 0.28, 0.13, 0.38, -0.43, 0.12, 0.47),
+      makeBox(model, bellyMaterial, 0.28, 0.13, 0.38, 0.43, 0.12, 0.47),
+    ];
+    const eyes = [];
+    const pupils = [];
+    for (const side of [-1, 1]) {
+      eyes.push(makeBox(model, eyeMaterial, 0.24, 0.24, 0.23, side * 0.38, 0.78, 0.53));
+      pupils.push(makeBox(model, pupilMaterial, 0.1, 0.11, 0.025, side * 0.38, 0.78, 0.66));
+    }
+    makeBox(model, mouthMaterial, 0.44, 0.035, 0.025, 0, 0.35, 0.735);
+
+    if (pattern === 'spots') {
+      for (const [x, z, size] of [[-0.3, -0.27, 0.18], [0.16, -0.3, 0.14], [0.34, 0.02, 0.12]]) {
+        makeBox(model, accentMaterial, size, 0.035, size, x, 0.63, z);
+      }
+    } else if (pattern === 'twin-stripe') {
+      makeBox(model, accentMaterial, 0.78, 0.035, 0.12, 0, 0.63, -0.27);
+      makeBox(model, accentMaterial, 0.68, 0.035, 0.1, 0, 0.63, 0.04);
+    } else if (pattern === 'mosaic') {
+      for (const [x, z] of [[-0.3, -0.25], [0.05, -0.31], [0.31, -0.06], [-0.12, 0.08]]) {
+        makeBox(model, accentMaterial, 0.16, 0.035, 0.13, x, 0.63, z);
+      }
+    } else {
+      for (const [x, z, size] of [[-0.36, -0.2, 0.09], [-0.08, -0.34, 0.07], [0.2, -0.18, 0.1], [0.34, 0.08, 0.07], [-0.18, 0.1, 0.08]]) {
+        makeBox(model, accentMaterial, size, 0.045, size, x, 0.64, z);
+      }
+    }
+
+    const shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.018;
+    shadow.renderOrder = 1;
+    root.add(shadow);
+    root.scale.setScalar(0.58 + (index % 5) * 0.055);
+    scene.add(root);
+    toads.push({
+      root, model, shadow, hindLegs, frontLegs, eyes, pupils, route,
+      personality: personality.name,
+      behavior: personality.mode,
+      hopping: personality.mode !== 'walk',
+      speed: (personality.speed || 0) * (0.94 + (index % 3) * 0.06),
+      hopPeriod: personality.cycle * (0.94 + (index % 3) * 0.04),
+      hopHeight: (personality.hopHeight || 0) * (0.92 + (index % 4) * 0.055),
+      stepDistance: (personality.stepDistance || 0) * (0.94 + (index % 3) * 0.055),
+      airTime: personality.airTime || 0,
+      hopStart: personality.hopStart || 0,
+      hopDuration: personality.hopDuration || 0,
+      offset: (index * 0.371) % 1,
+      phase: (index * 0.217) % 1,
+      lastNormal: V(0, 1, 0),
+    });
+  });
+
+  const position = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const tangent = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const wallNormal = new THREE.Vector3();
+  const orientation = new THREE.Matrix4();
+  const sampleGroundSurface = (x, z, outNormal) => {
+    let surfaceY = 0;
+    outNormal.set(0, 1, 0);
+    // The grove's walkable hills are large spheres buried below grade. Follow
+    // the same smooth collision surface used by players so ground toads stay
+    // planted on slopes instead of disappearing into the decorative hill mesh.
+    for (const collider of world.colliders) {
+      if (collider.type !== 'sphere' || collider.radius < 12) continue;
+      const dx = x - collider.center.x;
+      const dz = z - collider.center.z;
+      const horizontalSq = dx * dx + dz * dz;
+      if (horizontalSq >= collider.radius * collider.radius) continue;
+      const candidateY = collider.center.y
+        + Math.sqrt(collider.radius * collider.radius - horizontalSq);
+      // Higher sphere faces belong to cliffs, cave roofs, or other authored
+      // routes. Ground roamers only select the gentle understory terrain band.
+      if (candidateY <= surfaceY || candidateY > 9) continue;
+      surfaceY = candidateY;
+      outNormal.set(dx, candidateY - collider.center.y, dz).normalize();
+    }
+    return surfaceY + 0.12;
+  };
+  const sampleRoute = (route, u, direction) => {
+    if (route.kind === 'ground') {
+      position.lerpVectors(route.a, route.b, u);
+      position.y = sampleGroundSurface(position.x, position.z, normal);
+      tangent.copy(route.b).sub(route.a).multiplyScalar(direction);
+    } else if (route.kind === 'branch') {
+      position.lerpVectors(route.a, route.b, u);
+      normal.copy(route.normal);
+      tangent.copy(route.b).sub(route.a).multiplyScalar(direction);
+    } else if (route.kind === 'platform' || route.kind === 'mushroom-cap' || route.kind === 'tree-balcony') {
+      const angle = route.phase + u * Math.PI * 2;
+      position.set(route.x + Math.cos(angle) * route.radius, route.y, route.z + Math.sin(angle) * route.radius);
+      normal.set(0, 1, 0);
+      tangent.set(-Math.sin(angle), 0, Math.cos(angle));
+    } else {
+      const transitionEnd = 0.16;
+      if (u < transitionEnd) {
+        const raw = u / transitionEnd;
+        const blend = raw * raw * (3 - 2 * raw);
+        const angle = route.angle;
+        wallNormal.set(Math.cos(angle), 0, Math.sin(angle));
+        const attachRadius = route.radius + 0.28 + (1 - blend) * 1.2;
+        position.set(
+          route.x + wallNormal.x * attachRadius,
+          route.baseY + 0.1 + blend * 0.72,
+          route.z + wallNormal.z * attachRadius,
+        );
+        normal.set(0, 1, 0).lerp(wallNormal, blend).normalize();
+        tangent.set(-wallNormal.x * 1.2, 0.72, -wallNormal.z * 1.2).multiplyScalar(direction);
+      } else {
+        const climb = (u - transitionEnd) / (1 - transitionEnd);
+        const angle = route.angle + route.arc * climb;
+        const attachRadius = route.radius + 0.28;
+        wallNormal.set(Math.cos(angle), 0, Math.sin(angle));
+        position.set(
+          route.x + wallNormal.x * attachRadius,
+          THREE.MathUtils.lerp(route.baseY + 0.82, route.maxY, climb),
+          route.z + wallNormal.z * attachRadius,
+        );
+        normal.copy(wallNormal);
+        tangent.set(
+          -Math.sin(angle) * route.arc * attachRadius,
+          route.maxY - route.baseY - 0.82,
+          Math.cos(angle) * route.arc * attachRadius,
+        ).multiplyScalar(direction);
+      }
+    }
+    tangent.addScaledVector(normal, -tangent.dot(normal)).normalize();
+  };
+
+  const updateToads = (_dt, t) => {
+    for (const toad of toads) {
+      const cycleProgress = t / toad.hopPeriod + toad.phase;
+      const cycleIndex = Math.floor(cycleProgress);
+      const gait = cycleProgress - cycleIndex;
+      let hopPhase = 0;
+      let airborne = false;
+      let travelDistance;
+      if (toad.behavior === 'walk') {
+        travelDistance = t * toad.speed;
+      } else if (toad.behavior === 'surprise') {
+        const rawHop = (gait - toad.hopStart) / toad.hopDuration;
+        const hopTravel = THREE.MathUtils.smoothstep(rawHop, 0, 1);
+        travelDistance = (cycleIndex + hopTravel) * toad.stepDistance;
+        airborne = rawHop >= 0 && rawHop <= 1;
+        hopPhase = THREE.MathUtils.clamp(rawHop, 0, 1);
+      } else {
+        const rawHop = gait / toad.airTime;
+        const hopTravel = THREE.MathUtils.smoothstep(rawHop, 0, 1);
+        travelDistance = (cycleIndex + hopTravel) * toad.stepDistance;
+        airborne = gait < toad.airTime;
+        hopPhase = THREE.MathUtils.clamp(rawHop, 0, 1);
+      }
+      const routeProgress = travelDistance / toad.route.length + toad.offset;
+      let u;
+      let direction = 1;
+      if (toad.route.closed) {
+        u = routeProgress % 1;
+      } else {
+        const backAndForth = routeProgress % 2;
+        direction = backAndForth <= 1 ? 1 : -1;
+        u = backAndForth <= 1 ? backAndForth : 2 - backAndForth;
+      }
+      sampleRoute(toad.route, u, direction);
+      toad.root.position.copy(position);
+      toad.lastNormal.copy(normal);
+      right.crossVectors(normal, tangent).normalize();
+      orientation.makeBasis(right, normal, tangent);
+      toad.root.quaternion.setFromRotationMatrix(orientation);
+
+      if (toad.behavior !== 'walk') {
+        const hop = airborne ? Math.sin(hopPhase * Math.PI) * toad.hopHeight : 0;
+        const landingStart = toad.behavior === 'surprise'
+          ? toad.hopStart + toad.hopDuration : toad.airTime;
+        const landingPhase = THREE.MathUtils.clamp((gait - landingStart) / 0.12, 0, 1);
+        const landing = gait >= landingStart && gait < landingStart + 0.12;
+        const preJumpStart = toad.behavior === 'surprise' ? toad.hopStart - 0.08 : -1;
+        const preJumpPhase = THREE.MathUtils.clamp((gait - preJumpStart) / 0.08, 0, 1);
+        const preJump = toad.behavior === 'surprise'
+          && gait >= preJumpStart && gait < toad.hopStart;
+        const squash = landing ? Math.sin(landingPhase * Math.PI) * 0.14
+          : preJump ? Math.sin(preJumpPhase * Math.PI / 2) * 0.16 : 0;
+        const idleBreath = toad.behavior === 'surprise' && !airborne && !preJump && !landing
+          ? (Math.sin(t * 1.25 + toad.phase * 13) + 1) * 0.008 : 0;
+        toad.model.position.y = hop + idleBreath;
+        toad.model.scale.set(1 + squash * 0.45, 1 - squash, 1 + squash * 0.3);
+        for (const leg of toad.hindLegs) leg.rotation.x = airborne ? -0.5 * Math.sin(hopPhase * Math.PI) : 0;
+        for (const leg of toad.frontLegs) leg.rotation.x = airborne ? 0.28 * Math.sin(hopPhase * Math.PI) : 0;
+        toad.shadow.scale.setScalar(1 - Math.min(0.35, hop * 0.55));
+        toad.model.rotation.y = toad.behavior === 'surprise' && !airborne
+          ? Math.sin(t * 0.62 + toad.phase * 17) * 0.09 : 0;
+      } else {
+        const step = Math.sin(gait * Math.PI * 2);
+        toad.model.position.y = 0.025 + Math.abs(step) * 0.035;
+        toad.model.scale.set(1, 1, 1);
+        toad.hindLegs[0].rotation.x = step * 0.24;
+        toad.hindLegs[1].rotation.x = -step * 0.24;
+        toad.frontLegs[0].rotation.x = -step * 0.18;
+        toad.frontLegs[1].rotation.x = step * 0.18;
+        toad.shadow.scale.setScalar(1);
+        toad.model.rotation.y = step * 0.035;
+      }
+      const blinkCycle = (t * (0.38 + toad.phase * 0.06) + toad.phase * 5.7) % 1;
+      const blinkScale = blinkCycle > 0.955 ? 0.22 : 1;
+      for (const eye of toad.eyes) eye.scale.y = 0.24 * blinkScale;
+      for (const pupil of toad.pupils) pupil.scale.y = 0.11 * blinkScale;
+    }
+  };
+  updateToads(0, 0);
+  world.anim.push(updateToads);
+  world.myceliumToads = toads;
 }
 
 function addBouncyMushroom(scene, world, x, baseY, z, stemHeight, radius, vy, color, vx = 0, vz = 0) {
@@ -16281,6 +16669,7 @@ function buildMyceliumGrove(scene) {
 
   addMyceliumPatch(scene, world, 118);
   addMyceliumSpores(scene, world);
+  addMyceliumFairyToads(scene, world);
 
   // A few fallen trunks close short sightlines without forming a parking-grid
   // obstacle course; each is embedded at the foot of a hill or tree cluster.

@@ -54,7 +54,9 @@ const MODES = ['ffa', 'tdm'];
 const DEFAULT_MODE = 'ffa';
 const TEAM_COLORS = { blue: '#5cb3ff', red: '#ff5c5c' };
 const WEAPON_IDS = new Set(['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'whomper', 'hyper', 'parasite', 'loophole', 'refractor', 'thunderbolt']);
-const WORLD_EVENT_IDS = new Set(['lava', 'water', 'storm', 'void', 'meteor', 'comet']);
+const WORLD_EVENT_IDS = new Set([
+  'lava', 'water', 'storm', 'void', 'meteor', 'comet', 'gator', 'shark', 'solar',
+]);
 const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(?:er|ing)?|motherfucker|nigg(?:er|a)|piss|shit|slut|wanker|whore)\b/gi;
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
@@ -1472,11 +1474,13 @@ function sanitizeEvent(ev, allowedIds) {
   if (type === 'kill') {
     const killerId = String(ev.killerId || '').slice(0, 32);
     const victimId = String(ev.victimId || '').slice(0, 32);
+    const weapon = String(ev.weapon || 'environment').slice(0, 24);
     if (!allowedIds.has(killerId) || !allowedIds.has(victimId) || killerId === victimId) return null;
     return {
       type,
       killerId,
       victimId,
+      weapon: WEAPON_IDS.has(weapon) ? weapon : 'environment',
     };
   }
   if (type === 'award') {

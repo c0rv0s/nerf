@@ -153,6 +153,8 @@ export class Bot {
     this.alertTimer = 0;                // "just got shot" — may turn on the attacker
     this.shopping = null;               // pickup we're heading for (refreshed each think)
     this.lootLock = 0;                  // seconds of shopping focus after a kill drop
+    this._noticedDropPos = new THREE.Vector3();
+    this._noticedDropPending = false;
     this.stuckT = 0;                    // seconds of no progress while wanting to move
     this._stuckCheck = 1.5;
     this._lastPos = new THREE.Vector3();
@@ -261,6 +263,7 @@ export class Bot {
     this.target = null;
     this.shopping = null;
     this.lootLock = 0;
+    this._noticedDropPending = false;
     this.stuckT = 0;
     this._lowGravHop = false;
     this._lastPos.copy(pos);
@@ -315,18 +318,16 @@ export class Bot {
 
   // A kill just dropped point orbs — beeline for them before someone steals them.
   noticeDrop(pos) {
-    if (this.pos.distanceTo(pos) > 45) return;
-    const from = this.reachableNearest();
-    const to = nearestWaypoint(this.world, pos);
-    this.path = this._findPath(from, to, { avoidWater: true }) || [from];
-    this.pathIdx = 0;
-    this.lootLock = 4;
+    if (this.pos.distanceToSquared(pos) > 45 * 45) return;
+    this._noticedDropPos.copy(pos);
+    this._noticedDropPending = true;
   }
 
   die() {
     this.cancelWeaponWarmup();
     this.jetpack = null;
     this._jetpackWants = false;
+    this._noticedDropPending = false;
     this.alive = false;
     this.mesh.visible = false;
   }
@@ -422,6 +423,19 @@ export class Bot {
 
   // Repath occasionally, or when the path is exhausted
   repath(force) {
+    // Kill notifications can arrive inside the damage/death call stack. Defer
+    // all waypoint visibility checks and pathfinding to this staggered think.
+    if (this._noticedDropPending) {
+      this._noticedDropPending = false;
+      const from = this.reachableNearest();
+      const to = nearestWaypoint(this.world, this._noticedDropPos);
+      this.path = this._findPath(from, to, { avoidWater: true }) || [from];
+      this.pathIdx = 0;
+      this.lootLock = 4;
+      this._strategyGoal = null;
+      this._strategyGoalType = null;
+      return;
+    }
     // committed to a fresh kill drop — don't let combat rolls redirect us
     if (!force && this.lootLock > 0 && this.path && this.pathIdx < this.path.length) return;
     const loot = this.shopping;
@@ -1365,7 +1379,8 @@ export class Bot {
 
   _inLava(x, y, z) {
     for (const l of this.world.lavaZones || []) {
-      if (pointInZoneXZ(l, x, z) && y < l.maxY + 0.4) return true;
+      if (y >= l.maxY + 0.4) continue;
+      if (pointInZoneXZ(l, x, z)) return true;
     }
     return false;
   }

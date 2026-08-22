@@ -69,6 +69,18 @@ export function warmAudioSamplesInBackground() {
   })();
   return sampleWarmPromise;
 }
+
+// Olympus is the one arena where a random impact sample, an arena-wide meteor
+// boom, and Thunderbolt can all make their first appearance during the same
+// busy fight. Finish those small decodes under its loading screen instead of
+// letting a first hit race the background warmer during gameplay.
+export async function warmOlympusImpactAudio() {
+  let audio;
+  try { audio = ac(); } catch { return; }
+  noiseBuffer(audio, 1.7); // Thunderbolt's procedural thunder buffer.
+  const files = [...SAMPLE_GROUPS.impact, ...SAMPLE_GROUPS.explosion];
+  for (const file of files) await loadSampleFile(file);
+}
 // All sfx route through a limiter — a busy firefight used to sum a dozen raw
 // oscillators past 0dB and clip into a horrible buzz.
 function bus(a) {
@@ -174,8 +186,15 @@ function sample(group, { vol = 0.12, rate = 1, delay = 0, alternate = false } = 
     const a = ac();
     const files = SAMPLE_GROUPS[group];
     if (!files?.length) return;
-    const index = alternate ? (sampleSequence.get(group) || 0) : Math.floor(Math.random() * files.length);
-    const file = files[index % files.length];
+    // Once the Atrium has warmed at least one variation, play from the ready
+    // subset. Randomly choosing a cold sibling used to start a fetch/decode in
+    // the middle of combat even though an equivalent sample was already ready.
+    const readyFiles = files.filter(file => sampleBuffers.has(file));
+    const candidates = readyFiles.length ? readyFiles : files;
+    const index = alternate
+      ? (sampleSequence.get(group) || 0)
+      : Math.floor(Math.random() * candidates.length);
+    const file = candidates[index % candidates.length];
     if (alternate) sampleSequence.set(group, index + 1);
     const buffer = sampleBuffers.get(file);
     if (!buffer) {

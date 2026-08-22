@@ -2,13 +2,15 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  pointHitsWorld, rand, rayHitsCylinderShell, rayHitsEllipsoid, shellInnerNormal,
+  hasLOS, pointHitsWorld, rand, rayHitsCylinderShell, rayHitsEllipsoid, shellInnerNormal,
 } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const BEAM_SAMPLE_HEIGHTS = [0.35, 0.55, 0.8];
+const LIGHTNING_ARC_POINTS = 9;
+const LIGHTNING_ARC_PREALLOCATE = 12;
 
 export const WEAPON_ORDER = ['blaster', 'scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper', 'loophole', 'refractor', 'thunderbolt'];
 
@@ -401,6 +403,8 @@ export class ProjectileSystem {
     this.projectiles = [];
     this.beams = [];
     this.lightningArcs = [];
+    this.lightningArcPool = [];
+    this.freeLightningArcs = [];
     this.nextShotId = 1;
     this.nextBeamId = 1;
     this.geoBall = new THREE.SphereGeometry(1, 8, 6);
@@ -422,6 +426,9 @@ export class ProjectileSystem {
     this._step = new THREE.Vector3();
     this._previous = new THREE.Vector3();
     this._probe = new THREE.Vector3();
+    for (let i = 0; i < LIGHTNING_ARC_PREALLOCATE; i++) {
+      this.freeLightningArcs.push(this.createLightningArc());
+    }
   }
 
   makeShotGroup(owner, weapon) {
@@ -566,33 +573,69 @@ export class ProjectileSystem {
     return seg;
   }
 
-  spawnLightningArc(start, end, color) {
-    const points = [];
-    const count = 9;
-    const jitter = Math.min(0.9, start.distanceTo(end) * 0.055);
-    for (let i = 0; i < count; i++) {
-      const t = i / (count - 1);
-      const point = start.clone().lerp(end, t);
-      if (i > 0 && i < count - 1) {
-        point.x += rand(-jitter, jitter);
-        point.y += rand(-jitter * 0.65, jitter * 0.65);
-        point.z += rand(-jitter, jitter);
-      }
-      points.push(point);
-    }
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  createLightningArc() {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new THREE.BufferAttribute(new Float32Array(LIGHTNING_ARC_POINTS * 3), 3);
+    positions.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('position', positions);
     const glowMat = new THREE.LineBasicMaterial({
-      color, transparent: true, opacity: 0.62, depthWrite: false,
+      color: 0xffffff, transparent: true, opacity: 0.62, depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const coreMat = new THREE.LineBasicMaterial({
       color: 0xffffff, transparent: true, opacity: 0.96, depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
+    const glow = new THREE.Line(geometry, glowMat);
+    const core = new THREE.Line(geometry, coreMat);
+    // The vertices move whenever an arc is reused, so a cached bounding sphere
+    // would be stale. These effects live for only a fraction of a second.
+    glow.frustumCulled = false;
+    core.frustumCulled = false;
     const group = new THREE.Group();
-    group.add(new THREE.Line(geometry, glowMat), new THREE.Line(geometry, coreMat));
+    group.visible = false;
+    group.add(glow, core);
     this.scene.add(group);
-    this.lightningArcs.push({ group, geometry, mats: [glowMat, coreMat], age: 0, life: 0.22 });
+    const arc = {
+      group, geometry, positions, mats: [glowMat, coreMat], age: 0, life: 0.22,
+    };
+    this.lightningArcPool.push(arc);
+    return arc;
+  }
+
+  acquireLightningArc(color) {
+    const arc = this.freeLightningArcs.pop() || this.createLightningArc();
+    arc.age = 0;
+    arc.mats[0].color.setHex(color);
+    arc.mats[0].opacity = 0.62;
+    arc.mats[1].opacity = 0.96;
+    arc.group.visible = true;
+    this.lightningArcs.push(arc);
+    return arc;
+  }
+
+  releaseLightningArc(arc) {
+    arc.group.visible = false;
+    this.freeLightningArcs.push(arc);
+  }
+
+  spawnLightningArc(start, end, color) {
+    const arc = this.acquireLightningArc(color);
+    const positions = arc.positions.array;
+    const jitter = Math.min(0.9, start.distanceTo(end) * 0.055);
+    for (let i = 0; i < LIGHTNING_ARC_POINTS; i++) {
+      const t = i / (LIGHTNING_ARC_POINTS - 1);
+      const offset = i * 3;
+      positions[offset] = start.x + (end.x - start.x) * t;
+      positions[offset + 1] = start.y + (end.y - start.y) * t;
+      positions[offset + 2] = start.z + (end.z - start.z) * t;
+      if (i > 0 && i < LIGHTNING_ARC_POINTS - 1) {
+        positions[offset] += rand(-jitter, jitter);
+        positions[offset + 1] += rand(-jitter * 0.65, jitter * 0.65);
+        positions[offset + 2] += rand(-jitter, jitter);
+      }
+    }
+    arc.positions.needsUpdate = true;
   }
 
   updateLightningArcs(dt) {
@@ -603,10 +646,8 @@ export class ProjectileSystem {
       arc.mats[0].opacity = 0.62 * fade;
       arc.mats[1].opacity = 0.96 * fade;
       if (arc.age >= arc.life) {
-        this.scene.remove(arc.group);
-        arc.geometry.dispose();
-        for (const material of arc.mats) material.dispose();
         this.lightningArcs.splice(i, 1);
+        this.releaseLightningArc(arc);
       }
     }
   }
@@ -845,10 +886,10 @@ export class ProjectileSystem {
         const center = ch.pos.clone().addScaledVector(ch.up || WORLD_UP, ch.height * 0.55 * visualScale);
         const distSq = center.distanceToSquared(origin);
         if (distSq >= best) continue;
-        const dist = Math.sqrt(distSq);
-        const dir = center.clone().sub(origin).normalize();
-        const wall = this.rayWorld(origin, dir, dist);
-        if (wall && wall.t < dist - 0.3) continue;
+        // The indexed quarter-metre sampling retains the former exact ray's
+        // thin-cover behavior without scanning and allocating against every
+        // collider in Olympus for every possible chain target.
+        if (!hasLOS(origin, center, this.world, 0.25)) continue;
         target = ch;
         targetCenter = center;
         best = distSq;
@@ -1250,12 +1291,14 @@ export class ProjectileSystem {
       }
     }
     this.beams.length = 0;
-    for (const arc of this.lightningArcs) {
+    for (const arc of this.lightningArcPool) {
       this.scene.remove(arc.group);
       arc.geometry.dispose();
       for (const material of arc.mats) material.dispose();
     }
     this.lightningArcs.length = 0;
+    this.freeLightningArcs.length = 0;
+    this.lightningArcPool.length = 0;
   }
 }
 
