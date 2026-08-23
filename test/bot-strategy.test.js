@@ -6,6 +6,7 @@ import {
   combatTargetScore,
   pickupUtility,
 } from '../src/bot-strategy.js';
+import { weaponShotCooldown } from '../src/weapon-cadence.js';
 
 const bot = (extra = {}) => ({
   hp: 100, shield: 0, score: 1000, weapons: { blaster: true, pulsar: true },
@@ -48,4 +49,11 @@ test('a healthy trailing bot attacks while a hurt leader preserves its life', ()
   const enemy = { hp: 100, shield: 0 };
   assert.equal(chooseCombatIntent(bot({ score: 500 }), enemy, null, { leaderScore: 4000 }), 'engage');
   assert.equal(chooseCombatIntent(bot({ hp: 45, score: 4000 }), enemy, null, { leaderScore: 4000 }), 'evade');
+});
+
+test('bot weapon cooldown preserves each weapon fire rate', () => {
+  const secretShot = weaponShotCooldown(3.2, 1, 0.1);
+  const pulsator = weaponShotCooldown(9, 1, 0.1);
+  assert.ok(pulsator < secretShot / 2);
+  assert.equal(weaponShotCooldown(3.2, 2, 0), 1 / 6.4);
 });

@@ -14,6 +14,7 @@ import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 import { chooseCombatIntent, combatTargetScore, pickupUtility } from './bot-strategy.js';
 import { waterSpeedMultiplier } from './water-movement.js';
+import { weaponShotCooldown } from './weapon-cadence.js';
 import {
   applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
 } from './grapple.js';
@@ -323,10 +324,10 @@ export class Bot {
     return true;
   }
 
-  finishWeaponShot(w, extraCooldown) {
+  finishWeaponShot(w, cadenceJitter = 0) {
     if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
     const cadence = this.weapon === 'blaster' && this.dualBlaster ? 2 : 1;
-    this.cooldown = w.warmup ? 0 : 1 / (w.rof * cadence) + extraCooldown;
+    this.cooldown = w.warmup ? 0 : weaponShotCooldown(w.rof, cadence, cadenceJitter);
   }
 
   shotHandSide() {
@@ -803,7 +804,7 @@ export class Bot {
       const side = this.shotHandSide();
       const right = new THREE.Vector3().crossVectors(dir, up).normalize();
       fire(this, origin.addScaledVector(dir, 0.9).addScaledVector(right, side * 0.22), dir, this.weapon);
-      this.finishWeaponShot(w, rand(0.3, 0.7));
+      this.finishWeaponShot(w, rand(0.05, 0.18));
     }
 
     // orient the mesh upright on its surface, facing its heading/target
@@ -1174,7 +1175,7 @@ export class Bot {
       const right = new THREE.Vector3().crossVectors(dir, this.up || UPY).normalize();
       fire(this, origin.addScaledVector(dir, 0.8 * ownerScale)
         .addScaledVector(right, side * 0.22 * ownerScale), dir, this.weapon);
-      this.finishWeaponShot(w, rand(0.25, 0.6));
+      this.finishWeaponShot(w, rand(0.05, 0.18));
     }
 
     // --- visuals ---

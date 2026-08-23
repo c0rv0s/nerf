@@ -335,7 +335,7 @@ const TEXTURE_NAMES = Object.freeze([
   'checker', 'crate', 'rock', 'arcade', 'fortress-royal', 'crocodile-scales',
   'canopy-wall', 'grass', 'dirt', 'door', 'lava', 'poster2', 'poster3', 'poster4',
   'poster5', 'poster6', 'poster7', 'hazard', 'tidebreaker-orange-steel',
-  'mycelium-mossy-rock',
+  'mycelium-mossy-slab',
   'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
   'infinite-bloom-faces', 'infinite-bloom-sky-eyeless',
   'infinite-bloom-eye-atlas',
@@ -354,6 +354,10 @@ const COLOR_ONLY_TEXTURES = new Set([
   'target', 'hazard', 'atrium-gate-frame-atlas',
   'infinite-bloom-sky-eyeless', 'infinite-bloom-eye-atlas',
 ]);
+// These sources are authored to tile directly. Mirroring them would reflect
+// recognizable rock landmarks into the symmetrical face-like patterns that
+// direct repeat is meant to avoid.
+const DIRECT_REPEAT_TEXTURES = new Set(['mycelium-mossy-slab']);
 const textureLoader = new THREE.TextureLoader();
 const textureProgressListeners = new Set();
 const textureFinalizeQueue = [];
@@ -435,8 +439,12 @@ function loadTexture(name) {
     textureLoader.load(url, (t) => {
       const finalize = () => {
         try {
-          // Mirrored repeat hides seams in not-quite-tileable source images.
-          t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping;
+          // Mirrored repeat hides seams in not-quite-tileable source images;
+          // deliberately seamless materials retain their asymmetric layout.
+          const wrapping = DIRECT_REPEAT_TEXTURES.has(name)
+            ? THREE.RepeatWrapping
+            : THREE.MirroredRepeatWrapping;
+          t.wrapS = t.wrapT = wrapping;
           t.colorSpace = THREE.SRGBColorSpace;
           t.anisotropy = 16;
           let normal = null;
@@ -444,7 +452,7 @@ function loadTexture(name) {
           // deriving a normal map for them was pure cold-start CPU work.
           if (!COLOR_ONLY_TEXTURES.has(name)) {
             normal = makeNormalMap(t.image);
-            normal.wrapS = normal.wrapT = THREE.MirroredRepeatWrapping;
+            normal.wrapS = normal.wrapT = wrapping;
             normal.anisotropy = 16;
           }
           AI_TEX[name] = { map: t, normal };
@@ -830,7 +838,9 @@ function triangleMeshColliderFromMesh(mesh, debugName = 'triangle-mesh') {
   };
 }
 
-function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72, exactCollider = false) {
+function addAsteroid(
+  scene, world, x, y, z, radius, color = 0x8a7f72, exactCollider = false, shape = null,
+) {
   const geo = new THREE.IcosahedronGeometry(radius, 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -844,7 +854,9 @@ function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72, exactColli
   geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, mat(color, { tex: 'rock', repeat: [3, 3], roughness: 0.95, flatShading: true }));
   m.position.set(x, y, z);
-  m.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3));
+  m.scale.set(shape?.scaleX ?? 1, shape?.scaleY ?? 1, shape?.scaleZ ?? 1);
+  if (shape?.lockRotation) m.rotation.set(0, 0, 0);
+  else m.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3));
   m.castShadow = m.receiveShadow = true;
   scene.add(m);
   world.colliders.push(exactCollider
@@ -1087,7 +1099,12 @@ function addMyceliumPondBasin(scene, world, points, centerX, centerZ, bottomY = 
   shoreShape.holes.push(pondHole);
   const apron = new THREE.Mesh(
     new THREE.ShapeGeometry(shoreShape),
-    mat(0x31583f, { tex: 'grass', repeat: [9, 9], roughness: 0.99, side: THREE.DoubleSide }),
+    // ShapeGeometry UVs are already expressed in world-sized coordinates.
+    // One texture repeat per ~6 units matches the neighboring understory beds;
+    // the former 9x multiplier aliased into a flat-looking solid-green wedge.
+    mat(0x183d2d, {
+      tex: 'grass', repeat: [1 / 6, 1 / 6], roughness: 0.99, side: THREE.DoubleSide,
+    }),
   );
   apron.rotation.x = -Math.PI / 2;
   apron.position.y = 0.025;
@@ -16113,6 +16130,266 @@ function addMyceliumPatch(scene, world, count = 72) {
   });
 }
 
+function addMyceliumGrassTufts(scene, world, count = 9000) {
+  // Each instance is a broad patch of short overlapping ribbons rather than a
+  // radial tuft. Neighboring patches merge into one meadow instead of reading
+  // as evenly scattered sprouts.
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  // These stay close to the underlying 0x183d2d grass floor in hue and value;
+  // small variations provide depth without producing luminous lime needles.
+  const palette = [0x254936, 0x294d38, 0x2d513b, 0x234532, 0x30533c];
+  for (let blade = 0; blade < 16; blade++) {
+    const angle = blade * 2.39996 + Math.sin(blade * 4.7) * 0.42;
+    const centerX = (blade % 4 - 1.5) * 0.31 + Math.sin(blade * 3.1) * 0.075;
+    const centerZ = (Math.floor(blade / 4) - 1.5) * 0.31 + Math.cos(blade * 2.7) * 0.075;
+    const sideX = Math.cos(angle);
+    const sideZ = -Math.sin(angle);
+    const width = 0.16 + (blade % 3) * 0.027;
+    const midWidth = width * (0.78 + (blade % 2) * 0.07);
+    const topWidth = width * (0.48 + (blade % 2) * 0.08);
+    const height = 0.25 + (blade % 5) * 0.032;
+    const lean = 0.1 + (blade % 3) * 0.035;
+    const midX = centerX + Math.sin(angle) * lean * 0.34;
+    const midZ = centerZ + Math.cos(angle) * lean * 0.34;
+    const topX = centerX + Math.sin(angle) * lean;
+    const topZ = centerZ + Math.cos(angle) * lean;
+    const base = positions.length / 3;
+    positions.push(
+      centerX - sideX * width / 2, 0, centerZ - sideZ * width / 2,
+      centerX + sideX * width / 2, 0, centerZ + sideZ * width / 2,
+      midX - sideX * midWidth / 2, height * 0.52, midZ - sideZ * midWidth / 2,
+      midX + sideX * midWidth / 2, height * 0.52, midZ + sideZ * midWidth / 2,
+      topX - sideX * topWidth / 2, height, topZ - sideZ * topWidth / 2,
+      topX + sideX * topWidth / 2, height, topZ + sideZ * topWidth / 2,
+    );
+    // Store the meadow palette on the blade vertices themselves. This keeps
+    // the custom wind shader entirely independent of instance-color handling.
+    const bladeColor = new THREE.Color(palette[blade % palette.length]);
+    const midColor = bladeColor.clone().offsetHSL(0, 0, 0.008);
+    const tipColor = bladeColor.clone().offsetHSL(0, 0, 0.015);
+    colors.push(
+      bladeColor.r, bladeColor.g, bladeColor.b,
+      bladeColor.r, bladeColor.g, bladeColor.b,
+      midColor.r, midColor.g, midColor.b,
+      midColor.r, midColor.g, midColor.b,
+      tipColor.r, tipColor.g, tipColor.b,
+      tipColor.r, tipColor.g, tipColor.b,
+    );
+    indices.push(
+      base, base + 1, base + 2,
+      base + 1, base + 3, base + 2,
+      base + 2, base + 3, base + 4,
+      base + 3, base + 5, base + 4,
+    );
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    roughness: 1,
+    metalness: 0,
+    flatShading: false,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.grassTime = { value: 0 };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float grassTime;')
+      .replace('#include <begin_vertex>', `
+        vec3 transformed = vec3(position);
+        float grassPhase = 0.0;
+        #ifdef USE_INSTANCING
+          grassPhase = instanceMatrix[3].x * 0.19 + instanceMatrix[3].z * 0.13;
+        #endif
+        float bladeTip = smoothstep(0.02, 0.36, position.y);
+        float breeze = sin(grassTime * 1.35 + grassPhase)
+          + sin(grassTime * 0.62 + grassPhase * 1.7) * 0.45;
+        transformed.x += breeze * bladeTip * bladeTip * 0.055;
+        transformed.z += cos(grassTime * 0.9 + grassPhase) * bladeTip * bladeTip * 0.035;
+      `);
+    material.userData.shader = shader;
+  };
+  material.customProgramCacheKey = () => 'mycelium-meadow-wind-v3';
+  const tufts = new THREE.InstancedMesh(geometry, material, count);
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const orientation = new THREE.Quaternion();
+  const yaw = new THREE.Quaternion();
+  const up = V(0, 1, 0);
+  const rnd = seededRandom(0x67726173);
+  const terrain = world.colliders.filter(c => c.type === 'triangleMesh'
+    && c.debugName === 'faceted-asteroid');
+  let placed = 0;
+  let attempts = 0;
+  while (placed < count && attempts++ < count * 18) {
+    const x = rnd() * 150 - 75;
+    const z = rnd() * 150 - 75;
+    // Broad overlapping noise bands make lush swaths and softer clearings
+    // instead of distributing every tuft at the same visual density.
+    const meadowDensity = THREE.MathUtils.clamp(
+      0.84
+      + Math.sin(x * 0.105 + z * 0.034) * 0.1
+      + Math.sin(z * 0.083 - x * 0.027) * 0.08,
+      0.62,
+      0.99,
+    );
+    if (rnd() > meadowDensity) continue;
+    // Preserve the clean water silhouette and the authored interior routes.
+    const pond = ((x - 2) / 22) ** 2 + ((z + 35.5) / 17) ** 2 < 1;
+    const hollowLogInterior = Math.abs(x) < 27 && Math.abs(z - 31) < 6.3;
+    const scatterTunnelInterior = Math.abs(x + 52) < 7.2 && z > 14 && z < 60;
+    const grottoInterior = Math.abs(x) < 12 && z < -47;
+    if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior) continue;
+    if (world.myceliumTreeRoots?.some(root => (
+      Math.hypot(x - root.x, z - root.z) < Math.max(1.1, root.radius * 0.42)
+    ))) continue;
+    if (world.colliders.some(c => c.debugName === 'mycelium-boulder' && (
+      ((x - c.center.x) / (c.radii.x + 0.55)) ** 2
+      + ((z - c.center.z) / (c.radii.z + 0.55)) ** 2 < 1
+    ))) continue;
+
+    let y = 0.025;
+    normal.set(0, 1, 0);
+    for (const collider of terrain) {
+      const candidateNormal = new THREE.Vector3();
+      const candidateY = triangleMeshSurfaceY(collider, x, z, candidateNormal);
+      if (candidateY == null || candidateY < 0 || candidateY > 8.5 || candidateY <= y) continue;
+      y = candidateY + 0.025;
+      normal.copy(candidateNormal);
+    }
+    // Skip near-vertical facets; grass belongs on walkable soil, not cliff faces.
+    if (normal.y < 0.72) continue;
+    position.set(x, y, z);
+    orientation.setFromUnitVectors(up, normal);
+    yaw.setFromAxisAngle(up, rnd() * Math.PI * 2);
+    orientation.multiply(yaw);
+    const size = 0.88 + rnd() * 0.38;
+    scale.set(size * (0.9 + rnd() * 0.2), size, size * (0.9 + rnd() * 0.2));
+    matrix.compose(position, orientation, scale);
+    tufts.setMatrixAt(placed, matrix);
+    placed++;
+  }
+  tufts.count = placed;
+  tufts.instanceMatrix.needsUpdate = true;
+  // The ground lighting supplies the final meadow value. Dense per-blade
+  // shadows would make this much heavier layer unnecessarily noisy.
+  tufts.castShadow = tufts.receiveShadow = false;
+  tufts.name = 'mycelium-grass-tufts';
+  scene.add(tufts);
+  world.anim.push((_dt, t) => {
+    if (material.userData.shader) material.userData.shader.uniforms.grassTime.value = t;
+  });
+}
+
+function addMyceliumLeafLitter(scene, world, count = 1100) {
+  // A lightly folded diamond reads as a broad fallen leaf rather than another
+  // grass blade. Instance variation supplies the irregular forest-floor mix.
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0.026, 0,       // raised central vein
+    0, 0, 0.3,
+    0.18, 0, 0.035,
+    0.035, 0, -0.25,
+    -0.17, 0, -0.015,
+  ], 3));
+  // Keep the shared leaf geometry neutral so its brown/olive instance tint is
+  // preserved instead of being multiplied by an absent (black) color stream.
+  const leafVertexColors = new Float32Array(5 * 3);
+  leafVertexColors.fill(1);
+  geometry.setAttribute('color', new THREE.BufferAttribute(leafVertexColors, 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1]);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    fog: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const leaves = new THREE.InstancedMesh(geometry, material, count);
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const candidateNormal = new THREE.Vector3();
+  const orientation = new THREE.Quaternion();
+  const yaw = new THREE.Quaternion();
+  const up = V(0, 1, 0);
+  const rnd = seededRandom(0x6c656166);
+  const palette = [
+    0x9b6a36, 0xb47a3d, 0x7c4f34, 0xa45f45, 0x725047,
+    0x7f6f3a, 0x665a35, 0x80516c,
+  ];
+  const terrain = world.colliders.filter(c => c.type === 'triangleMesh'
+    && c.debugName === 'faceted-asteroid');
+  const roots = world.myceliumTreeRoots || [];
+  let placed = 0;
+  let attempts = 0;
+  while (placed < count && attempts++ < count * 16) {
+    let x;
+    let z;
+    // Most leaf litter collects beneath and downwind of trees; the remainder
+    // breaks up open grass without carpeting it uniformly.
+    if (roots.length && rnd() < 0.62) {
+      const root = roots[Math.floor(rnd() * roots.length)];
+      const angle = rnd() * Math.PI * 2;
+      const distance = root.radius * 0.46 + 0.7 + rnd() * 5.2;
+      x = root.x + Math.cos(angle) * distance + 0.8;
+      z = root.z + Math.sin(angle) * distance - 0.35;
+    } else {
+      x = rnd() * 148 - 74;
+      z = rnd() * 148 - 74;
+    }
+    if (Math.abs(x) > 75 || Math.abs(z) > 75) continue;
+    const pond = ((x - 2) / 22) ** 2 + ((z + 35.5) / 17) ** 2 < 1;
+    const hollowLogInterior = Math.abs(x) < 27 && Math.abs(z - 31) < 6.3;
+    const scatterTunnelInterior = Math.abs(x + 52) < 7.2 && z > 14 && z < 60;
+    const grottoInterior = Math.abs(x) < 12 && z < -47;
+    if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior) continue;
+    if (world.colliders.some(c => c.debugName === 'mycelium-boulder' && (
+      ((x - c.center.x) / (c.radii.x + 0.25)) ** 2
+      + ((z - c.center.z) / (c.radii.z + 0.25)) ** 2 < 1
+    ))) continue;
+
+    let y = 0.035;
+    normal.set(0, 1, 0);
+    for (const collider of terrain) {
+      candidateNormal.set(0, 1, 0);
+      const candidateY = triangleMeshSurfaceY(collider, x, z, candidateNormal);
+      if (candidateY == null || candidateY < 0 || candidateY > 8.5 || candidateY <= y) continue;
+      y = candidateY + 0.035;
+      normal.copy(candidateNormal);
+    }
+    if (normal.y < 0.7) continue;
+    position.set(x, y, z);
+    orientation.setFromUnitVectors(up, normal);
+    yaw.setFromAxisAngle(up, rnd() * Math.PI * 2);
+    orientation.multiply(yaw);
+    const leafSize = 0.48 + rnd() * 0.72;
+    scale.set(leafSize * (0.72 + rnd() * 0.7), 1, leafSize);
+    matrix.compose(position, orientation, scale);
+    leaves.setMatrixAt(placed, matrix);
+    leaves.setColorAt(placed, new THREE.Color(palette[Math.floor(rnd() * palette.length)]));
+    placed++;
+  }
+  leaves.count = placed;
+  leaves.instanceMatrix.needsUpdate = true;
+  if (leaves.instanceColor) leaves.instanceColor.needsUpdate = true;
+  leaves.castShadow = leaves.receiveShadow = false;
+  leaves.name = 'mycelium-fallen-leaf-litter';
+  scene.add(leaves);
+}
+
 function addMyceliumFairyToads(scene, world) {
   const palettes = [
     { name: 'moonmint', body: 0x72d7aa, belly: 0xc8f3c7, accent: 0x9a7cff },
@@ -16797,7 +17074,10 @@ function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) 
 
 // Climbable bracket fungi. Local +Z points away from the host surface, so yaw
 // alone can plant an ascending cluster on a trunk, log wall, or rock face.
-function addMyceliumShelfFungi(scene, world, x, y, z, yaw, scale = 1, seed = 0, count = 3) {
+// A cylinder-X host lets each step follow the curved side of a horizontal log.
+function addMyceliumShelfFungi(
+  scene, world, x, y, z, yaw, scale = 1, seed = 0, count = 3, hostSurface = null,
+) {
   const group = new THREE.Group();
   group.position.set(x, y, z);
   group.rotation.y = yaw;
@@ -16826,6 +17106,9 @@ function addMyceliumShelfFungi(scene, world, x, y, z, yaw, scale = 1, seed = 0, 
   for (let i = 0; i < count; i++) {
     const radius = scale * (0.9 + ((Math.abs(seed) + i * 5) % 4) * 0.1);
     const thickness = Math.max(0.2, radius * (0.16 + (i % 2) * 0.025));
+    // Long climbs sweep clearly across the host surface; shorter tree/rock
+    // clusters use a gentler run so their roots still meet curved hosts.
+    const stepRun = scale * (count > 4 ? 0.95 : 0.62);
     // A half-cylinder produces a flat bark-facing edge and a rounded fan that
     // projects outward, with separate cap and cream underside materials.
     const shelf = new THREE.Mesh(
@@ -16834,10 +17117,44 @@ function addMyceliumShelfFungi(scene, world, x, y, z, yaw, scale = 1, seed = 0, 
       ),
       [edgeMaterial, capMaterial, undersideMaterial],
     );
+    const localX = (i - (count - 1) / 2) * stepRun
+      + Math.sin(seed + i) * scale * 0.06;
+    const localY = i * scale * 1.18;
+    let surfaceDepth = 0;
+    if (hostSurface?.type === 'cylinderX') {
+      const worldY = y + localY;
+      const verticalOffset = THREE.MathUtils.clamp(
+        worldY - hostSurface.centerY,
+        -hostSurface.radius * 0.985,
+        hostSurface.radius * 0.985,
+      );
+      surfaceDepth = Math.sqrt(Math.max(
+        0,
+        hostSurface.radius ** 2 - verticalOffset ** 2,
+      ));
+    } else if (hostSurface?.type === 'cylinderY') {
+      const worldY = y + localY;
+      const heightFraction = THREE.MathUtils.clamp(
+        (worldY - hostSurface.bottomY) / (hostSurface.topY - hostSurface.bottomY),
+        0,
+        1,
+      );
+      const hostRadius = THREE.MathUtils.lerp(
+        hostSurface.bottomRadius,
+        hostSurface.topRadius,
+        heightFraction,
+      );
+      const lateralOffset = THREE.MathUtils.clamp(
+        localX,
+        -hostRadius * 0.985,
+        hostRadius * 0.985,
+      );
+      surfaceDepth = Math.sqrt(Math.max(0, hostRadius ** 2 - lateralOffset ** 2));
+    }
     shelf.position.set(
-      scale * ((i % 2 ? 0.34 : -0.28) + Math.sin(seed + i) * 0.1),
-      i * scale * 1.18,
-      radius * 0.08,
+      localX,
+      localY,
+      surfaceDepth + radius * 0.08,
     );
     shelf.rotation.y = (i - 0.5) * 0.12 + Math.sin(seed * 1.7 + i) * 0.08;
     shelf.rotation.z = Math.sin(seed * 0.9 + i * 2.1) * 0.07;
@@ -16868,10 +17185,12 @@ function addHollowMyceliumLogTunnel(scene, world, x, z, length = 48, radius = 5.
   // Each broad side gets a full ground-to-roof bracket-fungus staircase. The
   // alternating fans provide forgiving landings without covering either mouth.
   addMyceliumShelfFungi(
-    scene, world, x - length * 0.24, 0.85, z + radius * 0.98, 0, 1.18, 2, 7,
+    scene, world, x - length * 0.24, 0.85, z, 0, 1.18, 2, 7,
+    { type: 'cylinderX', centerY: radius - 0.2, radius },
   );
   addMyceliumShelfFungi(
-    scene, world, x + length * 0.24, 0.85, z - radius * 0.98, Math.PI, 1.18, 7, 7,
+    scene, world, x + length * 0.24, 0.85, z, Math.PI, 1.18, 7, 7,
+    { type: 'cylinderX', centerY: radius - 0.2, radius },
   );
   for (const endX of [x - length / 2, x + length / 2]) {
     const rim = new THREE.Mesh(
@@ -16979,6 +17298,128 @@ function addMyceliumRingDeck(scene, world, x, y, z, outerRadius, innerRadius, co
   return { band };
 }
 
+// Mycelium crowns start from one natural green. Seasonal/fantasy variants are
+// controlled HSL hue and brightness shifts rather than separately baked art.
+const MYCELIUM_CROWN_VARIANTS = [
+  [0, 1],          // green
+  [-0.17, 1.08],   // yellow
+  [-0.25, 1.04],   // orange
+  [-0.34, 0.98],   // red
+  [0.08, 1.08],    // mint
+  [0.15, 1.04],    // teal
+  [0.42, 1.08],    // purple
+];
+
+function myceliumCrownTint(index = 0, brightness = 1) {
+  const [hueShift, variantBrightness] = MYCELIUM_CROWN_VARIANTS[
+    ((index % MYCELIUM_CROWN_VARIANTS.length) + MYCELIUM_CROWN_VARIANTS.length)
+      % MYCELIUM_CROWN_VARIANTS.length
+  ];
+  const hue = (0.335 + hueShift + 1) % 1;
+  const lightness = THREE.MathUtils.clamp(0.41 * variantBrightness * brightness, 0.32, 0.55);
+  return new THREE.Color().setHSL(hue, 0.54, lightness);
+}
+
+let _myceliumLeafCrownGeometry = null;
+function myceliumLeafCrownGeometry() {
+  if (_myceliumLeafCrownGeometry) return _myceliumLeafCrownGeometry;
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  const pushTriangle = (a, b, c, shade) => {
+    const normal = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+    for (const point of [a, b, c]) {
+      positions.push(point.x, point.y, point.z);
+      normals.push(normal.x, normal.y, normal.z);
+      colors.push(shade, shade, shade);
+    }
+  };
+
+  // A faceted core prevents sky holes, while broad, nearly flush leaf fans
+  // soften its silhouette without turning the crown into a ball of spikes.
+  const coreSource = new THREE.DodecahedronGeometry(1, 1);
+  coreSource.scale(1, 0.7, 1);
+  const core = coreSource.index ? coreSource.toNonIndexed() : coreSource;
+  core.computeVertexNormals();
+  const corePosition = core.getAttribute('position');
+  const coreNormal = core.getAttribute('normal');
+  for (let i = 0; i < corePosition.count; i++) {
+    positions.push(corePosition.getX(i), corePosition.getY(i), corePosition.getZ(i));
+    normals.push(coreNormal.getX(i), coreNormal.getY(i), coreNormal.getZ(i));
+    const shade = 0.54 + Math.max(0, coreNormal.getY(i)) * 0.08;
+    colors.push(shade, shade, shade);
+  }
+
+  const leafRings = [
+    [0.42, 8, 0.22, 0.19],
+    [0.72, 11, 0.27, 0.22],
+    [1.02, 14, 0.32, 0.25],
+    [1.3, 16, 0.37, 0.28],
+    [1.57, 18, 0.43, 0.31],
+  ];
+  leafRings.forEach(([theta, count, length, halfWidth], ring) => {
+    for (let i = 0; i < count; i++) {
+      const phi = i * Math.PI * 2 / count + ring * 0.47;
+      const sinTheta = Math.sin(theta);
+      const center = V(
+        Math.cos(phi) * sinTheta * 1.015,
+        Math.cos(theta) * 0.71,
+        Math.sin(phi) * sinTheta * 1.015,
+      );
+      const outward = V(center.x, center.y / 0.7, center.z).normalize();
+      const across = V(-Math.sin(phi), 0, Math.cos(phi)).normalize();
+      const down = V(
+        Math.cos(theta) * Math.cos(phi),
+        -Math.sin(theta) * 0.7,
+        Math.cos(theta) * Math.sin(phi),
+      ).normalize();
+      const root = center.clone().addScaledVector(down, -length * 0.32)
+        .addScaledVector(outward, 0.025);
+      const left = center.clone().addScaledVector(down, length * 0.1)
+        .addScaledVector(across, -halfWidth).addScaledVector(outward, 0.035);
+      const right = center.clone().addScaledVector(down, length * 0.1)
+        .addScaledVector(across, halfWidth).addScaledVector(outward, 0.035);
+      const middle = center.clone().addScaledVector(down, length * 0.42)
+        .addScaledVector(outward, 0.052);
+      const tipLeft = center.clone().addScaledVector(down, length)
+        .addScaledVector(across, -halfWidth * 0.22)
+        .addScaledVector(outward, ring > 2 ? -0.005 : 0.012);
+      const tipRight = center.clone().addScaledVector(down, length)
+        .addScaledVector(across, halfWidth * 0.22)
+        .addScaledVector(outward, ring > 2 ? -0.005 : 0.012);
+      const shade = 0.72 + ((ring * 7 + i * 3) % 6) * 0.028;
+      pushTriangle(root, left, middle, shade * 0.97);
+      pushTriangle(root, middle, right, shade);
+      pushTriangle(left, tipLeft, middle, shade * 0.95);
+      pushTriangle(middle, tipLeft, tipRight, shade * 0.98);
+      pushTriangle(middle, tipRight, right, shade * 0.96);
+    }
+  });
+  if (core !== coreSource) core.dispose();
+  coreSource.dispose();
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeBoundingSphere();
+  _myceliumLeafCrownGeometry = geometry;
+  return geometry;
+}
+
+function myceliumCrownMaterial(color = 0xffffff) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    roughness: 0.96,
+    metalness: 0,
+    flatShading: true,
+    emissive: 0x101414,
+    emissiveIntensity: 0.1,
+  });
+}
+
 function addHollowMyceliumTree(scene, world, x, baseY, z) {
   const radius = 9.6;
   const innerRadius = 7.35;
@@ -17061,13 +17502,12 @@ function addHollowMyceliumTree(scene, world, x, baseY, z) {
   wp(world, vineX, baseY + 0.1, vineZ);
   world.manualLinks.push([vineX, baseY + 0.1, vineZ, x - 5, baseY + 8, z + 5]);
 
-  const crownMaterial = new THREE.MeshStandardMaterial({
-    color: 0x315b58, roughness: 0.93, emissive: 0x18383a, emissiveIntensity: 0.2, flatShading: true,
-  });
+  const crownGeometry = myceliumLeafCrownGeometry();
+  const crownMaterial = myceliumCrownMaterial(myceliumCrownTint(5, 0.96));
   for (const [ox, oy, oz, r] of [[0, 0, 0, 12], [-8, -1, 3, 7.2], [8, -0.5, -3, 7.5], [0, -1, -8, 7]]) {
-    const lobe = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), crownMaterial);
+    const lobe = new THREE.Mesh(crownGeometry, crownMaterial);
     lobe.position.set(x + ox, baseY + trunkHeight + oy, z + oz);
-    lobe.scale.y = 0.68;
+    lobe.scale.setScalar(r);
     lobe.castShadow = lobe.receiveShadow = true;
     scene.add(lobe);
   }
@@ -17147,16 +17587,15 @@ function addMyceliumRockField(scene, world, specs) {
     vertexColors: true,
     roughness: 0.98,
     flatShading: true,
-    ...aiTex('mycelium-mossy-rock', 1.15, 1.15),
+    ...aiTex('rock', 1.35, 1.35),
   });
   const rocks = new THREE.InstancedMesh(geometry, material, specs.length);
   const matrix = new THREE.Matrix4();
   const rotation = new THREE.Quaternion();
   const position = new THREE.Vector3();
   const scale = new THREE.Vector3();
-  // Instance colors are deliberately pale because they multiply the authored
-  // albedo; this keeps the moss readable while retaining boulder variation.
-  const palette = [0xc5d2ca, 0xafc8b7, 0xd0d5c7, 0xacc7c2, 0xbdccb4];
+  const palette = [0x35433e, 0x3d4d43, 0x46534a, 0x32433f, 0x4a584c];
+  const mossMatrices = Array.from({ length: 4 }, () => []);
   specs.forEach((spec, index) => {
     const [x, y, z, rx, ry = rx * 0.72, rz = rx * 0.9, collide = true] = spec;
     position.set(x, y, z);
@@ -17165,6 +17604,11 @@ function addMyceliumRockField(scene, world, specs) {
     matrix.compose(position, rotation, scale);
     rocks.setMatrixAt(index, matrix);
     rocks.setColorAt(index, new THREE.Color(palette[index % palette.length]));
+    // Moss belongs to selected boulders only. Four different connected face
+    // masks keep the patches from repeating in the same place on every rock.
+    if (index % 3 === 1 || (rx > 5 && index % 2 === 0)) {
+      mossMatrices[index % mossMatrices.length].push(matrix.clone());
+    }
     if (collide) {
       world.colliders.push({
         type: 'ellipsoid',
@@ -17180,6 +17624,67 @@ function addMyceliumRockField(scene, world, specs) {
   if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
   rocks.castShadow = rocks.receiveShadow = true;
   scene.add(rocks);
+
+  const source = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+  const sourcePosition = source.getAttribute('position');
+  const sourceNormal = source.getAttribute('normal');
+  const sourceUv = source.getAttribute('uv');
+  const maskCenters = [
+    [V(0.76, 0.48, 0.43), V(-0.05, 0.94, -0.34)],
+    [V(-0.68, 0.57, 0.46)],
+    [V(0.24, 0.72, -0.65), V(-0.72, 0.34, -0.6)],
+    [V(-0.18, 0.9, 0.4)],
+  ].map(centers => centers.map(center => center.normalize()));
+  const mossMaterial = mat(0x355f3b, {
+    tex: 'grass', repeat: [1.5, 1.5], roughness: 1, flatShading: true,
+  });
+  // The moss triangles occupy the exact same surface as their rock faces.
+  // Polygon offset only resolves depth precision; it does not alter geometry.
+  mossMaterial.polygonOffset = true;
+  mossMaterial.polygonOffsetFactor = -1;
+  mossMaterial.polygonOffsetUnits = -1;
+  mossMatrices.forEach((matrices, variant) => {
+    if (!matrices.length) return;
+    const facePositions = [];
+    const faceNormals = [];
+    const faceUvs = [];
+    const faceNormal = new THREE.Vector3();
+    for (let face = 0; face < sourcePosition.count / 3; face++) {
+      faceNormal.set(0, 0, 0);
+      for (let corner = 0; corner < 3; corner++) {
+        const vertex = face * 3 + corner;
+        faceNormal.x += sourceNormal.getX(vertex);
+        faceNormal.y += sourceNormal.getY(vertex);
+        faceNormal.z += sourceNormal.getZ(vertex);
+      }
+      faceNormal.normalize();
+      const inPatch = maskCenters[variant].some((center, patch) => (
+        faceNormal.dot(center) > (patch ? 0.925 : 0.89)
+      ));
+      if (!inPatch || faceNormal.y < -0.18) continue;
+      for (let corner = 0; corner < 3; corner++) {
+        const vertex = face * 3 + corner;
+        facePositions.push(
+          sourcePosition.getX(vertex), sourcePosition.getY(vertex), sourcePosition.getZ(vertex),
+        );
+        faceNormals.push(
+          sourceNormal.getX(vertex), sourceNormal.getY(vertex), sourceNormal.getZ(vertex),
+        );
+        faceUvs.push(sourceUv.getX(vertex), sourceUv.getY(vertex));
+      }
+    }
+    const mossGeometry = new THREE.BufferGeometry();
+    mossGeometry.setAttribute('position', new THREE.Float32BufferAttribute(facePositions, 3));
+    mossGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(faceNormals, 3));
+    mossGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(faceUvs, 2));
+    const moss = new THREE.InstancedMesh(mossGeometry, mossMaterial, matrices.length);
+    matrices.forEach((mossMatrix, index) => moss.setMatrixAt(index, mossMatrix));
+    moss.instanceMatrix.needsUpdate = true;
+    moss.name = `mycelium-boulder-moss-faces-${variant}`;
+    moss.castShadow = moss.receiveShadow = true;
+    scene.add(moss);
+  });
+  if (source !== geometry) source.dispose();
 }
 
 function myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius) {
@@ -17219,18 +17724,15 @@ function myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius) {
 function addDenseMyceliumForest(scene, world, specs) {
   const trunkGeometry = new THREE.CylinderGeometry(0.72, 1, 1, 8, 3);
   const trunkMaterial = mat(0xffffff, { tex: 'canopy-bark', repeat: [1, 4], roughness: 0.98 });
-  const crownGeometry = new THREE.IcosahedronGeometry(1, 1);
-  const crownMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffffff, vertexColors: true, roughness: 0.94, flatShading: true,
-    emissive: 0x0b201d, emissiveIntensity: 0.18,
-  });
+  const crownGeometry = myceliumLeafCrownGeometry();
+  const crownMaterial = myceliumCrownMaterial(0xffffff);
   const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, specs.length);
   const crowns = new THREE.InstancedMesh(crownGeometry, crownMaterial, specs.length * 3);
   const matrix = new THREE.Matrix4();
   const rotation = new THREE.Quaternion();
   const position = new THREE.Vector3();
   const scale = new THREE.Vector3();
-  const colors = [0x245449, 0x2e6250, 0x31546a, 0x4b4774, 0x386f55];
+  const colors = MYCELIUM_CROWN_VARIANTS.map((_, index) => myceliumCrownTint(index));
   specs.forEach(([x, baseY, z, height, radius], index) => {
     const burialDepth = myceliumTreeBurialDepth(world, x, baseY, z, radius);
     const renderedHeight = height + burialDepth;
@@ -17250,17 +17752,23 @@ function addDenseMyceliumForest(scene, world, specs) {
     });
     if ([2, 8, 14, 20].includes(index)) {
       const fungusYaw = index * 0.91;
-      const trunkSurfaceRadius = radius * 0.31;
       addMyceliumShelfFungi(
         scene,
         world,
-        x + Math.sin(fungusYaw) * trunkSurfaceRadius,
+        x,
         baseY + 1,
-        z + Math.cos(fungusYaw) * trunkSurfaceRadius,
+        z,
         fungusYaw,
         0.92,
         index + 3,
         3,
+        {
+          type: 'cylinderY',
+          bottomY: visualBaseY,
+          topY: baseY + height,
+          bottomRadius: radius * 0.34,
+          topRadius: radius * 0.34 * 0.72,
+        },
       );
     }
     for (let lobe = 0; lobe < 3; lobe++) {
@@ -17270,7 +17778,7 @@ function addDenseMyceliumForest(scene, world, specs) {
         baseY + height + (lobe === 0 ? radius * 0.28 : 0),
         z + Math.sin(angle) * radius * 0.42,
       );
-      scale.set(radius, radius * 0.7, radius);
+      scale.setScalar(radius);
       rotation.setFromEuler(new THREE.Euler(index * 0.13, angle, lobe * 0.19));
       matrix.compose(position, rotation, scale);
       const crownIndex = index * 3 + lobe;
@@ -17336,17 +17844,23 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
   });
   if ([1, 4, 6, 8].includes(seed)) {
     const fungusYaw = seed * 1.37;
-    const trunkSurfaceRadius = trunkRadius * 0.9;
     addMyceliumShelfFungi(
       scene,
       world,
-      x + Math.sin(fungusYaw) * trunkSurfaceRadius,
+      x,
       baseY + 1.05,
-      z + Math.cos(fungusYaw) * trunkSurfaceRadius,
+      z,
       fungusYaw,
       1.02,
       seed,
       3,
+      {
+        type: 'cylinderY',
+        bottomY: visualBaseY,
+        topY: baseY + trunkHeight,
+        bottomRadius: trunkRadius,
+        topRadius: trunkRadius * 0.72,
+      },
     );
   }
 
@@ -17417,22 +17931,17 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
 
   const crown = new THREE.Group();
   crown.position.set(x, baseY + trunkHeight - 0.5, z);
-  const crownColors = [0x285a56, 0x324d68, 0x483f72, 0x376850];
-  const crownMaterials = crownColors.map(color => new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.92,
-    emissive: new THREE.Color(color),
-    emissiveIntensity: 0.16,
-    flatShading: true,
-  }));
+  const crownColors = MYCELIUM_CROWN_VARIANTS.map((_, index) => myceliumCrownTint(index));
+  const crownMaterials = crownColors.map(color => myceliumCrownMaterial(color));
+  const crownGeometry = myceliumLeafCrownGeometry();
   const crownOffsets = [
     [0, 1.8, 0, 7.2], [-5.2, 0, 1.3, 5.4], [5.1, 0.5, -0.8, 5.6],
     [-1.4, 0.2, -5.2, 5.2], [1.6, 0.3, 5.1, 5.0],
   ];
   crownOffsets.forEach(([ox, oy, oz, radius], index) => {
-    const lobe = new THREE.Mesh(new THREE.IcosahedronGeometry(radius, 1), crownMaterials[index % crownMaterials.length]);
+    const lobe = new THREE.Mesh(crownGeometry, crownMaterials[index % crownMaterials.length]);
     lobe.position.set(ox, oy, oz);
-    lobe.scale.y = 0.7;
+    lobe.scale.setScalar(radius);
     lobe.rotation.set(seed * 0.11 + index, index * 0.47, index * 0.19);
     lobe.castShadow = lobe.receiveShadow = true;
     crown.add(lobe);
@@ -17496,10 +18005,23 @@ function buildMyceliumGrove(scene) {
   const boundaryWallHeight = boundaryWallTop - boundaryWallBottom;
   for (const [x, z, w, d] of [[0, -82, 168, 4], [0, 82, 168, 4], [-82, 0, 4, 168], [82, 0, 4, 168]]) {
     addBox(scene, world, x, boundaryWallBottom + boundaryWallHeight / 2, z,
-      w, boundaryWallHeight, d, 0x203a34, {
-        tex: 'rock', repeat: [12, 8], debugName: 'mycelium-perimeter-wall',
+      w, boundaryWallHeight, d, 0xc7d1ca, {
+        tex: 'mycelium-mossy-slab', repeat: [3, 1.5], debugName: 'mycelium-perimeter-wall',
       });
   }
+  // Scattered bracket-fungus stair clusters grow from the inward faces. Each
+  // starts near ground height and retains exact shelf collision, making these
+  // useful little wall perches rather than unreachable decoration.
+  for (const [x, y, z, yaw, scale, seed, count] of [
+    [-48, 0.9, -79.92, 0, 1.02, 22, 4],
+    [43, 1.05, -79.92, 0, 0.92, 27, 3],
+    [-55, 0.9, 79.92, Math.PI, 0.95, 31, 3],
+    [47, 1.1, 79.92, Math.PI, 1.05, 36, 4],
+    [-79.92, 1, -24, Math.PI / 2, 0.98, 41, 3],
+    [-79.92, 0.9, 47, Math.PI / 2, 1.04, 46, 4],
+    [79.92, 1.05, -39, -Math.PI / 2, 1, 51, 4],
+    [79.92, 0.95, 34, -Math.PI / 2, 0.94, 56, 3],
+  ]) addMyceliumShelfFungi(scene, world, x, y, z, yaw, scale, seed, count);
 
   // Very large meshes buried almost completely below grade leave broad,
   // gentle caps above the floor. The old smaller hills reached similar
@@ -17518,11 +18040,9 @@ function buildMyceliumGrove(scene) {
   // A real tunnel passes beneath the western ridge. The planted roof is an
   // upper fighting route, while the two rock-framed mouths lead through a
   // lower, softly lit shortcut.
-  world.colliders.push(
-    { type: 'box', min: V(-60.5, 5.2, 17), max: V(-43.5, 7.5, 57) },
-    { type: 'box', min: V(-66.5, 0, 16), max: V(-58.5, 6.5, 58) },
-    { type: 'box', min: V(-45.5, 0, 16), max: V(-37.5, 6.5, 58) },
-  );
+  // Its overlapping boulders below carry their own closely matched ellipsoid
+  // colliders. Do not add a continuous hidden box shell here: any gap visibly
+  // left between those stones should also be a real side entrance.
   // The surrounding closed boulders provide the tunnel's visible walls and
   // ceiling from both inside and outside. Flat interior planes protruded at
   // the mouths as paper-thin fins, especially from shallow viewing angles.
@@ -17552,7 +18072,12 @@ function buildMyceliumGrove(scene) {
   // the two groups visually distinct while both remain clear of the shore.
   addMinnowSchool(scene, world, 10.5, -35.4, 7, 4.2, 0.2);
   addAsteroid(scene, world, -25, -7, -62, 18, 0x2f4d3d, true);
-  addAsteroid(scene, world, 25, -7, -62, 18, 0x2f4d3d, true);
+  // Broaden the eastern waterfall hill toward the large outer hillside while
+  // preserving its crown height and pond-facing depth. Its exact mesh remains
+  // the collider, so the new overlapping terrain replaces the former ramp.
+  addAsteroid(scene, world, 25, -7, -62, 18, 0x2f4d3d, true, {
+    scaleX: 1.55, scaleZ: 1.08, lockRotation: true,
+  });
   // Only the interior collision shell is box-shaped. The visible exterior is
   // the pair of rounded cliff masses plus the broken boulder arch below.
   world.colliders.push(
@@ -17594,10 +18119,6 @@ function buildMyceliumGrove(scene) {
   addRamp(scene, world, {
     axis: 'x', minX: -50, maxX: -10.5, minZ: -72, maxZ: -55,
     h0: 0, h1: 9.7, color: 0x315a42, tex: 'grass',
-  });
-  addRamp(scene, world, {
-    axis: 'x', minX: 10.5, maxX: 50, minZ: -72, maxZ: -55,
-    h0: 9.7, h1: 0, color: 0x315a42, tex: 'grass',
   });
   const caveLight = new THREE.PointLight(0x9b6cff, 48, 33);
   caveLight.position.set(0, 3.8, -66);
@@ -17800,6 +18321,8 @@ function buildMyceliumGrove(scene) {
   addVine(scene, world, -7.5, -47.54, 10.1, 20.15, 0.95, 0, 0.18, 0, -1,
     0.18, 1.35, 0x7fe6bd);
 
+  addMyceliumGrassTufts(scene, world, 9000);
+  addMyceliumLeafLitter(scene, world, 1100);
   addMyceliumPatch(scene, world, 118);
   addMyceliumSpores(scene, world);
   addMyceliumFairyToads(scene, world);
