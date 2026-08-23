@@ -9008,10 +9008,10 @@ export function buildAtrium(scene) {
     ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 24, 'map'],
     ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', 0, 'map'],
     ['tidebreaker', 'TIDEBREAKER', 0x35b9d0, 'w', -24, 'map'],
-    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', 24, 'map'],
-    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 0, 'map'],
-    ['mycelium', 'MYCELIUM GROVE', 0xa96eff, 'e', -24, 'map'],
-    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -40, 'map'],
+    ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', 36, 'map'],
+    ['canopy', 'CANOPY', 0x4dbf6a, 'e', 12, 'map'],
+    ['mycelium', 'MYCELIUM GROVE', 0xa96eff, 'e', -12, 'map'],
+    ['city', 'NEON HEIGHTS', 0xff40a0, 'e', -36, 'map'],
     ['multiplayer', 'MULTIPLAYER', 0x30e0ff, 's', 0, 'multiplayer'],
   ];
   for (const [id, name, color, wall, off, kind] of bays) {
@@ -15287,10 +15287,22 @@ function addMyceliumFairyToads(scene, world) {
   const circleRoute = (x, y, z, radius, phase = 0, kind = 'platform') => ({
     kind, x, y, z, radius, phase, length: Math.PI * 2 * radius, closed: true,
   });
-  const trunkRoute = (x, baseY, z, radius, maxY, angle, arc = 0.42) => ({
-    kind: 'trunk', x, baseY, z, radius, maxY, angle, arc,
-    length: Math.max(3, maxY - baseY + Math.abs(arc) * radius + 1.2), closed: false,
+  const trunkRoute = (x, baseY, z, baseRadius, maxRadius, maxY, angle, arc = 0.42) => ({
+    kind: 'trunk', x, baseY, z, baseRadius, maxRadius, maxY, angle, arc,
+    length: Math.max(3, maxY - baseY
+      + Math.abs(arc) * (baseRadius + maxRadius) * 0.5 + 1.2),
+    closed: false,
   });
+  const elderTrunkRoute = (x, baseY, z, topDeckY, maxY, angle, arc = 0.42) => {
+    const baseRadius = 2.35;
+    const renderedTopRadius = baseRadius * 0.72;
+    const trunkTopY = topDeckY + 8;
+    const maxFraction = THREE.MathUtils.clamp(
+      (maxY - baseY) / Math.max(0.1, trunkTopY - baseY), 0, 1,
+    );
+    const maxRadius = THREE.MathUtils.lerp(baseRadius, renderedTopRadius, maxFraction);
+    return trunkRoute(x, baseY, z, baseRadius, maxRadius, maxY, angle, arc);
+  };
 
   // Ground, branch, cap, balcony, and trunk routes make the creatures feel
   // native to the whole playspace rather than confined to decorative pens.
@@ -15308,13 +15320,13 @@ function addMyceliumFairyToads(scene, world) {
     branchRoute(V(-21.5, 14.12, -35.4), V(-1.5, 15.9, -61)),
     circleRoute(-20, 14.08, 51, 2.55, 0.4, 'mushroom-cap'),
     circleRoute(0, 8.08, 8, 5.15, 1.2, 'tree-balcony'),
-    trunkRoute(-37, 0, -5, 2.62, 6.35, 0.15),
-    trunkRoute(37, 0, -4, 2.62, 6.3, 2.75, -0.38),
-    trunkRoute(-31, 0, 44, 2.62, 6.3, 1.2, 0.5),
-    trunkRoute(29, 0, 43, 2.62, 7.25, 3.65, -0.45),
-    trunkRoute(-23, 0, -34, 2.62, 6.35, 5.15, 0.4),
-    trunkRoute(0, 10, -63, 2.62, 15.35, 0.7, -0.42),
-    trunkRoute(0, 0, 8, 9.92, 7.25, 2.2, 0.32),
+    elderTrunkRoute(-37, 0, -5, 14, 6.35, 0.15),
+    elderTrunkRoute(37, 0, -4, 14, 6.3, 2.75, -0.38),
+    elderTrunkRoute(-31, 0, 44, 13, 6.3, 1.2, 0.5),
+    elderTrunkRoute(29, 0, 43, 15, 7.25, 3.65, -0.45),
+    elderTrunkRoute(-23, 0, -34, 14, 6.35, 5.15, 0.4),
+    elderTrunkRoute(0, 10, -63, 23, 15.35, 0.7, -0.42),
+    trunkRoute(0, 0, 8, 9.6, 9.6, 7.25, 2.2, 0.32),
   ];
 
   const toads = [];
@@ -15417,6 +15429,11 @@ function addMyceliumFairyToads(scene, world) {
   const right = new THREE.Vector3();
   const wallNormal = new THREE.Vector3();
   const orientation = new THREE.Matrix4();
+  const trunkSurfaceRadius = (route, y) => THREE.MathUtils.lerp(
+    route.baseRadius,
+    route.maxRadius,
+    THREE.MathUtils.clamp((y - route.baseY) / Math.max(0.1, route.maxY - route.baseY), 0, 1),
+  );
   const sampleGroundSurface = (x, z, outNormal) => {
     let surfaceY = 0;
     outNormal.set(0, 1, 0);
@@ -15460,10 +15477,11 @@ function addMyceliumFairyToads(scene, world) {
         const blend = raw * raw * (3 - 2 * raw);
         const angle = route.angle;
         wallNormal.set(Math.cos(angle), 0, Math.sin(angle));
-        const attachRadius = route.radius + 0.28 + (1 - blend) * 1.2;
+        const y = route.baseY + 0.1 + blend * 0.72;
+        const attachRadius = trunkSurfaceRadius(route, y) + 0.06 + (1 - blend) * 1.2;
         position.set(
           route.x + wallNormal.x * attachRadius,
-          route.baseY + 0.1 + blend * 0.72,
+          y,
           route.z + wallNormal.z * attachRadius,
         );
         normal.set(0, 1, 0).lerp(wallNormal, blend).normalize();
@@ -15471,11 +15489,12 @@ function addMyceliumFairyToads(scene, world) {
       } else {
         const climb = (u - transitionEnd) / (1 - transitionEnd);
         const angle = route.angle + route.arc * climb;
-        const attachRadius = route.radius + 0.28;
+        const y = THREE.MathUtils.lerp(route.baseY + 0.82, route.maxY, climb);
+        const attachRadius = trunkSurfaceRadius(route, y) + 0.06;
         wallNormal.set(Math.cos(angle), 0, Math.sin(angle));
         position.set(
           route.x + wallNormal.x * attachRadius,
-          THREE.MathUtils.lerp(route.baseY + 0.82, route.maxY, climb),
+          y,
           route.z + wallNormal.z * attachRadius,
         );
         normal.copy(wallNormal);
@@ -16692,8 +16711,10 @@ function buildMyceliumGrove(scene) {
 
   pk(world, 'weapon', -52, 0.2, 35, { weapon: 'scatter' });
   pk(world, 'ammo', -52, 0.2, 45, { weapon: 'scatter' });
-  pk(world, 'weapon', 63, 0.2, 43, { weapon: 'pulsar' });
-  pk(world, 'ammo', 57, 0.2, 48, { weapon: 'pulsar' });
+  // These sit on the curved eastern hill, whose collision is a buried sphere,
+  // rather than on the y=0 understory floor beneath it.
+  pk(world, 'weapon', 63, 3.6, 43, { weapon: 'pulsar' });
+  pk(world, 'ammo', 57, 0.4, 48, { weapon: 'pulsar' });
   pk(world, 'weapon', -37, 7.2, 1, { weapon: 'sidewinder' });
   pk(world, 'ammo', -37, 14.2, -8, { weapon: 'sidewinder' });
   pk(world, 'weapon', 37, 7.2, 2, { weapon: 'zooka' });
@@ -16702,9 +16723,10 @@ function buildMyceliumGrove(scene) {
   pk(world, 'ammo', -7, 15.2, 10, { weapon: 'parasite' });
   pk(world, 'weapon', 0, 0.25, -69, { weapon: 'whomper' });
   pk(world, 'ammo', 5, 0.25, -63, { weapon: 'whomper' });
-  pk(world, 'weapon', 0, 23.2, -63, { weapon: 'hyper' });
+  // Keep the upper-ring reward clear of the elder tree's trunk volume.
+  pk(world, 'weapon', -5, 23.2, -63, { weapon: 'hyper' });
   pk(world, 'ammo', 7, 16.2, -60, { weapon: 'hyper' });
-  pk(world, 'health', -61, 0.2, 63);
+  pk(world, 'health', -57, 0.2, 63);
   pk(world, 'health', 55, 0.2, 66);
   pk(world, 'shield', 0, 0.2, 36);
   pk(world, 'speed', -25, 0.2, -19);
