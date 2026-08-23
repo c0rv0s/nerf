@@ -13,7 +13,7 @@ import {
 import {
   buildCollisionIndex, buildWaypointGraph, pick, rand, inRampFootprint, rampSurfaceY, pointInZoneXZ,
   cylinderShellSurfaceY, ellipsoidSurfaceY, pointHitsWorld,
-  sphereHitsCylinderShell, sphereHitsEllipsoid,
+  sphereHitsCylinderShell, sphereHitsEllipsoid, sphereHitsTriangleMesh, triangleMeshSurfaceY,
 } from './engine.js';
 import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh, syncJetpackVisual } from './bots.js';
@@ -99,7 +99,9 @@ const MUSIC = [
 ];
 const MUSIC_BASE_VOLUME = 0.3;
 let musicEl = null;
-let musicIdx = Math.floor(Math.random() * MUSIC.length);
+let musicIdx = -1;
+let loadedMusicIdx = -1;
+let preparedMusicIdx = -1;
 let currentTrackTitle = '';
 
 function updateTrackTitle() {
@@ -130,28 +132,46 @@ function playMusicIndex(idx) {
   if (!track) return;
   ensureMusicElement();
   musicIdx = idx;
+  preparedMusicIdx = -1;
   currentTrackTitle = track.title;
   updateTrackTitle();
-  musicEl.src = track.src;
+  if (loadedMusicIdx !== idx) {
+    musicEl.src = track.src;
+    loadedMusicIdx = idx;
+  }
+  // A track change normally resets this implicitly, but make the new-match
+  // contract explicit even when the browser reuses a cached audio resource.
+  try { musicEl.currentTime = 0; } catch { /* metadata may not be ready yet */ }
   musicEl.play().catch(() => {}); // blocked until a user gesture — fine
 }
 
 function prepareMusic() {
   ensureMusicElement();
-  if (musicEl.src) return;
-  const track = MUSIC[nextMusicIndex()];
+  if (preparedMusicIdx >= 0) return;
+  const idx = nextMusicIndex();
+  const track = MUSIC[idx];
   if (!track) return;
-  musicIdx = MUSIC.indexOf(track);
-  currentTrackTitle = track.title;
-  updateTrackTitle();
+  preparedMusicIdx = idx;
   musicEl.src = track.src;
+  loadedMusicIdx = idx;
+  try { musicEl.currentTime = 0; } catch { /* metadata may not be ready yet */ }
   musicEl.load();
 }
 
 function musicPlay() {
-  prepareMusic();
+  ensureMusicElement();
+  if (loadedMusicIdx < 0) {
+    startMatchMusic();
+    return;
+  }
   musicEl?.play().catch(() => {});
 }
+
+function startMatchMusic() {
+  const idx = preparedMusicIdx >= 0 ? preparedMusicIdx : nextMusicIndex();
+  playMusicIndex(idx);
+}
+
 function musicStop() { musicEl?.pause(); }
 
 const volumeStorageKey = 'nerf-arena-volume-v2';
@@ -212,6 +232,7 @@ try {
 let graphicsMode = validGraphicsModes.has(requestedQuality)
   ? requestedQuality
   : (storedGraphicsOverride || 'auto');
+let pendingGraphicsMode = null;
 const initialGraphicsPreset = GRAPHICS_PRESETS[graphicsMode] || null;
 const performanceProfile = {
   safari: isSafari,
@@ -261,8 +282,17 @@ const mapLoadingStatus = document.getElementById('maploadingstatus');
 const mapLoadingTrack = document.getElementById('maploadingtrack');
 const mapLoadingBar = document.getElementById('maploadingbar');
 const mapLoadingPercent = document.getElementById('maploadingpercent');
+const matchTransition = document.getElementById('matchtransition');
+const endScreen = document.getElementById('endscreen');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let mapLoadingToken = 0;
 let mapLoadingProgress = 0;
+
+function clearVictoryPresentationUI() {
+  matchTransition?.classList.remove('active', 'leaving', 'switching');
+  endScreen?.classList.remove('visible');
+  setStyle(endScreen, 'display', 'none');
+}
 
 function setMapLoadingStatus(message) {
   setText(mapLoadingStatus, message);
@@ -866,6 +896,7 @@ document.getElementById('againbtn').addEventListener('click', () => {
 
 /* ---------------- match setup ---------------- */
 function teardown() {
+  clearVictoryPresentationUI();
   if (!G) return;
   mobilePauseOpen = false;
   mobileControls.reset();
@@ -892,8 +923,18 @@ function teardown() {
   for (const marker of dmgMarkerPool) destroyDmgMarker(marker, G.scene);
   dmgMarkers = [];
   dmgMarkerPool = [];
+  // Mounted and map-exclusive equipment must never survive the camera handoff
+  // into the Atrium. These are independent camera children rather than part of
+  // the normal weapon hierarchy, so remove them explicitly during teardown.
+  G.player.dualBlaster = false;
+  G.player.galloping = false;
+  G.player.syncDualBlasterViewmodel?.();
   camera.remove(G.player.viewmodel);
+  camera.remove(G.player.dualBlasterViewmodel);
   camera.remove(G.player.grappleViewmodel);
+  camera.remove(G.player.horseViewmodel);
+  camera.remove(G.player.muzzleFlash);
+  camera.remove(G.player.leftMuzzleFlash);
   hud.els.hud.classList.remove('endboard');
   setStyle(hud.els.board, 'display', 'none');
   setStyle(hud.els.board, 'top', '');
@@ -1015,6 +1056,7 @@ function updateDeathCamera(dt) {
       camera.fov = 70;
       camera.updateProjectionMatrix();
       if (G.player.viewmodel) G.player.viewmodel.visible = false;
+      if (G.player.dualBlasterViewmodel) G.player.dualBlasterViewmodel.visible = false;
       if (G.player.grappleViewmodel) G.player.grappleViewmodel.visible = false;
     }
     camera.position.copy(G.deathSpectate.pos);
@@ -1025,6 +1067,7 @@ function updateDeathCamera(dt) {
   if (G.deathSpectate) {
     G.deathSpectate = null;
     if (G.player.viewmodel) G.player.viewmodel.visible = true;
+    G.player.syncDualBlasterViewmodel?.();
     if (G.player.grappleViewmodel) G.player.grappleViewmodel.visible = !!G.player.grapple;
   }
   if (Math.abs(camera.fov - G.deathBaseFov) > 0.01) {
@@ -1045,6 +1088,7 @@ async function startAtrium(existingLoadingToken = null) {
   setMapLoadingProgress(10, 'Applying the queued graphics profile', loadingToken);
   await paintLoadingStage();
   if (loadingToken !== mapLoadingToken) return;
+  applyPendingGraphicsMode();
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   musicStop();
@@ -1157,6 +1201,7 @@ async function refreshHallLeaderboard(world = G?.world) {
 
 function startHallOfFame() {
   hideMapLoading();
+  applyPendingGraphicsMode();
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   musicStop();
@@ -1230,9 +1275,10 @@ function startHallOfFame() {
   rafId = requestAnimationFrame(tick);
 }
 
-function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken) {
+function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken, freshMusic = true) {
   finishAtriumAutoGraphicsTest();
   inGameAutoTestStarted = false;
+  applyPendingGraphicsMode();
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   camera.fov = 75;
@@ -1365,6 +1411,10 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
     showBoard: false,
     lastT: performance.now(),
   };
+  // Resolve the end-stage location while the arena is still covered. Olympus
+  // has a large collision set, so doing this search at 0:00 caused avoidable
+  // main-thread work on the final gameplay frame.
+  G.podiumAnchor = resolvePodiumAnchor(world);
   syncRenderQuality();
   updateGraphicsUI();
   yield { progress: 82, status: 'Combatants and pickups ready' };
@@ -1381,15 +1431,17 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   player.update(0, () => {});      // camera on the spawn point before the first tick
   yield {
     progress: 88,
-    status: 'Warming weapons, powerups, and arena effects',
+    status: 'Warming weapons, arena effects, and victory podium',
     syncWork: () => {
       prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
       prewarmEventVisuals();
+      prewarmVictoryPodium();
     },
     asyncWork: async () => {
       if (mapDef.id === 'olympus') await warmOlympusImpactAudio();
       await prewarmMatchVisualsAsync(scene, player, characters, projectiles, fxPool);
       await prewarmEventVisualsAsync();
+      await prewarmVictoryPodiumAsync();
     },
   };
   yield {
@@ -1415,7 +1467,8 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   setStyle(document.getElementById('scores'), 'display', '');
   setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
-  musicPlay();
+  if (freshMusic) startMatchMusic();
+  else musicPlay();
   // Loading/compilation time is not a gameplay frame and must not influence
   // Auto's frame sampler when the first requestAnimationFrame arrives.
   G.lastT = performance.now();
@@ -1424,17 +1477,17 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   finishMapLoading(loadingToken);
 }
 
-function startMatch(mapDef, mode = 'ffa') {
+function startMatch(mapDef, mode = 'ffa', freshMusic = true) {
   const token = mapLoadingScreen?.hidden ? showMapLoading(mapDef) : mapLoadingToken;
   setMapLoadingProgress(20, 'Shared assets ready', token);
-  for (const stage of createMatchStages(mapDef, mode, token)) {
+  for (const stage of createMatchStages(mapDef, mode, token, freshMusic)) {
     setMapLoadingProgress(stage.progress, stage.status, token);
     stage.syncWork?.();
   }
 }
 
-async function startMatchProgressively(mapDef, mode = 'ffa', token = mapLoadingToken) {
-  for (const stage of createMatchStages(mapDef, mode, token)) {
+async function startMatchProgressively(mapDef, mode = 'ffa', token = mapLoadingToken, freshMusic = true) {
+  for (const stage of createMatchStages(mapDef, mode, token, freshMusic)) {
     if (!setMapLoadingProgress(stage.progress, stage.status, token)) return;
     await paintLoadingStage();
     if (stage.asyncWork) await stage.asyncWork();
@@ -1467,11 +1520,12 @@ function addTeamMarker(ch) {
   ch._teamMarker = m;
 }
 
-function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
+function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa', freshMusic = true) {
   const loadingToken = mapLoadingScreen?.hidden ? showMapLoading(mapDef) : mapLoadingToken;
   setMapLoadingProgress(20, 'Shared assets ready', loadingToken);
   finishAtriumAutoGraphicsTest();
   inGameAutoTestStarted = false;
+  applyPendingGraphicsMode();
   teardown();
   resetAdaptiveRenderScale({ preserveDetection: true });
   camera.fov = 75;
@@ -1590,6 +1644,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
     mpLastSnapshotAt: performance.now(),
     mpConnectionPaused: false,
   };
+  G.podiumAnchor = resolvePodiumAnchor(world);
   syncRenderQuality();
   updateGraphicsUI();
   setMapLoadingProgress(82, 'Network combatants and pickups ready', loadingToken);
@@ -1600,6 +1655,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   setMapLoadingProgress(88, 'Spawn point and camera ready', loadingToken);
   prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
   prewarmEventVisuals();
+  prewarmVictoryPodium();
   setMapLoadingProgress(90, 'Uploading arena textures', loadingToken);
   initializeSceneTextures(collectSceneTextures(scene));
   setMapLoadingProgress(94, 'Preparing graphics buffers', loadingToken);
@@ -1613,15 +1669,21 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   setText(document.getElementById('catchtitle'), 'CLICK TO RESUME');
   setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
-  musicPlay();
+  if (freshMusic) startMatchMusic();
+  else musicPlay();
   G.lastT = performance.now();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
   finishMapLoading(loadingToken);
 }
 
-function startMultiplayerHostMatch(mapDef, mode = multiplayer.mode || 'ffa', resumeSnapshot = null) {
-  startMatch(mapDef, mode);
+function startMultiplayerHostMatch(
+  mapDef,
+  mode = multiplayer.mode || 'ffa',
+  resumeSnapshot = null,
+  freshMusic = true,
+) {
+  startMatch(mapDef, mode, freshMusic);
   if (!G) return;
   bindWorldPresentation(G.world, true);
   const playerSlot = multiplayerSlotById();
@@ -1690,6 +1752,8 @@ function applyHostHandoffSnapshot(snap) {
       (state.weapon === 'blaster' || ch.ammo[state.weapon] > 0)
       ? state.weapon
       : 'blaster';
+    ch.dualBlaster = state.dualBlaster === true;
+    ch._dualBlasterNextLeft = false;
     applyMultiplayerCombatState(ch, state);
     ch.grapple = state.grapple === true;
     if (ch.grappleViewmodel) ch.grappleViewmodel.visible = ch.grapple && ch.alive;
@@ -1887,6 +1951,9 @@ function updateRemoteHuman(ch, dt, fire) {
     const origin = ch.pos.clone()
       .addScaledVector(up, (G.world.mounted ? 2.5 + HORSE_HEIGHT_DELTA : 1.55) * visualScale)
       .addScaledVector(dir, 0.8 * visualScale);
+    const side = ch.shotHandSide?.() || 1;
+    const right = new THREE.Vector3().crossVectors(dir, up).normalize();
+    origin.addScaledVector(right, side * 0.22 * visualScale);
     fire(ch, origin, dir, ch.weapon || 'blaster');
     ch.finishWeaponShot(w, 0);
     if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) {
@@ -2010,14 +2077,24 @@ function syncRemoteGrappleVisual(ch) {
 }
 
 function syncRemoteSlotGun(remote) {
-  if (!remote?.mesh || remote._gunId === remote.weapon) return;
-  remote._gunId = remote.weapon;
+  const gunId = `${remote?.weapon || 'blaster'}:${remote?.weapon === 'blaster' && remote?.dualBlaster ? 'dual' : 'single'}`;
+  if (!remote?.mesh || remote._gunId === gunId) return;
+  remote._gunId = gunId;
   if (remote._gun) remote.mesh.remove(remote._gun);
+  if (remote._dualGun) remote.mesh.remove(remote._dualGun);
+  remote._dualGun = null;
   remote._gun = buildBlaster(remote.weapon || 'blaster');
   remote._gun.scale.setScalar(0.55);
   remote._gun.position.set(0.32, G.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
   remote._gun.rotation.y = Math.PI;
   remote.mesh.add(remote._gun);
+  if (remote.weapon === 'blaster' && remote.dualBlaster) {
+    remote._dualGun = buildBlaster('blaster');
+    remote._dualGun.scale.setScalar(0.55);
+    remote._dualGun.position.set(-0.32, G.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
+    remote._dualGun.rotation.y = Math.PI;
+    remote.mesh.add(remote._dualGun);
+  }
 }
 
 function ensureRemoteSlot(state) {
@@ -2056,6 +2133,7 @@ function ensureRemoteSlot(state) {
     damageMult: 1,
     powerup: null,
     grapple: false,
+    dualBlaster: false,
     weapons: { blaster: true },
     ammo: { blaster: Infinity },
     weapon: 'blaster',
@@ -2102,6 +2180,14 @@ function applyMultiplayerSnapshot(snap) {
       G.player.deaths = state.deaths || 0;
       G.player.awards = state.awards || G.player.awards || {};
       applyMultiplayerLoadout(state);
+      const hadDualBlaster = G.player.dualBlaster;
+      G.player.dualBlaster = state.dualBlaster === true;
+      G.player.syncDualBlasterViewmodel?.();
+      if (!hadDualBlaster && G.player.dualBlaster && G.mpSawSelfSnapshot) {
+        G.player.setSkin?.(G.player.powerup?.kind || null);
+        sfx('powerup');
+        hud.message('DUAL SECRET SHOTS — ALTERNATING FIRE', '#ffb35a');
+      }
       applyMultiplayerCombatState(G.player, state);
       if (state.hp < G.player.hp) hud.damageFlash();
       G.player.hp = state.hp;
@@ -2149,6 +2235,7 @@ function applyMultiplayerSnapshot(snap) {
       remote.warmupAudioStop = null;
     }
     remote.weapon = nextWeapon;
+    remote.dualBlaster = state.dualBlaster === true;
     remote.jetpack = state.jetpack ? { active: !!state.jetpackActive } : null;
     remote.grapple = state.grapple === true;
     syncRemoteSlotGun(remote);
@@ -2698,6 +2785,9 @@ function spawnHasSupport(pos, ch) {
     } else if (c.type === 'ellipsoid') {
       surfaceY = ellipsoidSurfaceY(c, pos.x, pos.z);
       if (surfaceY == null) continue;
+    } else if (c.type === 'triangleMesh') {
+      surfaceY = triangleMeshSurfaceY(c, pos.x, pos.z);
+      if (surfaceY == null) continue;
     } else if (c.type === 'cylinderShell') {
       surfaceY = cylinderShellSurfaceY(c, pos.x, pos.z);
       if (surfaceY == null) continue;
@@ -2726,6 +2816,8 @@ function spawnIsClear(pos, ch) {
       } else if (c.type === 'sphere' && probe.distanceToSquared(c.center) < (ch.radius + c.radius) ** 2) {
         return false;
       } else if (c.type === 'ellipsoid' && sphereHitsEllipsoid(probe, ch.radius, c)) {
+        return false;
+      } else if (c.type === 'triangleMesh' && sphereHitsTriangleMesh(probe, ch.radius, c)) {
         return false;
       } else if (c.type === 'cylinderShell' && sphereHitsCylinderShell(probe, ch.radius, c)) {
         return false;
@@ -2859,22 +2951,16 @@ function podiumBox(scene, x, y, z, w, h, d, material) {
   return mesh;
 }
 
-function makeEndTextSprite(text, {
+function paintEndTextCanvas(canvas, g, text, {
   color = '#7dff7d',
   stroke = 'rgba(0,0,0,.78)',
   bg = 'rgba(8,12,20,.55)',
-  width = 768,
-  height = 192,
   font = 'bold 46px "Arial Black", Arial',
   sub = '',
   subColor = '#dbe8ff',
   border = null,
-  scale = [4.8, 1.2],
 } = {}) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const g = canvas.getContext('2d');
+  const { width, height } = canvas;
   g.clearRect(0, 0, width, height);
   if (bg) {
     g.fillStyle = bg;
@@ -2895,14 +2981,34 @@ function makeEndTextSprite(text, {
   g.strokeText(text, width / 2, sub ? height * 0.42 : height / 2);
   g.fillStyle = color;
   g.fillText(text, width / 2, sub ? height * 0.42 : height / 2);
-  if (sub) {
-    g.font = 'bold 28px Arial';
-    g.lineWidth = 5;
-    g.strokeStyle = stroke;
-    g.strokeText(sub, width / 2, height * 0.72);
-    g.fillStyle = subColor;
-    g.fillText(sub, width / 2, height * 0.72);
-  }
+  if (!sub) return;
+  g.font = 'bold 28px Arial';
+  g.lineWidth = 5;
+  g.strokeStyle = stroke;
+  g.strokeText(sub, width / 2, height * 0.72);
+  g.fillStyle = subColor;
+  g.fillText(sub, width / 2, height * 0.72);
+}
+
+function makeEndTextSprite(text, options = {}) {
+  const normalized = {
+    color: '#7dff7d',
+    stroke: 'rgba(0,0,0,.78)',
+    bg: 'rgba(8,12,20,.55)',
+    width: 768,
+    height: 192,
+    font: 'bold 46px "Arial Black", Arial',
+    sub: '',
+    subColor: '#dbe8ff',
+    border: null,
+    scale: [4.8, 1.2],
+    ...options,
+  };
+  const canvas = document.createElement('canvas');
+  canvas.width = normalized.width;
+  canvas.height = normalized.height;
+  const g = canvas.getContext('2d');
+  paintEndTextCanvas(canvas, g, text, normalized);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
@@ -2912,9 +3018,26 @@ function makeEndTextSprite(text, {
     depthWrite: false,
     toneMapped: false,
   }));
-  sprite.scale.set(scale[0], scale[1], 1);
+  sprite.scale.set(normalized.scale[0], normalized.scale[1], 1);
   sprite.userData.tex = tex;
+  sprite.userData.endTextCanvas = canvas;
+  sprite.userData.endTextContext = g;
+  sprite.userData.endTextOptions = normalized;
   return sprite;
+}
+
+function updateEndTextSprite(sprite, text, options = {}) {
+  if (!sprite?.userData?.endTextCanvas || !sprite.userData.endTextContext) return;
+  const normalized = { ...sprite.userData.endTextOptions, ...options };
+  sprite.userData.endTextOptions = normalized;
+  paintEndTextCanvas(
+    sprite.userData.endTextCanvas,
+    sprite.userData.endTextContext,
+    text,
+    normalized,
+  );
+  sprite.scale.set(normalized.scale[0], normalized.scale[1], 1);
+  sprite.userData.tex.needsUpdate = true;
 }
 
 function makePodiumRankSprite(rank, color) {
@@ -2928,28 +3051,15 @@ function makePodiumRankSprite(rank, color) {
   });
 }
 
-function buildPodiumAvatar(ch, place) {
-  const { group, jetpack } = buildBotMesh(colorHex(ch), G.world.mounted);
-  const gun = buildBlaster(ch.weapon || 'blaster');
-  gun.scale.setScalar(0.55);
-  gun.position.set(0.32, G.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
-  gun.rotation.y = Math.PI;
-  group.add(gun);
-  syncJetpackVisual(ch, 0, jetpack);
-  group.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
-  group.scale.setScalar(place === 0 ? 1.18 : 1.05);
-  return group;
-}
-
-function podiumSurfaceYAt(x, z) {
+function podiumSurfaceYAt(world, x, z) {
   let y = null;
   const pad = 0.65;
-  for (const c of G.world.colliders) {
+  for (const c of world.colliders || []) {
     if (c.type !== 'box') continue;
     if (x < c.min.x - pad || x > c.max.x + pad || z < c.min.z - pad || z > c.max.z + pad) continue;
     if (y === null || c.max.y > y) y = c.max.y;
   }
-  for (const ramp of G.world.ramps) {
+  for (const ramp of world.ramps || []) {
     if (!inRampFootprint(ramp, x, z, pad)) continue;
     const ry = rampSurfaceY(ramp, x, z);
     if (y === null || ry > y) y = ry;
@@ -2957,41 +3067,138 @@ function podiumSurfaceYAt(x, z) {
   return y;
 }
 
-function podiumAnchor() {
-  const preferred = G.world.podiumSpot;
+function resolvePodiumAnchor(world) {
+  const preferred = world.podiumSpot;
   if (preferred) {
-    const y = podiumSurfaceYAt(preferred.x, preferred.z);
-    if (y !== null && y > G.world.killY + 2) {
+    const y = podiumSurfaceYAt(world, preferred.x, preferred.z);
+    if (y !== null && y > world.killY + 2) {
       return new THREE.Vector3(preferred.x, y + 0.08, preferred.z);
     }
   }
   const center = new THREE.Vector3();
   const candidates = [
     center,
-    ...(G.world.waypoints || []).map(w => w.pos),
-    ...(G.world.spawnsAll || []),
+    ...(world.waypoints || []).map(w => w.pos),
+    ...(world.spawnsAll || []),
   ].sort((a, b) => (a.x * a.x + a.z * a.z) - (b.x * b.x + b.z * b.z));
   for (const c of candidates) {
-    const y = podiumSurfaceYAt(c.x, c.z);
-    if (y !== null && y > G.world.killY + 2) return new THREE.Vector3(c.x, y + 0.08, c.z);
+    const y = podiumSurfaceYAt(world, c.x, c.z);
+    if (y !== null && y > world.killY + 2) return new THREE.Vector3(c.x, y + 0.08, c.z);
   }
-  return new THREE.Vector3(0, Math.max(0, G.world.killY + 8), 0);
+  return new THREE.Vector3(0, Math.max(0, world.killY + 8), 0);
 }
 
-function buildVictoryScene({ ranked, title, color, stats }) {
-  const scene = G.scene;
-  const anchor = podiumAnchor();
+function createVictoryWinnerSlot(stage, spec, place) {
+  const avatar = buildBotMesh(0xffd23c, G.world.mounted);
+  const group = avatar.group;
+  const baseRotY = place === 1 ? -0.34 : place === 2 ? 0.34 : 0;
+  const baseScale = place === 0 ? 1.18 : 1.05;
+  group.position.set(spec.x, spec.h + 0.02, -0.08);
+  group.rotation.y = baseRotY;
+  group.scale.setScalar(baseScale);
+  const weapons = new Map();
+  for (const id of Object.keys(WEAPONS)) {
+    const gun = buildBlaster(id);
+    gun.scale.setScalar(0.55);
+    gun.position.set(0.32, G.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
+    gun.rotation.y = Math.PI;
+    gun.visible = id === 'blaster';
+    group.add(gun);
+    weapons.set(id, gun);
+  }
+  group.traverse(object => { if (object.isMesh) object.castShadow = true; });
+  stage.add(group);
+
+  const name = makeEndTextSprite('PLAYER', {
+    color: '#ffffff',
+    sub: '0 PTS',
+    subColor: '#dbe8ff',
+    bg: 'rgba(3,7,14,.92)',
+    border: '#ffd23c',
+    scale: [3.05, 0.8],
+    font: 'bold 38px "Arial Black", Arial',
+  });
+  name.position.set(spec.x, spec.h + 2.72, 0.05);
+  name.material.depthTest = false;
+  name.renderOrder = 20;
+  stage.add(name);
+  return {
+    ...avatar,
+    group,
+    name,
+    weapons,
+    baseY: group.position.y,
+    baseRotY,
+    baseScale,
+    phase: place * 0.23,
+    hopHeight: place === 0 ? 0.42 : 0.3,
+    hopSpeed: place === 0 ? 1.55 : 1.35,
+  };
+}
+
+function populateVictoryWinners(presentation, ranked, resetPose = true) {
+  presentation.winnerSlots ||= presentation.pedestalSpecs.map((spec, place) =>
+    createVictoryWinnerSlot(presentation.stage, spec, place));
+  const avatars = [];
+  presentation.winnerSlots.forEach((slot, place) => {
+    const ch = ranked[place];
+    slot.group.visible = !!ch;
+    slot.name.visible = !!ch;
+    if (!ch) return;
+    const color = colorHex(ch);
+    slot.body.material.color.setHex(color);
+    slot.visor.material.emissive.setHex(color);
+    syncJetpackVisual(ch, 0, slot.jetpack);
+    const weaponId = slot.weapons.has(ch.weapon) ? ch.weapon : 'blaster';
+    for (const [id, gun] of slot.weapons) gun.visible = id === weaponId;
+    if (resetPose) {
+      slot.group.position.y = slot.baseY;
+      slot.group.rotation.set(0, slot.baseRotY, 0);
+      slot.group.scale.setScalar(slot.baseScale);
+    }
+    updateEndTextSprite(slot.name, ch.isPlayer ? 'YOU' : ch.name.toUpperCase(), {
+      sub: `${ch.score} PTS`,
+      border: ch.color || '#ffd23c',
+    });
+    avatars.push(slot);
+  });
+  return avatars;
+}
+
+function configureVictoryPresentation(presentation, ranked) {
+  const anchor = G.podiumAnchor?.clone() || resolvePodiumAnchor(G.world);
+  presentation.stage.position.copy(anchor);
+  const avatars = populateVictoryWinners(presentation, ranked);
+  const lookAt = anchor.clone().add(new THREE.Vector3(0, 2.25, 0));
+  const cameraTarget = anchor.clone().add(new THREE.Vector3(0, 4.15, 11.85));
+  const cameraTargetMatrix = new THREE.Matrix4().lookAt(cameraTarget, lookAt, camera.up);
+  const end = {
+    t: 0,
+    avatars,
+    anchor,
+    confetti: presentation.confetti,
+    lookAt,
+    cameraStart: camera.position.clone(),
+    cameraStartQuaternion: camera.quaternion.clone(),
+    cameraStartFov: camera.fov,
+    cameraTarget,
+    cameraTargetQuaternion: new THREE.Quaternion().setFromRotationMatrix(cameraTargetMatrix),
+    cameraTargetFov: 58,
+    screenRevealed: false,
+  };
+  presentation.end = end;
+  return presentation;
+}
+
+function buildVictoryPresentation({ ranked }) {
+  const anchor = G.podiumAnchor?.clone() || resolvePodiumAnchor(G.world);
   const stage = new THREE.Group();
   stage.position.copy(anchor);
-  scene.add(stage);
 
-  camera.fov = 58;
-  camera.near = 0.1;
-  camera.far = 900;
-  camera.updateProjectionMatrix();
-  camera.position.copy(anchor).add(new THREE.Vector3(0, 4.2, 11.6));
-  camera.lookAt(anchor.clone().add(new THREE.Vector3(0, 2.1, 0)));
-
+  // This remains the podium's original light rig. It is prewarmed while
+  // temporarily attached to the covered arena, then detached until match end.
+  // That preserves the original combined arena/podium look without discovering
+  // five new lights and a map-wide shadow pass on the final gameplay frame.
   const lightRig = new THREE.Group();
   stage.add(lightRig);
   const hemi = new THREE.HemisphereLight(0xffe2a8, 0x223040, 1.5);
@@ -3021,7 +3228,6 @@ function buildVictoryScene({ ranked, title, color, stats }) {
     { x: -3.0, h: 1.55, w: 2.3, d: 2.0, mat: silver, medal: '#e5edf8' },
     { x: 3.0, h: 1.15, w: 2.3, d: 2.0, mat: bronze, medal: '#d98c45' },
   ];
-  const avatars = [];
   pedestalSpecs.forEach((spec, i) => {
     podiumBox(stage, spec.x, spec.h / 2, 0, spec.w, spec.h, spec.d, spec.mat);
     podiumBox(stage, spec.x, spec.h + 0.05, 0, spec.w + 0.36, 0.1, spec.d + 0.36, green);
@@ -3029,36 +3235,6 @@ function buildVictoryScene({ ranked, title, color, stats }) {
     face.position.set(spec.x, spec.h * 0.5, spec.d / 2 + 0.1);
     face.renderOrder = 4;
     stage.add(face);
-
-    const ch = ranked[i];
-    if (!ch) return;
-    const avatar = buildPodiumAvatar(ch, i);
-    avatar.position.set(spec.x, spec.h + 0.02, -0.08);
-    avatar.rotation.y = i === 1 ? -0.34 : i === 2 ? 0.34 : 0;
-    stage.add(avatar);
-    avatars.push({
-      group: avatar,
-      baseY: avatar.position.y,
-      baseRotY: avatar.rotation.y,
-      baseScale: avatar.scale.x,
-      phase: i * 0.23,
-      hopHeight: i === 0 ? 0.42 : 0.3,
-      hopSpeed: i === 0 ? 1.55 : 1.35,
-    });
-
-    const name = makeEndTextSprite(ch.isPlayer ? 'YOU' : ch.name.toUpperCase(), {
-      color: '#ffffff',
-      sub: `${ch.score} PTS`,
-      subColor: '#dbe8ff',
-      bg: 'rgba(3,7,14,.92)',
-      border: ch.color || '#ffd23c',
-      scale: [3.05, 0.8],
-      font: 'bold 38px "Arial Black", Arial',
-    });
-    name.position.set(spec.x, spec.h + 2.72, 0.05);
-    name.material.depthTest = false;
-    name.renderOrder = 20;
-    stage.add(name);
   });
 
   const pos = [];
@@ -3080,14 +3256,216 @@ function buildVictoryScene({ ranked, title, color, stats }) {
   }));
   stage.add(confetti);
 
-  scene.userData.end = {
-    t: 0,
-    avatars,
-    anchor,
+  return configureVictoryPresentation({
+    stage,
+    pedestalSpecs,
     confetti,
-    lookAt: anchor.clone().add(new THREE.Vector3(0, 2.25, 0)),
+    winnerSlots: null,
+    end: null,
+  }, ranked);
+}
+
+const victoryPodiumPrewarms = new Map();
+
+function victoryPodiumPrewarmKey() {
+  return [
+    G?.scene?.fog ? 'fog' : 'clear',
+    G?.world?.mounted ? 'mounted' : 'foot',
+    usesLightRenderPath() ? 'direct' : 'composer',
+    renderer.shadowMap.enabled ? 'shadows' : 'no-shadows',
+  ].join(':');
+}
+
+function victoryPodiumPrewarmResult() {
+  return {
+    ranked: rankedCharacters().slice(0, 3),
+    title: 'MATCH COMPLETE',
+    color: '#ffd23c',
+    stats: '',
   };
-  return scene;
+}
+
+function createVictoryPodiumPrewarm() {
+  const key = victoryPodiumPrewarmKey();
+  const existing = victoryPodiumPrewarms.get(key);
+  if (existing) return existing;
+  const entry = {
+    presentation: buildVictoryPresentation(victoryPodiumPrewarmResult()),
+    warmedScenes: new WeakSet(),
+    promise: null,
+    promiseScene: null,
+  };
+  // Keep the presentation alive between rounds. Every newly built arena is
+  // still prewarmed with the rig attached because its own materials need the
+  // podium-light variants.
+  victoryPodiumPrewarms.set(key, entry);
+  return entry;
+}
+
+function prepareVictoryArenaWarmupState() {
+  const visibility = new Map();
+  const hide = object => {
+    if (!object || visibility.has(object)) return;
+    visibility.set(object, object.visible);
+    object.visible = false;
+  };
+  for (const ch of G.characters || []) {
+    if (!ch.isPlayer) hide(ch.mesh);
+  }
+  for (const item of G.pickups?.items || []) {
+    hide(item.mesh);
+    for (const light of item.lights || []) hide(light);
+  }
+  hide(G.pickups?.dropPrewarmGroup);
+  for (const object of [
+    G.player?.viewmodel,
+    G.player?.dualBlasterViewmodel,
+    G.player?.grappleViewmodel,
+    G.player?.horseViewmodel,
+    G.player?.muzzleFlash,
+    G.player?.leftMuzzleFlash,
+  ]) hide(object);
+  return () => {
+    for (const [object, visible] of visibility) object.visible = visible;
+  };
+}
+
+function prepareVictoryWinnerVariantWarmup(presentation) {
+  const visibility = new Map();
+  const reveal = object => {
+    if (!object || visibility.has(object)) return;
+    visibility.set(object, object.visible);
+    object.visible = true;
+  };
+  for (const slot of presentation.winnerSlots || []) {
+    reveal(slot.group);
+    reveal(slot.name);
+    reveal(slot.jetpack);
+    reveal(slot.jetpack?._flames);
+    for (const gun of slot.weapons.values()) reveal(gun);
+  }
+  return () => {
+    for (const [object, visible] of visibility) object.visible = visible;
+  };
+}
+
+function prepareVictoryEventVariantWarmup() {
+  const visibility = new Map();
+  const reveal = object => {
+    if (!object || visibility.has(object)) return;
+    visibility.set(object, object.visible);
+    object.visible = true;
+  };
+  for (const visual of G.meteorVisualPool || []) {
+    reveal(visual.group);
+    reveal(visual.warning);
+  }
+  for (const visual of G.cometVisualPool || []) reveal(visual.group);
+  return () => {
+    for (const [object, visible] of visibility) object.visible = visible;
+  };
+}
+
+function beginVictoryPodiumWarmup(entry, arenaScene) {
+  const savedTarget = renderer.getRenderTarget();
+  const savedAutoClear = renderer.autoClear;
+  const savedRenderScene = renderPass.scene;
+  const savedPosition = camera.position.clone();
+  const savedQuaternion = camera.quaternion.clone();
+  const savedFov = camera.fov;
+  const savedNear = camera.near;
+  const savedFar = camera.far;
+  const { presentation } = entry;
+  const end = presentation.end;
+  const restoreArenaState = prepareVictoryArenaWarmupState();
+  const restoreWinnerVariants = prepareVictoryWinnerVariantWarmup(presentation);
+  const restoreEventVariants = prepareVictoryEventVariantWarmup();
+  presentation.stage.removeFromParent();
+  arenaScene.add(presentation.stage);
+  renderPass.scene = arenaScene;
+  camera.position.copy(end.cameraTarget);
+  camera.quaternion.copy(end.cameraTargetQuaternion);
+  camera.fov = end.cameraTargetFov;
+  camera.near = 0.1;
+  camera.far = 900;
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  renderer.setRenderTarget(usesLightRenderPath() ? null : composer.renderTarget1);
+  return () => {
+    arenaScene.remove(presentation.stage);
+    restoreEventVariants();
+    restoreWinnerVariants();
+    restoreArenaState();
+    renderer.setRenderTarget(savedTarget);
+    renderer.autoClear = savedAutoClear;
+    renderPass.scene = savedRenderScene;
+    camera.position.copy(savedPosition);
+    camera.quaternion.copy(savedQuaternion);
+    camera.fov = savedFov;
+    camera.near = savedNear;
+    camera.far = savedFar;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+  };
+}
+
+function renderVictoryPodiumWarmup(arenaScene) {
+  // A real covered draw through the active render path prepares the exact
+  // output/shadow variants and allocates the podium light's shadow target.
+  // The stage is attached to the arena here exactly as it will be at match end.
+  if (usesLightRenderPath()) {
+    renderer.autoClear = true;
+    renderer.setRenderTarget(null);
+    renderer.render(arenaScene, camera);
+  } else {
+    composer.render();
+  }
+}
+
+function prewarmVictoryPodium() {
+  const arenaScene = G.scene;
+  const entry = createVictoryPodiumPrewarm();
+  G.victoryPodiumEntry = entry;
+  if (entry.warmedScenes.has(arenaScene)) return;
+  configureVictoryPresentation(entry.presentation, victoryPodiumPrewarmResult().ranked);
+  const restore = beginVictoryPodiumWarmup(entry, arenaScene);
+  try {
+    renderer.compile(arenaScene, camera);
+    renderVictoryPodiumWarmup(arenaScene);
+    entry.warmedScenes.add(arenaScene);
+  } finally {
+    restore();
+  }
+}
+
+async function prewarmVictoryPodiumAsync() {
+  const arenaScene = G.scene;
+  const entry = createVictoryPodiumPrewarm();
+  G.victoryPodiumEntry = entry;
+  if (entry.warmedScenes.has(arenaScene)) return;
+  if (entry.promise && entry.promiseScene === arenaScene) {
+    await entry.promise;
+    return;
+  }
+  configureVictoryPresentation(entry.presentation, victoryPodiumPrewarmResult().ranked);
+  const restore = beginVictoryPodiumWarmup(entry, arenaScene);
+  entry.promiseScene = arenaScene;
+  entry.promise = (async () => {
+    if (typeof renderer.compileAsync === 'function') {
+      await renderer.compileAsync(arenaScene, camera);
+    } else {
+      renderer.compile(arenaScene, camera);
+    }
+    renderVictoryPodiumWarmup(arenaScene);
+    entry.warmedScenes.add(arenaScene);
+  })();
+  try {
+    await entry.promise;
+  } finally {
+    restore();
+    entry.promise = null;
+    entry.promiseScene = null;
+  }
 }
 
 function resetHighScoreForm() {
@@ -3172,11 +3550,109 @@ async function submitHighScore(event) {
   }
 }
 
+function applyVictoryResultUI(result) {
+  setText(document.getElementById('endtitle'), result.title);
+  setStyle(document.getElementById('endtitle'), 'color', result.color);
+  setText(document.getElementById('endstats'), result.stats);
+  setText(document.getElementById('endawards'), awardsLine(G.player.awards));
+}
+
+function revealVictoryScreen(game) {
+  if (G !== game || !game.podiumTransitioning) return;
+  const transition = game.victoryTransition;
+  applyVictoryResultUI(transition.result);
+  setStyle(endScreen, 'display', 'flex');
+  requestAnimationFrame(() => {
+    if (G !== game || !game.podiumTransitioning) return;
+    endScreen?.classList.add('visible');
+    matchTransition?.classList.add('leaving');
+  });
+  setTimeout(() => {
+    if (G !== game) return;
+    matchTransition?.classList.remove('active', 'leaving', 'switching');
+  }, 420);
+  if (!transition.highScorePrepared) {
+    transition.highScorePrepared = true;
+    prepareHighScoreSubmission();
+  }
+  document.exitPointerLock?.();
+}
+
+function finishVictoryPodiumSetup(game) {
+  if (G !== game || !game.podiumTransitioning || game.scene?.userData?.end) return;
+  const oldScene = game.scene;
+  for (const marker of dmgMarkerPool) destroyDmgMarker(marker, oldScene);
+  dmgMarkers = [];
+  dmgMarkerPool = [];
+  game.projectiles.clear();
+  game.pickups.clear();
+  game.fxPool.clear();
+  camera.remove(game.player.viewmodel);
+  camera.remove(game.player.dualBlasterViewmodel);
+  camera.remove(game.player.grappleViewmodel);
+  camera.remove(game.player.horseViewmodel);
+  camera.remove(game.player.muzzleFlash);
+  camera.remove(game.player.leftMuzzleFlash);
+  for (const ch of game.characters) {
+    if (!ch.isPlayer && ch.mesh) ch.mesh.visible = false;
+  }
+
+  const cached = game.victoryPodiumEntry || victoryPodiumPrewarms.get(victoryPodiumPrewarmKey());
+  const presentation = cached
+    ? configureVictoryPresentation(cached.presentation, game.victoryTransition.result.ranked)
+    : buildVictoryPresentation(game.victoryTransition.result);
+  if (G !== game || !game.podiumTransitioning) return;
+  presentation.end.cameraStart.copy(camera.position);
+  presentation.end.cameraStartQuaternion.copy(camera.quaternion);
+  presentation.end.cameraStartFov = camera.fov;
+  game.scene.userData.end = presentation.end;
+  presentation.stage.removeFromParent();
+  game.scene.add(presentation.stage);
+  game.podiumPresentation = presentation;
+  renderPass.scene = game.scene;
+  game.victoryTransition.built = true;
+  matchTransition?.classList.add('switching');
+  // The original podium cuts straight to this composition. Keep that exact
+  // camera instead of flying through unvisited parts of a large arena and
+  // lazily compiling whatever the travel path happens to expose.
+  camera.position.copy(presentation.end.cameraTarget);
+  camera.quaternion.copy(presentation.end.cameraTargetQuaternion);
+  camera.fov = presentation.end.cameraTargetFov;
+  camera.near = 0.1;
+  camera.far = 900;
+  camera.updateProjectionMatrix();
+}
+
 function showVictoryPodium(result) {
-  const oldScene = G.scene;
+  if (!G) return;
   if (G.multiplayer || G.multiplayerHost) G.mpPodiumStartedAt ||= performance.now();
-  G.over = true;
-  G.showBoard = false;
+  if (G.podiumTransitioning || G.scene?.userData?.end) {
+    if (G.victoryTransition) {
+      G.victoryTransition.result = result;
+      const end = G.scene?.userData?.end;
+      if (end && G.podiumPresentation && Array.isArray(result.ranked)) {
+        end.avatars = populateVictoryWinners(G.podiumPresentation, result.ranked, false);
+      }
+      if (end?.screenRevealed) applyVictoryResultUI(result);
+    }
+    return;
+  }
+
+  const game = G;
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  game.over = true;
+  game.podiumTransitioning = true;
+  game.showBoard = false;
+  game.victoryTransition = {
+    result,
+    t: 0,
+    built: false,
+    highScorePrepared: false,
+    cameraStart: camera.position.clone(),
+    cameraStartQuaternion: camera.quaternion.clone(),
+    cameraStartFov: camera.fov,
+    forward,
+  };
   setPauseScoreboardLayer(false);
   hud.show(false);
   hud.els.hud.classList.add('endboard');
@@ -3186,37 +3662,31 @@ function showVictoryPodium(result) {
   setStyle(quitBtn, 'display', 'none');
   setStyle(volumeControl, 'display', 'none');
   setStyle(document.getElementById('scores'), 'display', 'none');
-
-  for (const marker of dmgMarkerPool) destroyDmgMarker(marker, oldScene);
-  dmgMarkers = [];
-  dmgMarkerPool = [];
-  G.projectiles.clear();
-  G.pickups.clear();
-  G.fxPool.clear();
-  camera.remove(G.player.viewmodel);
-  camera.remove(G.player.grappleViewmodel);
-  for (const ch of G.characters) {
-    if (!ch.isPlayer && ch.mesh) ch.mesh.visible = false;
-  }
-
-  const podiumScene = buildVictoryScene(result);
-  G.scene = podiumScene;
-  renderPass.scene = podiumScene;
-
-  const end = document.getElementById('endscreen');
-  setText(document.getElementById('endtitle'), result.title);
-  setStyle(document.getElementById('endtitle'), 'color', result.color);
-  setText(document.getElementById('endstats'), result.stats);
-  setText(document.getElementById('endawards'), awardsLine(G.player.awards));
-  setStyle(end, 'display', 'flex');
-  prepareHighScoreSubmission();
-  document.exitPointerLock?.();
+  clearVictoryPresentationUI();
+  matchTransition?.classList.add('active');
   sfx('powerup');
+
+  // Return to the browser first so the final action frame and the lightweight
+  // letterbox can paint. Build the podium on the following frame instead of
+  // making the clock-expiry tick do every piece of end-state work at once.
+  requestAnimationFrame(() => requestAnimationFrame(() => finishVictoryPodiumSetup(game)));
 }
 
 function updateVictoryPodium(dt) {
   const end = G.scene?.userData?.end;
-  if (!end) return;
+  const transition = G.victoryTransition;
+  if (!end) {
+    if (!transition) return;
+    transition.t += dt;
+    const duration = reducedMotion ? 0.01 : 0.28;
+    const p = Math.min(1, transition.t / duration);
+    const eased = 1 - (1 - p) ** 3;
+    camera.position.copy(transition.cameraStart)
+      .addScaledVector(transition.forward, eased * 0.34);
+    camera.position.y += eased * 0.08;
+    camera.quaternion.copy(transition.cameraStartQuaternion);
+    return;
+  }
   end.t += dt;
   const t = end.t;
   setStyle(hud.els.board, 'top', '');
@@ -3231,6 +3701,10 @@ function updateVictoryPodium(dt) {
     11.5 + Math.cos(t * 0.22) * 0.35,
   ));
   camera.lookAt(end.lookAt);
+  if (!end.screenRevealed && t >= (reducedMotion ? 0.01 : 0.38)) {
+    end.screenRevealed = true;
+    revealVictoryScreen(G);
+  }
   for (const avatar of end.avatars) {
     const cycle = (t * avatar.hopSpeed + avatar.phase) % 1;
     const lift = Math.sin(cycle * Math.PI) ** 0.62;
@@ -3514,6 +3988,8 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
     target.jetpack = null;
     target.grapple = false;
     if (target.grappleViewmodel) target.grappleViewmodel.visible = false;
+    target.dualBlaster = false;
+    target.syncDualBlasterViewmodel?.();
     if (target.isPlayer) target.detachGrapple?.();
     else setRemoteGrappleState(target, null);
     target.deaths++;
@@ -3648,8 +4124,10 @@ function onPickup(ch, def) {
       if (ch.isPlayer) {
         sfx('pickup');
         announce(def.kind === 'ammo' ? `${w.name} AMMO` : `${w.name}!`, '#7fd0ff');
-        if (def.kind !== 'ammo' && ch.weapon === 'blaster') ch.switchWeapon(def.weapon);
-      } else if (ch.remoteHuman && def.kind !== 'ammo' && ch.weapon === 'blaster') {
+        if (def.kind !== 'ammo' && ch.weapon === 'blaster' && !ch.dualBlaster) {
+          ch.switchWeapon(def.weapon);
+        }
+      } else if (ch.remoteHuman && def.kind !== 'ammo' && ch.weapon === 'blaster' && !ch.dualBlaster) {
         ch.weapon = def.weapon;
         ch.cancelWeaponWarmup?.();
       }
@@ -3691,6 +4169,18 @@ function onPickup(ch, def) {
       if (ch.isPlayer) {
         sfx('powerup');
         announce('GRAPPLE EQUIPPED — SHIFT / RIGHT CLICK', '#a8ff70');
+      }
+      return true;
+    case 'dual-blaster':
+      if (ch.dualBlaster) return false;
+      ch.dualBlaster = true;
+      ch._dualBlasterNextLeft = false;
+      ch.syncDualBlasterViewmodel?.();
+      ch.syncGunModel?.();
+      ch.setSkin?.(ch.powerup?.kind || null);
+      if (ch.isPlayer) {
+        sfx('powerup');
+        announce('DUAL SECRET SHOTS — ALTERNATING FIRE', '#ffb35a');
       }
       return true;
     case 'points':
@@ -3756,12 +4246,20 @@ function autoGraphicsCalibrationOpen() {
 
 function updateGraphicsUI() {
   const tier = presentationTier();
+  const selectedMode = pendingGraphicsMode || graphicsMode;
   for (const button of graphicsButtons) {
-    const active = button.dataset.graphics === graphicsMode;
+    const active = button.dataset.graphics === selectedMode;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   }
   if (!graphicsDetail) return;
+  if (pendingGraphicsMode) {
+    const label = pendingGraphicsMode === 'auto'
+      ? 'Auto'
+      : GRAPHICS_PRESETS[pendingGraphicsMode].label;
+    setText(graphicsDetail, `${label} selected · applies during the next arena load`);
+    return;
+  }
   const tierLabel = tier === 'standard' ? 'Medium' : tier[0].toUpperCase() + tier.slice(1);
   setText(graphicsDetail, graphicsMode === 'auto'
     ? (autoGraphicsTestStage === 'game'
@@ -3774,9 +4272,15 @@ function updateGraphicsUI() {
     : `Locked ${GRAPHICS_PRESETS[graphicsMode].label} · automatic scaling disabled`);
 }
 
-function setGraphicsMode(mode, announce = true, persist = true) {
+function applyPendingGraphicsMode() {
+  if (!pendingGraphicsMode) return false;
+  graphicsMode = pendingGraphicsMode;
+  pendingGraphicsMode = null;
+  return true;
+}
+
+function setGraphicsMode(mode, announce = true, persist = true, deferInMatch = true) {
   if (!validGraphicsModes.has(mode)) return;
-  graphicsMode = mode;
   // Manual choices are a separate override. Returning to Auto clears only that
   // override and reuses the most recently tested automatic scale.
   if (persist) {
@@ -3785,6 +4289,17 @@ function setGraphicsMode(mode, announce = true, persist = true) {
       else localStorage.setItem(graphicsOverrideStorageKey, mode);
     } catch { /* localStorage may be unavailable */ }
   }
+  if (deferInMatch && G && !G.atrium) {
+    pendingGraphicsMode = mode;
+    updateGraphicsUI();
+    if (announce) {
+      const label = mode === 'auto' ? 'AUTO' : GRAPHICS_PRESETS[mode].label.toUpperCase();
+      hud.message(`GRAPHICS: ${label} · NEXT MATCH`, mode === 'low' ? '#7fd0ff' : '#ffd23c');
+    }
+    return;
+  }
+  pendingGraphicsMode = null;
+  graphicsMode = mode;
   resetAdaptiveRenderScale({ preserveDetection: true });
   if (announce && G && !G.atrium) {
     const label = mode === 'auto' ? `AUTO · ${presentationTier().toUpperCase()}` : GRAPHICS_PRESETS[mode].label.toUpperCase();
@@ -4061,6 +4576,7 @@ function startCurrentMultiplayerMatch(
   force = false,
   mode = multiplayer.mode || 'ffa',
   resumeSnapshot = null,
+  freshMusic = true,
 ) {
   clearTimeout(multiplayerVotingTimer);
   setStyle(document.getElementById('endscreen'), 'display', 'none');
@@ -4072,12 +4588,12 @@ function startCurrentMultiplayerMatch(
   const endedMultiplayerMatch = !!(G?.over && (G.multiplayer || G.multiplayerHost));
   if (multiplayer.shouldHost()) {
     if (force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id || G.mode !== mode) {
-      startMultiplayerHostMatch(map, mode, resumeSnapshot);
+      startMultiplayerHostMatch(map, mode, resumeSnapshot, freshMusic);
     } else if (resumeSnapshot) {
       applyHostHandoffSnapshot(resumeSnapshot);
     }
   } else if (force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id || G.mode !== mode) {
-    startMultiplayerMatch(map, mode);
+    startMultiplayerMatch(map, mode, freshMusic);
     if (resumeSnapshot) applyMultiplayerSnapshot(resumeSnapshot);
   } else if (resumeSnapshot) {
     applyMultiplayerSnapshot(resumeSnapshot);
@@ -4086,6 +4602,10 @@ function startCurrentMultiplayerMatch(
 
 multiplayer.addEventListener('joined', (e) => {
   if (e.detail.phase === 'playing') {
+    const alreadyInThisRound = !!G && !G.over &&
+      (G.multiplayer || G.multiplayerHost) &&
+      G.mapDef?.id === e.detail.mapId &&
+      G.mode === (e.detail.mode || multiplayer.mode || 'ffa');
     const slotChanged = !!G?.player?.id && G.player.id !== e.detail.slotId;
     const roleMismatch = multiplayer.shouldHost() ? !G?.multiplayerHost : !G?.multiplayer;
     startCurrentMultiplayerMatch(
@@ -4093,6 +4613,7 @@ multiplayer.addEventListener('joined', (e) => {
       slotChanged || roleMismatch,
       e.detail.mode || multiplayer.mode || 'ffa',
       e.detail.snapshot || null,
+      !alreadyInThisRound,
     );
   } else if (G?.multiplayer || G?.multiplayerHost) {
     hud.message('MULTIPLAYER LOBBY REJOINED', '#ffd23c');
@@ -4110,8 +4631,7 @@ multiplayer.addEventListener('phase', (e) => {
     startCurrentMultiplayerMatch(mapId, false, e.detail.mode || multiplayer.mode || 'ffa');
   } else if (phase === 'podium' && (G?.multiplayer || G?.multiplayerHost)) {
     clearTimeout(multiplayerVotingTimer);
-    G.mpPodiumStartedAt = performance.now();
-    if (G.over && G.scene?.userData?.end) return;
+    G.mpPodiumStartedAt ||= performance.now();
     const currentRanked = ranked?.map(r => {
       const ch = G.characters.find(c => c.id === r.id) || (r.id === multiplayer.slotId ? G.player : null);
       return Object.assign(ch || {}, r);
@@ -4166,10 +4686,10 @@ multiplayer.addEventListener('hostChanged', (e) => {
   const map = MAPS.find(m => m.id === multiplayer.mapId) || MAPS[0];
   if (multiplayer.shouldHost()) {
     if (!G?.multiplayerHost) {
-      startMultiplayerHostMatch(map, multiplayer.mode || 'ffa', e.detail.snapshot || null);
+      startMultiplayerHostMatch(map, multiplayer.mode || 'ffa', e.detail.snapshot || null, false);
     }
   } else if (G?.multiplayerHost) {
-    startMultiplayerMatch(map, multiplayer.mode || 'ffa');
+    startMultiplayerMatch(map, multiplayer.mode || 'ffa', false);
     if (e.detail.snapshot) applyMultiplayerSnapshot(e.detail.snapshot);
   }
 });
@@ -4380,6 +4900,9 @@ function meteorSurfaceY(world, x, z) {
       }
     } else if (c.type === 'ellipsoid') {
       const surfaceY = ellipsoidSurfaceY(c, x, z);
+      if (surfaceY != null) best = Math.max(best, surfaceY);
+    } else if (c.type === 'triangleMesh') {
+      const surfaceY = triangleMeshSurfaceY(c, x, z);
       if (surfaceY != null) best = Math.max(best, surfaceY);
     } else if (c.type === 'cylinderShell') {
       const surfaceY = cylinderShellSurfaceY(c, x, z);
@@ -4683,6 +5206,7 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
     obj.visible = true;
   });
   reveal(player.viewmodel);
+  reveal(player.dualBlasterViewmodel);
   reveal(player.grappleViewmodel);
   for (const character of characters) reveal(character.mesh);
   reveal(projectiles.lightningArcPool?.[0]?.group);
@@ -5446,6 +5970,8 @@ function step(dt) {
     ch.jetpack = null;
     ch.grapple = false;
     if (ch.grappleViewmodel) ch.grappleViewmodel.visible = false;
+    ch.dualBlaster = false;
+    ch.syncDualBlasterViewmodel?.();
     ch.deaths++;
     const source = sunHit
       ? { id: 'solar', name: sunHit.name || 'The Sun', color: sunHit.color || '#ff8a24' }
@@ -5530,6 +6056,7 @@ function serializeCharacter(ch, i) {
     jetpack: !!ch.jetpack,
     jetpackActive: !!ch.jetpack?.active,
     grapple: !!ch.grapple,
+    dualBlaster: !!ch.dualBlaster,
     grappleAnchor: G.world.grappleEnabled && ch.grapple && ch.grappleAttached && ch.grappleAnchor
       ? { x: ch.grappleAnchor.x, y: ch.grappleAnchor.y, z: ch.grappleAnchor.z }
       : null,
@@ -5705,7 +6232,7 @@ window.__mapDebug = () => ({
   })),
 });
 window.__setGraphics = mode => {
-  setGraphicsMode(mode, false, false);
+  setGraphicsMode(mode, false, false, false);
   return window.__perf();
 };
 window.__step = (seconds) => {

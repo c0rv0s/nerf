@@ -183,6 +183,35 @@
   #maploadingpercent { margin-top:9px; color:#edf5ff; font:900 12px/1 Arial,sans-serif;
     letter-spacing:1px; font-variant-numeric:tabular-nums; }
   @media (prefers-reduced-motion:reduce) { .maploading-fill { transition:none; } }
+  #matchtransition { position:fixed; inset:0; z-index:4; pointer-events:none; overflow:hidden;
+    visibility:hidden; opacity:0; transition:opacity .24s ease; will-change:opacity; }
+  #matchtransition.active { visibility:visible; opacity:1; }
+  #matchtransition.leaving { opacity:0; }
+  #matchtransition::before,#matchtransition::after { content:""; position:absolute; left:0; width:100%;
+    height:9vh; min-height:54px; background:linear-gradient(90deg,rgba(3,6,14,.88),rgba(13,23,42,.7),rgba(3,6,14,.88));
+    transform:scaleY(0); transition:transform .34s cubic-bezier(.2,.85,.2,1); will-change:transform; }
+  #matchtransition::before { top:0; transform-origin:top; }
+  #matchtransition::after { bottom:0; transform-origin:bottom; }
+  #matchtransition.active::before,#matchtransition.active::after { transform:scaleY(1); }
+  .matchtransition-vignette { position:absolute; inset:0;
+    background:radial-gradient(ellipse at center,transparent 42%,rgba(4,8,18,.12) 72%,rgba(4,8,18,.42)); }
+  .matchtransition-vignette::after { content:""; position:absolute; inset:0; opacity:0;
+    background:radial-gradient(circle at 50% 50%,rgba(255,244,190,.72),rgba(101,215,255,.26) 28%,transparent 64%);
+    will-change:opacity; }
+  #matchtransition.switching .matchtransition-vignette::after { animation:matchFinishFlash .42s ease-out; }
+  @keyframes matchFinishFlash { 0%{opacity:0} 34%{opacity:.82} 100%{opacity:0} }
+  .matchtransition-copy { position:absolute; left:50%; top:50%; transform:translate3d(-50%,-50%,0) scale(.92);
+    width:min(92vw,760px); text-align:center; opacity:0; color:#fff;
+    text-shadow:0 3px 18px #000,0 0 28px rgba(101,215,255,.35);
+    transition:opacity .22s ease,transform .34s cubic-bezier(.2,.85,.2,1); will-change:opacity,transform; }
+  #matchtransition.active .matchtransition-copy { opacity:1; transform:translate3d(-50%,-50%,0) scale(1); }
+  .matchtransition-title { font-size:clamp(31px,5.5vw,64px); letter-spacing:3px; color:#ffd23c; }
+  .matchtransition-sub { margin-top:8px; font:800 11px/1.3 Arial,sans-serif;
+    letter-spacing:2.4px; text-transform:uppercase; color:#c9dbf5; }
+  @media (prefers-reduced-motion:reduce) {
+    #matchtransition,.matchtransition-copy,#matchtransition::before,#matchtransition::after { transition-duration:.01ms; }
+    #matchtransition.switching .matchtransition-vignette::after { animation:none; }
+  }
   #pausevolume { display:none; position:absolute; left:50%; bottom:17%; transform:translateX(-50%);
     width:min(720px,90vw); padding:12px 16px; cursor:default; }
   .pause-settings-grid { display:grid; grid-template-columns:1.1fr .9fr; gap:22px; }
@@ -231,7 +260,8 @@
 
   #endscreen { position:fixed; inset:0; display:none; flex-direction:column; align-items:center;
     justify-content:center; gap:20px; background:linear-gradient(180deg,rgba(0,0,10,.48),rgba(0,0,10,.08) 34%,rgba(0,0,10,.52));
-    color:#fff; z-index:5; pointer-events:none; }
+    color:#fff; z-index:5; pointer-events:none; opacity:0; transition:opacity .34s ease; }
+  #endscreen.visible { opacity:1; }
   #endtitle { position:absolute; top:5.2%; left:50%; transform:translateX(-50%);
     width:min(94vw,980px); text-align:center; font-size:clamp(34px,6vw,70px);
     text-shadow:0 5px 0 #1b1020,0 0 28px rgba(255,210,60,.38); }
@@ -502,6 +532,13 @@
     <div id="maploadingpercent" aria-hidden="true">0%</div>
   </div>
 </div>
+<div id="matchtransition" aria-hidden="true">
+  <div class="matchtransition-vignette"></div>
+  <div class="matchtransition-copy">
+    <div class="matchtransition-title">MATCH COMPLETE</div>
+    <div class="matchtransition-sub">Final positions locked</div>
+  </div>
+</div>
 <div id="cinematicFx"></div>
 <div id="underwaterFx"></div>
 <div id="foliageFx"></div>
@@ -611,6 +648,6 @@
   <div id="endscorehint">Press Tab to view final scorecard</div>
 </div>
 
-<script type="module" src="./src/main.js?v=56"></script>
+<script type="module" src="./src/main.js?v=58"></script>
 </body>
 </html>

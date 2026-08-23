@@ -743,6 +743,7 @@ function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE, spa
     respawn: 0,
     damageMult: 1,
     powerup: null,
+    dualBlaster: false,
     weapon: 'blaster',
     weapons: ['blaster'],
     ammo: {},
@@ -780,6 +781,7 @@ function resetSlotForHuman(slot, conn, lobby) {
     respawn: 0,
     damageMult: 1,
     powerup: null,
+    dualBlaster: false,
     weapon: 'blaster',
     weapons: ['blaster'],
     ammo: {},
@@ -1234,6 +1236,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     const ammo = sanitizeAmmo(p.ammo, weapons);
     const powerup = sanitizePowerup(p.powerup);
     const grapple = p.grapple === true;
+    const dualBlaster = lobby.map === 'oldwest' && p.dualBlaster === true;
     return {
       id,
       name: canonical?.name || cleanName(p.name || id),
@@ -1261,6 +1264,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       jetpack: p.jetpack === true,
       jetpackActive: p.jetpack === true && p.jetpackActive === true,
       grapple,
+      dualBlaster,
       grappleAnchor: grapple ? sanitizeGrappleAnchor(p.grappleAnchor, lobby.map, pos) : null,
     };
   }).filter(Boolean);
@@ -1275,7 +1279,9 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       awards: {}, respawn: slot.respawn || 0, weapon: 'blaster',
       weapons: ['blaster'], ammo: {},
       damageMult: slot.damageMult || 1, powerup: slot.powerup || null,
-      warmup: -1, jetpack: false, jetpackActive: false, grapple: false, grappleAnchor: null,
+      warmup: -1, jetpack: false, jetpackActive: false, grapple: false,
+      dualBlaster: lobby.map === 'oldwest' && slot.dualBlaster === true,
+      grappleAnchor: null,
     });
   }
   // Missing canonical humans are restored above. Keep those before bots if a
@@ -1446,6 +1452,7 @@ function mergeHostSnapshot(lobby, snap) {
     slot.ammo = p.ammo;
     slot.damageMult = p.damageMult;
     slot.powerup = p.powerup;
+    slot.dualBlaster = p.dualBlaster;
   }
   lobby.latestRanked = snap.ranked || ranked(lobby);
   lobby.latestScores = snap.scores || lobby.latestScores;

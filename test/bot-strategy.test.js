@@ -37,6 +37,13 @@ test('bots seek ammo for owned dry weapons but ignore ammo for unowned weapons',
   assert.equal(pickupUtility(self, { kind: 'ammo', weapon: 'hyper' }, 2, context), -Infinity);
 });
 
+test('bots value the second Secret Shot only until dual wield is equipped', () => {
+  const pickup = { kind: 'dual-blaster' };
+  const context = { leaderScore: 1000 };
+  assert.ok(pickupUtility(bot({ dualBlaster: false }), pickup, 12, context) > 0);
+  assert.equal(pickupUtility(bot({ dualBlaster: true }), pickup, 12, context), -Infinity);
+});
+
 test('a healthy trailing bot attacks while a hurt leader preserves its life', () => {
   const enemy = { hp: 100, shield: 0 };
   assert.equal(chooseCombatIntent(bot({ score: 500 }), enemy, null, { leaderScore: 4000 }), 'engage');

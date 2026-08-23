@@ -14,7 +14,7 @@
 // coplanar audit clean. This is a map-wide invariant, not a per-map workaround.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { rand, pointInZoneXZ, pointHitsWorld } from './engine.js';
+import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY } from './engine.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SURFACE_LAYER_EPS = 0.04;
@@ -335,9 +335,11 @@ const TEXTURE_NAMES = Object.freeze([
   'checker', 'crate', 'rock', 'arcade', 'fortress-royal', 'crocodile-scales',
   'canopy-wall', 'grass', 'dirt', 'door', 'lava', 'poster2', 'poster3', 'poster4',
   'poster5', 'poster6', 'poster7', 'hazard', 'tidebreaker-orange-steel',
+  'mycelium-mossy-rock',
   'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
   'infinite-bloom-faces', 'infinite-bloom-sky-eyeless',
   'infinite-bloom-eye-atlas',
+  'horse-coat', 'cactus-skin',
 ]);
 const SHARED_TEXTURE_NAMES = new Set(TEXTURE_NAMES.slice(0, 24));
 const textureSettledResolvers = new Map();
@@ -773,13 +775,68 @@ function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color, te
   return m;
 }
 
-function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72) {
+function triangleMeshColliderFromMesh(mesh, debugName = 'triangle-mesh') {
+  mesh.updateMatrixWorld(true);
+  const geometry = mesh.geometry;
+  const positions = geometry.getAttribute('position');
+  const index = geometry.getIndex();
+  const triangles = [];
+  const bounds = new THREE.Box3();
+  const center = mesh.getWorldPosition(new THREE.Vector3());
+  const vertex = i => V(positions.getX(i), positions.getY(i), positions.getZ(i))
+    .applyMatrix4(mesh.matrixWorld);
+  const faceCount = index ? index.count / 3 : positions.count / 3;
+  for (let face = 0; face < faceCount; face++) {
+    const ia = index ? index.getX(face * 3) : face * 3;
+    const ib = index ? index.getX(face * 3 + 1) : face * 3 + 1;
+    const ic = index ? index.getX(face * 3 + 2) : face * 3 + 2;
+    const a = vertex(ia), b = vertex(ib), c = vertex(ic);
+    const triangle = new THREE.Triangle(a, b, c);
+    const normal = triangle.getNormal(new THREE.Vector3());
+    const centroid = triangle.getMidpoint(new THREE.Vector3());
+    // Some imported/generated geometries do not promise winding. Keep every
+    // face normal pointing away from the mesh center so inside/outside tests
+    // remain stable.
+    if (normal.dot(centroid.sub(center)) < 0) {
+      triangle.b = c;
+      triangle.c = b;
+      normal.negate();
+    }
+    const box = new THREE.Box3().setFromPoints([triangle.a, triangle.b, triangle.c]);
+    bounds.union(box);
+    triangles.push({ triangle, normal, box });
+  }
+  const triangleCellSize = THREE.MathUtils.clamp(
+    Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z) / 12,
+    2,
+    8,
+  );
+  const triangleCells = new Map();
+  for (const entry of triangles) {
+    const minX = Math.floor(entry.box.min.x / triangleCellSize);
+    const maxX = Math.floor(entry.box.max.x / triangleCellSize);
+    const minZ = Math.floor(entry.box.min.z / triangleCellSize);
+    const maxZ = Math.floor(entry.box.max.z / triangleCellSize);
+    for (let ix = minX; ix <= maxX; ix++) for (let iz = minZ; iz <= maxZ; iz++) {
+      const key = `${ix},${iz}`;
+      let cell = triangleCells.get(key);
+      if (!cell) triangleCells.set(key, cell = []);
+      cell.push(entry);
+    }
+  }
+  return {
+    type: 'triangleMesh', triangles, triangleCells, triangleCellSize,
+    min: bounds.min.clone(), max: bounds.max.clone(), debugName,
+  };
+}
+
+function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72, exactCollider = false) {
   const geo = new THREE.IcosahedronGeometry(radius, 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const v = V(pos.getX(i), pos.getY(i), pos.getZ(i));
-    // keep the lumps subtle: the collider is a sphere, and big bumps poke
-    // through it — you end up standing (and clipping the camera) inside rock
+    // Keep the lumps subtle for ordinary asteroids, whose collider remains a
+    // sphere. Terrain can opt into the exact transformed triangles below.
     const n = 1 + (Math.sin(v.x * 1.3) + Math.cos(v.z * 1.7) + Math.sin(v.y * 2.1)) * 0.018;
     v.multiplyScalar(n);
     pos.setXYZ(i, v.x, v.y, v.z);
@@ -790,7 +847,9 @@ function addAsteroid(scene, world, x, y, z, radius, color = 0x8a7f72) {
   m.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3));
   m.castShadow = m.receiveShadow = true;
   scene.add(m);
-  world.colliders.push({ type: 'sphere', center: V(x, y, z), radius });
+  world.colliders.push(exactCollider
+    ? triangleMeshColliderFromMesh(m, 'faceted-asteroid')
+    : { type: 'sphere', center: V(x, y, z), radius });
   return m;
 }
 
@@ -1078,7 +1137,7 @@ function addMyceliumPondBasin(scene, world, points, centerX, centerZ, bottomY = 
   );
 }
 
-function addMinnowSchool(scene, world, x, z, travel = 13, phase = 0) {
+function addMinnowSchool(scene, world, x, z, travel = 13, phase = 0, surfaceY = -0.55) {
   const school = new THREE.Group();
   const fishMaterial = mat(0x9fd7c5, {
     roughness: 0.5, metalness: 0.12, flatShading: true,
@@ -1122,7 +1181,9 @@ function addMinnowSchool(scene, world, x, z, travel = 13, phase = 0) {
       fear: 0,
     });
   }
-  school.position.set(x, -1.12, z);
+  // Keep the same readable distance beneath the water surface across ponds
+  // and rivers with different authored elevations.
+  school.position.set(x, surfaceY - 0.57, z);
   scene.add(school);
 
   world.anim.push((dt, t, characters = []) => {
@@ -1130,7 +1191,7 @@ function addMinnowSchool(scene, world, x, z, travel = 13, phase = 0) {
     let threat = null;
     let threatDistance = Infinity;
     for (const ch of characters) {
-      if (!ch?.alive || ch.pos.y > 0.2 || Math.abs(ch.pos.x - x) > 4.2) continue;
+      if (!ch?.alive || ch.pos.y > surfaceY + 0.75 || Math.abs(ch.pos.x - x) > 4.2) continue;
       const distance = Math.hypot(ch.pos.x - x, ch.pos.z - z);
       if (distance < threatDistance && distance < travel + 7) {
         threat = ch;
@@ -3438,7 +3499,9 @@ function addFortressPresentation(scene, world) {
 /* ============ MAP 2 — FORTRESS FALLS (150×90: trench, keep, towers) ============ */
 function addOldWestCactus(scene, world, x, z, height = 4.8, rotation = 0) {
   const cactus = new THREE.Group();
-  const green = mat(0x39754a, { roughness: 0.94, flatShading: true });
+  const green = mat(0xffffff, {
+    tex: 'cactus-skin', repeat: [1.35, 2.6], roughness: 0.94, flatShading: true,
+  });
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.56, height, 9), green);
   trunk.position.y = height / 2;
   cactus.add(trunk);
@@ -3491,11 +3554,7 @@ function addOldWestHill(scene, world, x, z, rx, height, rz, color = 0xb95f35, co
   hill.castShadow = hill.receiveShadow = true;
   scene.add(hill);
   if (collide) {
-    world.colliders.push({
-      type: 'ellipsoid', center: V(x, centerY, z), radii: V(rx, ry, rz),
-      rotation: new THREE.Quaternion(), inverseRotation: new THREE.Quaternion(),
-      debugName: 'old-west-wide-hill',
-    });
+    world.colliders.push(triangleMeshColliderFromMesh(hill, 'old-west-wide-hill'));
   }
 }
 
@@ -3659,8 +3718,8 @@ function addOldWestCliff(scene, world) {
 }
 
 function addOldWestRideBoundary(world) {
-  // The playable slab ends at x ±230 / z ±180. Let riders approach within a
-  // few metres of that visual seam before the horse shies and turns inward.
+  // The desert continues visually into the horizon; this boundary is purely
+  // behavioral, letting riders approach it before the horse turns inward.
   const halfX = 228.5, halfZ = 178.5, margin = 4.5;
   world.rideBoundary = { halfX, halfZ, margin };
   world.anim.push((dt, t, characters) => {
@@ -3851,41 +3910,11 @@ function buildOldWest(scene) {
   baseLighting(scene, 0xffd9a4, 0x71402c, [-85, 125, 55], 260);
   addDaytimeSkyDome(scene);
 
-  // A visual-only desert ring surrounds, but never overlaps, the playable
-  // 460×360 slab. The exact hole removes the shallow-angle z-fighting seam
-  // that a single full-size plane produced across the arena.
-  const desertRingShape = new THREE.Shape();
-  desertRingShape.moveTo(-800, -800);
-  desertRingShape.lineTo(800, -800);
-  desertRingShape.lineTo(800, 800);
-  desertRingShape.lineTo(-800, 800);
-  desertRingShape.closePath();
-  const playableHole = new THREE.Path();
-  playableHole.moveTo(-230, -180);
-  playableHole.lineTo(-230, 180);
-  playableHole.lineTo(230, 180);
-  playableHole.lineTo(230, -180);
-  playableHole.closePath();
-  desertRingShape.holes.push(playableHole);
-  const desertRingGeometry = new THREE.ShapeGeometry(desertRingShape);
-  const ringPositions = desertRingGeometry.getAttribute('position');
-  const ringUvs = desertRingGeometry.getAttribute('uv');
-  for (let i = 0; i < ringPositions.count; i++) {
-    // Use the playable slab's repeats-per-world-unit and align both textures
-    // at world origin, so the butt joint does not change scale or phase.
-    ringUvs.setXY(i, ringPositions.getX(i) * 64 / 460, ringPositions.getY(i) * 50 / 360);
-  }
-  ringUvs.needsUpdate = true;
-  const horizon = new THREE.Mesh(
-    desertRingGeometry,
-    mat(0xc77b45, { tex: 'rock', repeat: [1, 1], roughness: 1 }),
-  );
-  horizon.rotation.x = -Math.PI / 2;
-  horizon.position.y = 0;
-  horizon.receiveShadow = true;
-  scene.add(horizon);
-  addBox(scene, world, 0, -0.65, 0, 460, 1.3, 360, 0xc77b45, {
-    tex: 'rock', repeat: [64, 50], debugName: 'old-west-desert-floor',
+  // One uninterrupted ground mesh runs beneath both the arena and its distant
+  // horizon. The horse's invisible ride boundary controls play space without
+  // introducing a second material, UV island, overlap, or visible join.
+  addBox(scene, world, 0, -0.65, 0, 1600, 1.3, 1600, 0xc77b45, {
+    tex: 'rock', repeat: [223, 223], debugName: 'old-west-continuous-desert',
   });
   addOldWestHill(scene, world, -140, 112, 58, 9, 42, 0xb75b31);
   addOldWestHill(scene, world, 132, 108, 52, 7.5, 58, 0xc46d3b);
@@ -3966,6 +3995,7 @@ function buildOldWest(scene) {
     ['weapon', -118, 0.7, -64, { weapon: 'scatter', amount: 8 }],
     ['weapon', 72, 0.7, 18, { weapon: 'sidewinder', amount: 10 }],
     ['weapon', 5, 26.7, -14, { weapon: 'pulsar', amount: 14 }],
+    ['dual-blaster', 9, 26.7, -14, {}],
     ['weapon', -145, 0.7, -45, { weapon: 'zooka', amount: 4 }],
     ['weapon', 0, 0.9, 45.5, { weapon: 'hyper', amount: 5 }],
     ['weapon', 132, 7.7, 108, { weapon: 'parasite', amount: 8 }],
@@ -3984,7 +4014,10 @@ function buildOldWest(scene) {
     ['ammo', 205, 0.7, 55, { weapon: 'parasite' }],
     ['ammo', -205, 0.7, 60, { weapon: 'whomper' }],
     ['ammo', -75, 0.7, 150, { weapon: 'whomper' }],
-    ['health', -42, 0.7, 46, {}], ['shield', 18, 0.7, 82, {}],
+    ['health', -42, 0.7, 46, {}],
+    ['health', 50, 14.2, -40, {}],       // halfway up the cliff ramp
+    ['health', -210, 0.7, 158, {}],      // far corner opposite the cliff
+    ['shield', 18, 0.7, 82, {}],
     ['speed', -155, 0.7, 92, {}], ['points', 205, 0.7, -82, { amount: 250 }],
   ]) pk(world, kind, x, y, z, extra);
 
@@ -10568,27 +10601,7 @@ function addOlympusCrag(scene, world, x, y, z, radius, color, seed, { collide = 
   mesh.rotation.y = seed * 0.71;
   mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
-  // A compound inset core makes the crag genuinely solid without using the
-  // loose full-bounds AABB that previously snagged players outside the mesh.
-  // The broad lower box blocks every walk-through line; a narrower column
-  // reaches the actual crown so a player landing from above cannot fall
-  // through. Both boxes remain well inside the crag's minimum radial extent.
-  if (collide) {
-    geo.computeBoundingBox();
-    const localBottom = geo.boundingBox?.min.y ?? -radius * 0.44;
-    const localTop = geo.boundingBox?.max.y ?? radius * 0.54;
-    const baseTop = Math.min(localTop - 0.08, radius * 0.34);
-    world.colliders.push({
-      type: 'box',
-      min: V(x - radius * 0.52, y + localBottom + 0.04, z - radius * 0.52),
-      max: V(x + radius * 0.52, y + baseTop, z + radius * 0.52),
-    });
-    world.colliders.push({
-      type: 'box',
-      min: V(x - radius * 0.28, y + baseTop - 0.04, z - radius * 0.28),
-      max: V(x + radius * 0.28, y + localTop - 0.04, z + radius * 0.28),
-    });
-  }
+  if (collide) world.colliders.push(triangleMeshColliderFromMesh(mesh, 'olympus-crag'));
   return mesh;
 }
 
@@ -10953,20 +10966,10 @@ function addOlympusCavernShell(scene, world) {
   coreVeinGeometries.forEach(geometry => geometry.dispose());
 }
 
-// Flat-topped volcanic fragments for Olympus Mons sky routes. The tapered,
-// low-poly visual keeps the rocks irregular while the inset box collider gives
-// players a dependable landing surface after a jump-pad launch.
+// Flat-topped volcanic fragments for Olympus Mons sky routes. Their collision
+// follows the rotated, tapered low-poly rock itself, including its flat crown.
 function addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, seed, cavern = false) {
   const visualDepth = cavern ? Math.min(depth, 3.2) : depth;
-  // Keep the original seven-sided floating-rock silhouette. Cavern variants
-  // use only a tiny underside guard so their collider cannot end above a low
-  // visual facet; the landing surface and inset footprint remain unchanged.
-  const colliderBottom = y - visualDepth * (cavern ? 1.025 : 1);
-  world.colliders.push({
-    type: 'box',
-    min: V(x - w * 0.44, colliderBottom, z - d * 0.44),
-    max: V(x + w * 0.44, y, z + d * 0.44),
-  });
   const geo = new THREE.CylinderGeometry(1, 0.42, 1, 7, 2, false);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -10986,33 +10989,13 @@ function addOlympusFloatingRock(scene, world, x, y, z, w, d, depth, seed, cavern
   rock.rotation.y = seed * 0.61;
   rock.castShadow = rock.receiveShadow = true;
   scene.add(rock);
+  world.colliders.push(triangleMeshColliderFromMesh(rock, 'olympus-floating-rock'));
 }
 
 // Upright, grounded volcanic mound. Unlike a floating island, it is broad at
-// the floor and narrow at the crown; four slope fields make the visible cone
-// genuinely walkable instead of hiding a vertical box inside it.
+// the floor and narrow at the crown. The rendered cone itself is the collider,
+// so every direction around its perimeter is an equivalent walkable approach.
 function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
-  world.ramps.push(
-    { axis: 'x', minX: x - w * 0.46, maxX: x - w * 0.15, minZ: z - d * 0.15, maxZ: z + d * 0.15,
-      h0: 0.04, h1: height, supportPad1: 0.18 },
-    { axis: 'x', minX: x + w * 0.15, maxX: x + w * 0.46, minZ: z - d * 0.15, maxZ: z + d * 0.15,
-      h0: height, h1: 0.04, supportPad0: 0.18 },
-    { axis: 'z', minX: x - w * 0.125, maxX: x + w * 0.125, minZ: z - d * 0.46, maxZ: z - d * 0.15,
-      h0: 0.04, h1: height, supportPad1: 0.18 },
-    { axis: 'z', minX: x - w * 0.125, maxX: x + w * 0.125, minZ: z + d * 0.15, maxZ: z + d * 0.46,
-      h0: height, h1: 0.04, supportPad0: 0.18 },
-  );
-  // The ramps are height fields, not volumetric solids. This core gives the
-  // volcanic body real collision below its crown, preventing players and darts
-  // from passing through the visible mound between the four climb lanes.
-  // Do not fill the cone with stacked boxes — those read as stair walls and
-  // force a jump onto what should be a run-up perch.
-  world.colliders.push({
-    type: 'box',
-    min: V(x - w * 0.15, 0.02, z - d * 0.15),
-    max: V(x + w * 0.15, height, z + d * 0.15),
-  });
-
   const geo = new THREE.CylinderGeometry(0.38, 1, 1, 9, 3, false);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -11030,6 +11013,7 @@ function addOlympusVolcanicMound(scene, world, x, z, w, d, height, seed) {
   mound.rotation.y = seed * 0.19;
   mound.castShadow = mound.receiveShadow = true;
   scene.add(mound);
+  world.colliders.push(triangleMeshColliderFromMesh(mound, 'olympus-volcanic-mound'));
 }
 
 function addOlympusColumn(scene, world, x, z, baseY = 60, height = 17) {
@@ -14316,6 +14300,9 @@ function buildMeteorSurfaceIndex(world, cellSize = 16) {
       add('colliders', collider,
         collider.center.x - collider.radius, collider.center.x + collider.radius,
         collider.center.z - collider.radius, collider.center.z + collider.radius);
+    } else if (collider.type === 'triangleMesh') {
+      add('colliders', collider,
+        collider.min.x, collider.max.x, collider.min.z, collider.max.z);
     }
   }
   for (const ramp of world.ramps) {
@@ -16336,10 +16323,16 @@ function addMyceliumFairyToads(scene, world) {
   const sampleGroundSurface = (x, z, outNormal) => {
     let surfaceY = 0;
     outNormal.set(0, 1, 0);
-    // The grove's walkable hills are large spheres buried below grade. Follow
-    // the same smooth collision surface used by players so ground toads stay
-    // planted on slopes instead of disappearing into the decorative hill mesh.
+    // Follow the exact faceted hill collider used by players so the toads'
+    // feet and shadows remain planted on the polygon that is actually drawn.
     for (const collider of world.colliders) {
+      if (collider.type === 'triangleMesh') {
+        const candidateY = triangleMeshSurfaceY(collider, x, z, wallNormal);
+        if (candidateY == null || candidateY <= surfaceY || candidateY > 9) continue;
+        surfaceY = candidateY;
+        outNormal.copy(wallNormal);
+        continue;
+      }
       if (collider.type !== 'sphere' || collider.radius < 12) continue;
       const dx = x - collider.center.x;
       const dz = z - collider.center.z;
@@ -16802,6 +16795,66 @@ function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) 
   return { x, y: topY, z, radius };
 }
 
+// Climbable bracket fungi. Local +Z points away from the host surface, so yaw
+// alone can plant an ascending cluster on a trunk, log wall, or rock face.
+function addMyceliumShelfFungi(scene, world, x, y, z, yaw, scale = 1, seed = 0, count = 3) {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  group.rotation.y = yaw;
+  group.name = 'mycelium-shelf-fungi';
+
+  const capColors = [0xd98559, 0xc96f68, 0xb77ac4, 0xe0a45f, 0x9c7ad0];
+  const capColor = capColors[Math.abs(seed) % capColors.length];
+  const capMaterial = new THREE.MeshStandardMaterial({
+    color: capColor,
+    roughness: 0.9,
+    emissive: new THREE.Color(capColor),
+    emissiveIntensity: 0.08,
+    flatShading: true,
+  });
+  const edgeMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(capColor).multiplyScalar(0.72),
+    roughness: 0.96,
+    flatShading: true,
+  });
+  const undersideMaterial = new THREE.MeshStandardMaterial({
+    color: seed % 2 ? 0xe8d5bd : 0xd8d0c2,
+    roughness: 1,
+    flatShading: true,
+  });
+  const shelves = [];
+  for (let i = 0; i < count; i++) {
+    const radius = scale * (0.9 + ((Math.abs(seed) + i * 5) % 4) * 0.1);
+    const thickness = Math.max(0.2, radius * (0.16 + (i % 2) * 0.025));
+    // A half-cylinder produces a flat bark-facing edge and a rounded fan that
+    // projects outward, with separate cap and cream underside materials.
+    const shelf = new THREE.Mesh(
+      new THREE.CylinderGeometry(
+        radius * 0.9, radius, thickness, 14, 1, false, -Math.PI / 2, Math.PI,
+      ),
+      [edgeMaterial, capMaterial, undersideMaterial],
+    );
+    shelf.position.set(
+      scale * ((i % 2 ? 0.34 : -0.28) + Math.sin(seed + i) * 0.1),
+      i * scale * 1.18,
+      radius * 0.08,
+    );
+    shelf.rotation.y = (i - 0.5) * 0.12 + Math.sin(seed * 1.7 + i) * 0.08;
+    shelf.rotation.z = Math.sin(seed * 0.9 + i * 2.1) * 0.07;
+    shelf.castShadow = shelf.receiveShadow = true;
+    group.add(shelf);
+    shelves.push({ shelf, radius, thickness });
+  }
+  scene.add(group);
+  group.updateMatrixWorld(true);
+  for (const { shelf, radius, thickness } of shelves) {
+    world.colliders.push(triangleMeshColliderFromMesh(shelf, 'mycelium-shelf-fungus-step'));
+    const perch = shelf.localToWorld(V(0, thickness / 2 + 0.08, radius * 0.5));
+    wp(world, perch.x, perch.y, perch.z);
+  }
+  return group;
+}
+
 function addHollowMyceliumLogTunnel(scene, world, x, z, length = 48, radius = 5.4) {
   const bark = mat(0xffffff, {
     tex: 'canopy-bark', repeat: [2, Math.max(5, length / 5)], roughness: 0.98,
@@ -16812,6 +16865,14 @@ function addHollowMyceliumLogTunnel(scene, world, x, z, length = 48, radius = 5.
   shell.position.set(x, radius - 0.2, z);
   shell.castShadow = shell.receiveShadow = true;
   scene.add(shell);
+  // Each broad side gets a full ground-to-roof bracket-fungus staircase. The
+  // alternating fans provide forgiving landings without covering either mouth.
+  addMyceliumShelfFungi(
+    scene, world, x - length * 0.24, 0.85, z + radius * 0.98, 0, 1.18, 2, 7,
+  );
+  addMyceliumShelfFungi(
+    scene, world, x + length * 0.24, 0.85, z - radius * 0.98, Math.PI, 1.18, 7, 7,
+  );
   for (const endX of [x - length / 2, x + length / 2]) {
     const rim = new THREE.Mesh(
       new THREE.TorusGeometry(radius, 0.48, 8, 22),
@@ -17082,14 +17143,20 @@ function addMyceliumRockField(scene, world, specs) {
   // oriented ellipsoid used by gameplay collision.
   const geometry = new THREE.IcosahedronGeometry(1, 2);
   const material = new THREE.MeshStandardMaterial({
-    color: 0xffffff, vertexColors: true, roughness: 0.98, flatShading: true,
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.98,
+    flatShading: true,
+    ...aiTex('mycelium-mossy-rock', 1.15, 1.15),
   });
   const rocks = new THREE.InstancedMesh(geometry, material, specs.length);
   const matrix = new THREE.Matrix4();
   const rotation = new THREE.Quaternion();
   const position = new THREE.Vector3();
   const scale = new THREE.Vector3();
-  const palette = [0x263d37, 0x304b3e, 0x3b5143, 0x293f3d, 0x405748];
+  // Instance colors are deliberately pale because they multiply the authored
+  // albedo; this keeps the moss readable while retaining boulder variation.
+  const palette = [0xc5d2ca, 0xafc8b7, 0xd0d5c7, 0xacc7c2, 0xbdccb4];
   specs.forEach((spec, index) => {
     const [x, y, z, rx, ry = rx * 0.72, rz = rx * 0.9, collide = true] = spec;
     position.set(x, y, z);
@@ -17116,13 +17183,19 @@ function addMyceliumRockField(scene, world, specs) {
 }
 
 function myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius) {
-  // Hills in this map are huge buried spheres. Their curved surface often
+  // Hills in this map are huge buried meshes. Their curved surface often
   // sits a little below a tree's authored base height on the downhill side,
   // so a trunk that ends exactly at baseY appears to float. Find the nearby
   // terrain surface and extend the trunk well through it while leaving the
   // authored canopy, decks, and branch heights unchanged.
   let terrainSurface = -Infinity;
   for (const collider of world.colliders) {
+    if (collider.type === 'triangleMesh') {
+      const surfaceY = triangleMeshSurfaceY(collider, x, z);
+      if (surfaceY == null || surfaceY <= 0.05 || Math.abs(surfaceY - baseY) > 8) continue;
+      terrainSurface = Math.max(terrainSurface, surfaceY);
+      continue;
+    }
     if (collider.type !== 'sphere' || collider.radius < 12) continue;
     const dx = x - collider.center.x;
     const dz = z - collider.center.z;
@@ -17175,6 +17248,21 @@ function addDenseMyceliumForest(scene, world, specs) {
       min: V(x - radius * 0.27, visualBaseY, z - radius * 0.27),
       max: V(x + radius * 0.27, baseY + height, z + radius * 0.27),
     });
+    if ([2, 8, 14, 20].includes(index)) {
+      const fungusYaw = index * 0.91;
+      const trunkSurfaceRadius = radius * 0.31;
+      addMyceliumShelfFungi(
+        scene,
+        world,
+        x + Math.sin(fungusYaw) * trunkSurfaceRadius,
+        baseY + 1,
+        z + Math.cos(fungusYaw) * trunkSurfaceRadius,
+        fungusYaw,
+        0.92,
+        index + 3,
+        3,
+      );
+    }
     for (let lobe = 0; lobe < 3; lobe++) {
       const angle = lobe * Math.PI * 2 / 3 + index * 0.77;
       position.set(
@@ -17246,6 +17334,21 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
     min: V(x - 1.8, visualBaseY, z - 1.8),
     max: V(x + 1.8, baseY + trunkHeight, z + 1.8),
   });
+  if ([1, 4, 6, 8].includes(seed)) {
+    const fungusYaw = seed * 1.37;
+    const trunkSurfaceRadius = trunkRadius * 0.9;
+    addMyceliumShelfFungi(
+      scene,
+      world,
+      x + Math.sin(fungusYaw) * trunkSurfaceRadius,
+      baseY + 1.05,
+      z + Math.cos(fungusYaw) * trunkSurfaceRadius,
+      fungusYaw,
+      1.02,
+      seed,
+      3,
+    );
+  }
 
   let previousDeckRoute = null;
   deckHeights.forEach((deckY, index) => {
@@ -17398,15 +17501,15 @@ function buildMyceliumGrove(scene) {
       });
   }
 
-  // Very large spheres buried almost completely below grade leave broad,
-  // gentle caps above the floor. The old smaller spheres reached similar
+  // Very large meshes buried almost completely below grade leave broad,
+  // gentle caps above the floor. The old smaller hills reached similar
   // heights over much tighter footprints, producing slopes too steep to walk.
   for (const [x, z, radius, height] of [
     [-61, -49, 46, 6.5], [60, -49, 48, 6.5],
     [66, 25, 48, 7], [-28, 69, 44, 6], [29, 70, 44, 6],
     [-21, 14, 19, 2.8], [23, 18, 20, 2.8],
     [-12, 38, 18, 2.5], [14, 43, 19, 2.6],
-  ]) addAsteroid(scene, world, x, height - radius, z, radius, 0x31583f);
+  ]) addAsteroid(scene, world, x, height - radius, z, radius, 0x31583f, true);
 
   // The central clearing now has a landmark at ground and canopy height: a
   // full-size hollow trunk through the terrain whose roof doubles as a ridge.
@@ -17420,28 +17523,11 @@ function buildMyceliumGrove(scene) {
     { type: 'box', min: V(-66.5, 0, 16), max: V(-58.5, 6.5, 58) },
     { type: 'box', min: V(-45.5, 0, 16), max: V(-37.5, 6.5, 58) },
   );
-  const tunnelInteriorMaterial = mat(0x263e36, {
-    tex: 'rock', repeat: [2, 8], roughness: 0.98, side: THREE.DoubleSide,
-  });
-  for (const x of [-58.45, -45.55]) {
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(42, 6.4), tunnelInteriorMaterial);
-    wall.rotation.y = Math.PI / 2;
-    wall.position.set(x, 3.2, 37);
-    wall.receiveShadow = true;
-    scene.add(wall);
-  }
-  const tunnelCeiling = new THREE.Mesh(new THREE.PlaneGeometry(13, 40), tunnelInteriorMaterial);
-  tunnelCeiling.rotation.x = Math.PI / 2;
-  tunnelCeiling.position.set(-52, 5.19, 37);
-  tunnelCeiling.receiveShadow = true;
-  scene.add(tunnelCeiling);
-  // Keep the wall-facing west exterior clean. The old ramp was squeezed into
-  // the narrow strip between the tunnel ridge and perimeter wall and read as
-  // an awkward green wedge; the east ramp remains the route onto the roof.
-  addRamp(scene, world, {
-    axis: 'x', minX: -41, maxX: -28, minZ: 27, maxZ: 47,
-    h0: 7.5, h1: 0, color: 0x345b42, tex: 'grass',
-  });
+  // The surrounding closed boulders provide the tunnel's visible walls and
+  // ceiling from both inside and outside. Flat interior planes protruded at
+  // the mouths as paper-thin fins, especially from shallow viewing angles.
+  // Let the overlapping boulders define both ridge exteriors. A freestanding
+  // grass ramp here read as a geometric wedge rather than part of the terrain.
   const tunnelLightA = new THREE.PointLight(0x70ffd0, 18, 24);
   tunnelLightA.position.set(-52, 2.8, 25);
   const tunnelLightB = new THREE.PointLight(0xa06fff, 18, 24);
@@ -17459,8 +17545,14 @@ function buildMyceliumGrove(scene) {
   ];
   addMyceliumPondBasin(scene, world, myceliumPondPoints, 2, -35.5, -4.4);
   addWater(scene, world, 2, 0.2, -35.4, 40, 29.2, 4.6, { points: myceliumPondPoints });
-  addAsteroid(scene, world, -25, -7, -62, 18, 0x2f4d3d);
-  addAsteroid(scene, world, 25, -7, -62, 18, 0x2f4d3d);
+  // The same reactive minnow school used in Canopy patrols the broad center of
+  // the pond, safely inside its irregular shore even while fleeing swimmers.
+  addMinnowSchool(scene, world, 2, -35.4, 9, 1.7, 0.2);
+  // A second school patrols the eastern half on its own shorter route, keeping
+  // the two groups visually distinct while both remain clear of the shore.
+  addMinnowSchool(scene, world, 10.5, -35.4, 7, 4.2, 0.2);
+  addAsteroid(scene, world, -25, -7, -62, 18, 0x2f4d3d, true);
+  addAsteroid(scene, world, 25, -7, -62, 18, 0x2f4d3d, true);
   // Only the interior collision shell is box-shaped. The visible exterior is
   // the pair of rounded cliff masses plus the broken boulder arch below.
   world.colliders.push(
@@ -17493,19 +17585,8 @@ function buildMyceliumGrove(scene) {
   }
   // Begin the cave floor where the pond's north ramp reaches ground height;
   // starting it a meter earlier created a submerged step that blocked players.
-  // The irregular pond is slightly wider than the walkable cave floor at this
-  // seam. Deep, visual-only rock skirts fill those two side slivers so looking
-  // behind the waterfall never exposes the world void, while the full central
-  // swim-through remains physically open.
-  const grottoSeamMaterial = mat(0x284b3d, {
-    tex: 'rock', repeat: [2, 6], roughness: 0.99,
-  });
-  for (const side of [-1, 1]) {
-    const seam = new THREE.Mesh(new THREE.BoxGeometry(4.5, 5.2, 28), grottoSeamMaterial);
-    seam.position.set(side * 10.75, -2.6, -63.5);
-    seam.castShadow = seam.receiveShadow = true;
-    scene.add(seam);
-  }
+  // Let the irregular boulder formation define both sides of the opening;
+  // rectangular visual skirts here read as thin artificial barriers.
   addBox(scene, world, 0, 0.05, -63.5, 17.5, 0.1, 27, 0x284b3d, { tex: 'rock', repeat: [4, 6] });
   addWaterfall(scene, world, 0, -48, 13, 9.5, 0.2, 9.7, 0.8, {
     skipLip: true, passThrough: true, lipColor: 0x315141,
@@ -17580,6 +17661,13 @@ function buildMyceliumGrove(scene) {
     [-28, 1.2, 66, 3.1, 1.7, 3.8], [18, 1.3, 58, 3.4, 1.9, 3.2],
   ]) rockSpecs.push([...spec, true]);
   addMyceliumRockField(scene, world, rockSpecs);
+  // A few of the larger isolated rocks carry low two-step brackets. Keep them
+  // away from the pond approaches and tunnel mouths so they read as optional
+  // perches rather than required route blockers.
+  addMyceliumShelfFungi(scene, world, -69.9, 0.85, -8, Math.PI / 2, 0.9, 11, 2);
+  addMyceliumShelfFungi(scene, world, 67.8, 0.85, 3, -Math.PI / 2, 0.92, 13, 2);
+  addMyceliumShelfFungi(scene, world, -7.2, 7.05, -45.75, 0, 0.95, 15, 2);
+  addMyceliumShelfFungi(scene, world, 7.1, 7.25, -45.45, 0, 0.9, 17, 2);
 
   // Seven climbable elder trees anchor a web of walkable limbs. The upper
   // branches cross the pond and reach the waterfall shelf, so vertical combat
@@ -17737,8 +17825,8 @@ function buildMyceliumGrove(scene) {
 
   pk(world, 'weapon', -52, 0.2, 35, { weapon: 'scatter' });
   pk(world, 'ammo', -52, 0.2, 45, { weapon: 'scatter' });
-  // These sit on the curved eastern hill, whose collision is a buried sphere,
-  // rather than on the y=0 understory floor beneath it.
+  // These sit on the curved eastern hill's exact polygon surface rather than
+  // on the y=0 understory floor beneath it.
   pk(world, 'weapon', 63, 3.6, 43, { weapon: 'pulsar' });
   pk(world, 'ammo', 57, 0.4, 48, { weapon: 'pulsar' });
   pk(world, 'weapon', -37, 7.2, 1, { weapon: 'sidewinder' });

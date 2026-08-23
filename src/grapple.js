@@ -2,7 +2,7 @@
 // the same collision shapes as movement without turning decorative foliage
 // into solid geometry.
 import * as THREE from 'three';
-import { rayHitsCylinderShell, rayHitsEllipsoid } from './engine.js';
+import { rayHitsCylinderShell, rayHitsEllipsoid, rayHitsTriangleMesh } from './engine.js';
 
 export const GRAPPLE_MAX_DISTANCE = 112;
 export const GRAPPLE_FOLIAGE_EMBED = 1;
@@ -69,6 +69,8 @@ export function findGrappleAnchor(world, origin, rawDirection, maxDistance = GRA
       hit = raySphere(origin, direction, collider.center, collider.radius, maxDistance);
     } else if (collider.type === 'ellipsoid') {
       hit = rayHitsEllipsoid(origin, direction, collider, maxDistance);
+    } else if (collider.type === 'triangleMesh') {
+      hit = rayHitsTriangleMesh(origin, direction, collider, maxDistance);
     } else if (collider.type === 'cylinderShell') {
       hit = rayHitsCylinderShell(origin, direction, collider, maxDistance);
     }

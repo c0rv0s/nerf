@@ -1,5 +1,6 @@
 // Shared math + physics helpers. Colliders are AABB boxes, spheres, oriented
-// ellipsoids, finite hollow-cylinder shells, and walkable ramps (heightfield strips).
+// ellipsoids, exact closed triangle meshes, finite hollow-cylinder shells, and
+// walkable ramps (heightfield strips).
 import * as THREE from 'three';
 
 export const rand = (a, b) => a + Math.random() * (b - a);
@@ -45,6 +46,8 @@ export function buildCollisionIndex(world, cellSize = 16) {
       const r = Math.max(collider.radii.x, collider.radii.y, collider.radii.z);
       add(collider, collider.center.x - r, collider.center.x + r,
         collider.center.z - r, collider.center.z + r);
+    } else if (collider.type === 'triangleMesh') {
+      add(collider, collider.min.x, collider.max.x, collider.min.z, collider.max.z);
     } else if (collider.type === 'cylinderShell') {
       const axis = collider.axis || 'y';
       const extentX = axis === 'x' ? collider.halfLength : collider.outerRadius;
@@ -106,7 +109,121 @@ const _ellipsoidHeightBase = new THREE.Vector3();
 const _ellipsoidHeightAxis = new THREE.Vector3();
 const _cylinderRadial = new THREE.Vector3();
 const _cylinderPush = new THREE.Vector3();
+const _meshClosest = new THREE.Vector3();
+const _meshDelta = new THREE.Vector3();
+const _meshRayPoint = new THREE.Vector3();
+const _meshRay = new THREE.Ray();
 let collisionQueryStamp = 0;
+let triangleQueryStamp = 0;
+
+function nearbyTriangleEntries(collider, x, z, radius = 0) {
+  if (!collider.triangleCells || !collider.triangleCellSize) return collider.triangles;
+  const out = collider._triangleQuery ||= [];
+  out.length = 0;
+  const stamp = ++triangleQueryStamp;
+  const size = collider.triangleCellSize;
+  const minX = Math.floor((x - radius) / size), maxX = Math.floor((x + radius) / size);
+  const minZ = Math.floor((z - radius) / size), maxZ = Math.floor((z + radius) / size);
+  for (let ix = minX; ix <= maxX; ix++) for (let iz = minZ; iz <= maxZ; iz++) {
+    const cell = collider.triangleCells.get(`${ix},${iz}`);
+    if (!cell) continue;
+    for (const entry of cell) {
+      if (entry._triangleQueryStamp === stamp) continue;
+      entry._triangleQueryStamp = stamp;
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+function closestTriangleMeshPoint(pos, collider, target = _meshClosest, radius = 0) {
+  let bestDistanceSq = Infinity;
+  let bestTriangle = null;
+  for (const entry of nearbyTriangleEntries(collider, pos.x, pos.z, radius)) {
+    const box = entry.box;
+    const dx = pos.x < box.min.x ? box.min.x - pos.x : pos.x > box.max.x ? pos.x - box.max.x : 0;
+    const dy = pos.y < box.min.y ? box.min.y - pos.y : pos.y > box.max.y ? pos.y - box.max.y : 0;
+    const dz = pos.z < box.min.z ? box.min.z - pos.z : pos.z > box.max.z ? pos.z - box.max.z : 0;
+    if (dx * dx + dy * dy + dz * dz >= bestDistanceSq) continue;
+    entry.triangle.closestPointToPoint(pos, _cl);
+    const distanceSq = pos.distanceToSquared(_cl);
+    if (distanceSq >= bestDistanceSq) continue;
+    bestDistanceSq = distanceSq;
+    target.copy(_cl);
+    bestTriangle = entry;
+  }
+  return { distanceSq: bestDistanceSq, triangle: bestTriangle };
+}
+
+export function sphereHitsTriangleMesh(pos, radius, collider) {
+  if (pos.x < collider.min.x - radius || pos.x > collider.max.x + radius ||
+      pos.y < collider.min.y - radius || pos.y > collider.max.y + radius ||
+      pos.z < collider.min.z - radius || pos.z > collider.max.z + radius) return false;
+  const closest = closestTriangleMeshPoint(pos, collider, _meshClosest, radius);
+  if (!closest.triangle) return false;
+  const inside = _meshDelta.copy(pos).sub(_meshClosest).dot(closest.triangle.normal) < 0;
+  return inside || closest.distanceSq < radius * radius;
+}
+
+export function rayHitsTriangleMesh(origin, direction, collider, maxDist = Infinity) {
+  _meshRay.set(origin, direction);
+  let bestT = maxDist;
+  let bestNormal = null;
+  for (const entry of collider.triangles) {
+    const hit = _meshRay.intersectTriangle(
+      entry.triangle.a, entry.triangle.b, entry.triangle.c, false, _meshRayPoint,
+    );
+    if (!hit) continue;
+    const t = _meshDelta.copy(hit).sub(origin).dot(direction);
+    if (t <= 0.03 || t >= bestT) continue;
+    bestT = t;
+    bestNormal = entry.normal;
+  }
+  return bestNormal ? { t: bestT, normal: bestNormal.clone() } : null;
+}
+
+function resolveSphereTriangleMesh(pos, radius, collider, out) {
+  if (pos.x < collider.min.x - radius || pos.x > collider.max.x + radius ||
+      pos.y < collider.min.y - radius || pos.y > collider.max.y + radius ||
+      pos.z < collider.min.z - radius || pos.z > collider.max.z + radius) return;
+  const closest = closestTriangleMeshPoint(pos, collider, _meshClosest, radius);
+  if (!closest.triangle) return;
+  const inside = _meshDelta.copy(pos).sub(_meshClosest).dot(closest.triangle.normal) < 0;
+  if (!inside && closest.distanceSq >= radius * radius) return;
+  const distance = Math.sqrt(Math.max(closest.distanceSq, 0));
+  if (inside) _meshDelta.copy(_meshClosest).sub(pos);
+  else _meshDelta.copy(pos).sub(_meshClosest);
+  if (_meshDelta.lengthSq() < 1e-12) _meshDelta.copy(closest.triangle.normal);
+  else _meshDelta.multiplyScalar(1 / Math.max(distance, 1e-8));
+  const push = inside ? distance + radius : radius - distance;
+  pos.addScaledVector(_meshDelta, push);
+  out.hit = true;
+  if (_meshDelta.y > out.ny) out.ny = _meshDelta.y;
+  out.nx += _meshDelta.x;
+  out.nz += _meshDelta.z;
+}
+
+// Highest exact polygon intersection at an X/Z coordinate. Decorative actors,
+// navigation, and gameplay can therefore sample the same triangles used by
+// character collision instead of reconstructing a smooth proxy sphere.
+export function triangleMeshSurfaceY(collider, x, z, outNormal = null) {
+  if (x < collider.min.x || x > collider.max.x || z < collider.min.z || z > collider.max.z) return null;
+  let best = null;
+  for (const entry of nearbyTriangleEntries(collider, x, z)) {
+    const { a, b, c } = entry.triangle;
+    const denominator = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+    if (Math.abs(denominator) < 1e-9) continue;
+    const u = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / denominator;
+    const v = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / denominator;
+    const w = 1 - u - v;
+    if (u < -1e-6 || v < -1e-6 || w < -1e-6) continue;
+    const y = u * a.y + v * b.y + w * c.y;
+    if (best != null && y <= best) continue;
+    best = y;
+    if (outNormal) outNormal.copy(entry.normal);
+  }
+  return best;
+}
 
 function ellipsoidInverseRotation(collider) {
   if (!collider.inverseRotation) {
@@ -600,6 +717,8 @@ function resolveSphere(pos, radius, colliders, out) {
       }
     } else if (c.type === 'ellipsoid') {
       resolveSphereEllipsoid(pos, radius, c, out);
+    } else if (c.type === 'triangleMesh') {
+      resolveSphereTriangleMesh(pos, radius, c, out);
     } else if (c.type === 'cylinderShell') {
       resolveSphereCylinderShell(pos, radius, c, out);
     }
@@ -964,6 +1083,8 @@ export function pointHitsWorld(p, radius, world, skipRamps = false) {
       if (p.distanceToSquared(c.center) < (c.radius + radius) ** 2) return true;
     } else if (c.type === 'ellipsoid') {
       if (sphereHitsEllipsoid(p, radius, c)) return true;
+    } else if (c.type === 'triangleMesh') {
+      if (sphereHitsTriangleMesh(p, radius, c)) return true;
     } else if (c.type === 'cylinderShell') {
       if (sphereHitsCylinderShell(p, radius, c)) return true;
     }

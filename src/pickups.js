@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { WEAPONS, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
-const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45, jetpack: 60, grapple: 60 };
+const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45, jetpack: 60, grapple: 60, 'dual-blaster': 15 };
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const weaponPickupModels = {};
 const temporaryPickupModels = {};
@@ -93,7 +93,19 @@ function makeMesh(def) {
   const g = new THREE.Group();
   const glowMat = (color, glow = 0.45) => new THREE.MeshStandardMaterial({
     color, roughness: 0.5, emissive: color, emissiveIntensity: glow });
-  if (def.kind === 'weapon' || def.kind === 'drop') {
+  if (def.kind === 'dual-blaster') {
+    const gun = weaponPickupModel('blaster');
+    gun.rotation.y = Math.PI / 2;
+    gun.rotation.z = -0.15;
+    g.add(gun);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0xff9c40, transparent: true, opacity: 0.72,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.88, 0.035, 7, 28), haloMat);
+    halo.rotation.x = Math.PI / 2;
+    g.add(halo);
+  } else if (def.kind === 'weapon' || def.kind === 'drop') {
     const gun = weaponPickupModel(def.weapon);
     gun.rotation.y = Math.PI / 2;
     gun.rotation.z = -0.15;

@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  hasLOS, pointHitsWorld, rand, rayHitsCylinderShell, rayHitsEllipsoid, shellInnerNormal,
+  hasLOS, pointHitsWorld, rand, rayHitsCylinderShell, rayHitsEllipsoid, rayHitsTriangleMesh,
+  shellInnerNormal,
 } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
@@ -546,6 +547,7 @@ export class ProjectileSystem {
         : this.rayBox(origin, dir, c, maxDist);
       else if (c.type === 'sphere') hit = this.raySphere(origin, dir, c, maxDist);
       else if (c.type === 'ellipsoid') hit = rayHitsEllipsoid(origin, dir, c, maxDist);
+      else if (c.type === 'triangleMesh') hit = rayHitsTriangleMesh(origin, dir, c, maxDist);
       else if (c.type === 'cylinderShell') hit = rayHitsCylinderShell(origin, dir, c, maxDist);
       if (hit && (!best || hit.t < best.t)) best = hit;
     }

@@ -43,6 +43,7 @@ export function pickupUtility(bot, def, distance, context = {}) {
   else if (kind === 'speed') value = bot?.speedMult > 1 ? 0 : 92;
   else if (kind === 'jetpack') value = bot?.jetpack ? 0 : 78;
   else if (kind === 'grapple') value = bot?.grapple ? 0 : 84;
+  else if (kind === 'dual-blaster') value = bot?.dualBlaster ? 0 : 126;
   else if (kind === 'weapon' || kind === 'drop') {
     const weapon = def.weapon;
     const ammo = Math.max(0, Number(bot?.ammo?.[weapon]) || 0);

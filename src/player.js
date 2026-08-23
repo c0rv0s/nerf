@@ -54,18 +54,26 @@ export class Player {
     this.djumpTime = 0;        // double-jump powerup timer
     this.jetpack = null;       // {fuel, cooldown, active}; cleared on death
     this.grapple = false;      // Canopy pickup; retained until death
+    this.dualBlaster = false;  // Red Rock Range second Secret Shot; retained until death
+    this._dualBlasterNextLeft = false;
     this._airJumped = false;
     this.keys = {};
     this.moveInput = { strafe: 0, forward: 0 };
     this.firing = false;
     this.grounded = false;
     this.recoil = 0;
+    this.leftRecoil = 0;
     this.cameraKick = 0;
     this.muzzleT = 0;
+    this.leftMuzzleT = 0;
     this.equipT = 0;
     this.lookSwayX = 0;
     this.lookSwayY = 0;
     this.stepDistance = 0;
+    // Visual suspension for faceted ground. Physics remains exact, while the
+    // eye height absorbs the small frame-to-frame Y corrections produced when
+    // the capsule crosses from one terrain polygon to the next.
+    this._cameraRideY = null;
     this.wasGrounded = false;
     this.wantJump = false;
     this.horseHeading = 0;
@@ -105,9 +113,21 @@ export class Player {
     this.viewmodel = g;
     this.camera.add(g);
 
+    // Red Rock Range can grant a second Secret Shot. It lives in its own
+    // left-hand viewmodel so switching weapons hides it without disturbing
+    // the normal right-hand weapon hierarchy.
+    this.dualBlasterViewmodel = buildBlaster('blaster');
+    this.dualBlasterViewmodel.scale.setScalar(0.55);
+    this.dualBlasterViewmodel.position.set(-0.32, -0.3, -0.55);
+    this.dualBlasterViewmodel.rotation.y = -0.06;
+    this.dualBlasterViewmodel.visible = false;
+    this.camera.add(this.dualBlasterViewmodel);
+
     if (this.world.mounted) {
       const horse = new THREE.Group();
-      const coat = new THREE.MeshStandardMaterial({ color: 0x6f3f25, roughness: 0.88 });
+      const coat = new THREE.MeshStandardMaterial({
+        color: 0xffffff, roughness: 0.88, ...aiTex('horse-coat', 1.7, 1.7),
+      });
       const mane = new THREE.MeshStandardMaterial({ color: 0x24170f, roughness: 0.94 });
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.55, 1.05), coat);
       head.position.set(0, -0.62, -1.25);
@@ -199,10 +219,25 @@ export class Player {
     this.muzzleFlash.position.set(0.27, -0.16, -0.96);
     this.muzzleFlash.scale.setScalar(0.01);
     this.camera.add(this.muzzleFlash);
+    this.leftMuzzleFlash = new THREE.Sprite(flashMat.clone());
+    this.leftMuzzleFlash.position.set(-0.27, -0.16, -0.96);
+    this.leftMuzzleFlash.scale.setScalar(0.01);
+    this.camera.add(this.leftMuzzleFlash);
   }
 
   showWeaponModel(id) {
     for (const [wid, m] of Object.entries(this.vmWeapons)) m.visible = wid === id;
+    this.syncDualBlasterViewmodel();
+  }
+
+  syncDualBlasterViewmodel() {
+    if (this.dualBlasterViewmodel) {
+      this.dualBlasterViewmodel.visible = !!(this.dualBlaster && this.alive && this.weapon === 'blaster');
+      if (!this.dualBlasterViewmodel.visible && this.leftMuzzleFlash) {
+        this.leftMuzzleT = 0;
+        this.leftMuzzleFlash.material.opacity = 0;
+      }
+    }
   }
 
   // Gold/silver powerup skin on the gun in hand ('gold' | 'silver' | null)
@@ -212,6 +247,8 @@ export class Player {
       const shell = m.children[0];
       shell.material = kind ? mat : (shell._baseMaterial || mat);
     }
+    const leftShell = this.dualBlasterViewmodel?.children[0];
+    if (leftShell) leftShell.material = kind ? mat : (leftShell._baseMaterial || mat);
   }
 
   spawn(pos) {
@@ -242,12 +279,18 @@ export class Player {
     this.jetpack = null;
     this.grapple = false;
     if (this.grappleViewmodel) this.grappleViewmodel.visible = false;
+    this.dualBlaster = false;
+    this._dualBlasterNextLeft = false;
+    this.syncDualBlasterViewmodel();
     this._airJumped = false;
     this.recoil = 0;
+    this.leftRecoil = 0;
     this.cameraKick = 0;
     this.muzzleT = 0;
+    this.leftMuzzleT = 0;
     this.equipT = 0;
     this.stepDistance = 0;
+    this._cameraRideY = null;
     if (this.world.escher) {
       // spawn oriented to whatever surface you land on (floor, wall or ceiling)
       const nf = this._nearestSurfaceUpAt(this.pos);
@@ -361,18 +404,27 @@ export class Player {
     // launch from the gun muzzle (right and below the eye), not the face
     const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize();
     const visualScale = this.world.characterVisualScale?.(this) || 1;
+    const handSide = this.weapon === 'blaster' && this.dualBlaster
+      ? (this._dualBlasterNextLeft ? -1 : 1)
+      : 1;
+    if (this.weapon === 'blaster' && this.dualBlaster) {
+      this._dualBlasterNextLeft = !this._dualBlasterNextLeft;
+    }
     const origin = this.camera.position.clone()
       .addScaledVector(dir, 1.1 * visualScale)
-      .addScaledVector(right, 0.18 * visualScale)
+      .addScaledVector(right, handSide * 0.18 * visualScale)
       .addScaledVector(this.camera.up, -0.22 * visualScale);
     fire(this, origin, dir, this.weapon);
     if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
     // Warmup weapons pay their entire firing delay before the shot releases.
-    this.cooldown = w.warmup ? 0 : 1 / w.rof;
+    const cadence = this.weapon === 'blaster' && this.dualBlaster ? 2 : 1;
+    this.cooldown = w.warmup ? 0 : 1 / (w.rof * cadence);
     const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
-    this.recoil = Math.min(2.2, this.recoil + feel.recoil);
+    if (handSide < 0) this.leftRecoil = Math.min(2.2, this.leftRecoil + feel.recoil);
+    else this.recoil = Math.min(2.2, this.recoil + feel.recoil);
     this.cameraKick = Math.min(0.035, this.cameraKick + feel.camera);
-    this.muzzleT = 0.065;
+    if (handSide < 0) this.leftMuzzleT = 0.065;
+    else this.muzzleT = 0.065;
     this.muzzleStrength = feel.flash;
     if (this.weapon !== 'blaster' && this.ammo[this.weapon] <= 0) {
       this.switchWeapon(nextLoadedWeaponAfter(this.weapon, this.weapons, this.ammo));
@@ -428,6 +480,7 @@ export class Player {
     // Layered viewmodel response: locomotion, look inertia, equip dip, weapon kick.
     const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
     this.recoil *= Math.exp(-feel.return * dt);
+    this.leftRecoil *= Math.exp(-feel.return * dt);
     this.cameraKick *= Math.exp(-18 * dt);
     this.equipT *= Math.exp(-8.5 * dt);
     this.lookSwayX *= Math.exp(-10 * dt);
@@ -458,6 +511,16 @@ export class Player {
       this.recoil * 0.22 + this.lookSwayY,
       0.06 - this.lookSwayX,
       this.equipT * 0.12 - bobX * 0.8,
+    );
+    this.dualBlasterViewmodel.position.set(
+      -0.3 - bobX - this.lookSwayX * 0.7,
+      -0.28 + bobY - this.equipT * 0.2 + this.lookSwayY * 0.35,
+      -0.6 + this.leftRecoil * 0.082,
+    );
+    this.dualBlasterViewmodel.rotation.set(
+      this.leftRecoil * 0.22 + this.lookSwayY,
+      -0.06 - this.lookSwayX,
+      -this.equipT * 0.12 + bobX * 0.8,
     );
     if (this.grappleViewmodel) {
       this.grappleViewmodel.position.set(
@@ -493,6 +556,12 @@ export class Player {
     const flashScale = flash * 0.24 * (this.muzzleStrength || 1);
     this.muzzleFlash.scale.set(flashScale * 1.35, flashScale, 1);
     this.muzzleFlash.material.rotation = now * 0.018;
+    this.leftMuzzleT = Math.max(0, this.leftMuzzleT - dt);
+    const leftFlash = this.leftMuzzleT > 0 ? this.leftMuzzleT / 0.065 : 0;
+    this.leftMuzzleFlash.material.opacity = leftFlash * 0.82;
+    const leftFlashScale = leftFlash * 0.24 * (this.muzzleStrength || 1);
+    this.leftMuzzleFlash.scale.set(leftFlashScale * 1.35, leftFlashScale, 1);
+    this.leftMuzzleFlash.material.rotation = -now * 0.018;
 
     if (this.grounded && !wasGrounded && fallSpeed < -4.5) sfx('land');
     const canStep = this.grounded && (!inWater || wading);
@@ -521,6 +590,22 @@ export class Player {
   }
 
   // ---- normal, Y-gravity movement + camera (all maps except PRISM RUN) ----
+  _suspendedCameraY(targetY, dt) {
+    if (!Number.isFinite(this._cameraRideY) || !this.grounded || dt <= 0) {
+      this._cameraRideY = targetY;
+      return targetY;
+    }
+    // A short, bounded exponential suspension removes polygon chatter without
+    // letting the camera materially separate from the player's real capsule.
+    // Mounted movement gets a touch more travel to evoke the horse's body;
+    // aim rotation and input sensitivity are deliberately untouched.
+    const maxTravel = this.world.mounted ? 0.2 : 0.12;
+    const response = this.world.mounted ? 9 : 12;
+    this._cameraRideY += (targetY - this._cameraRideY) * (1 - Math.exp(-response * dt));
+    this._cameraRideY = clamp(this._cameraRideY, targetY - maxTravel, targetY + maxTravel);
+    return this._cameraRideY;
+  }
+
   _moveNormal(dt) {
     this._vineExitT = Math.max(0, (this._vineExitT || 0) - dt);
     const paralyzed = this.paralyzeT > 0;
@@ -638,7 +723,8 @@ export class Player {
 
     this.camera.up.set(0, 1, 0);
     const visualScale = this.world.characterVisualScale?.(this) || 1;
-    this.camera.position.set(this.pos.x, this.pos.y + this.eyeHeight * visualScale, this.pos.z);
+    const targetEyeY = this.pos.y + this.eyeHeight * visualScale;
+    this.camera.position.set(this.pos.x, this._suspendedCameraY(targetEyeY, dt), this.pos.z);
     this.camera.rotation.set(0, 0, 0);
     this.camera.rotateY(this.yaw);
     this.camera.rotateX(this.pitch);

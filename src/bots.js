@@ -5,7 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   moveCharacter, moveCharacterUp, cardinal, cylinderShellSurfaceY, ellipsoidSurfaceY, hasLOS,
   hasRouteClearance, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ,
-  inRampFootprint, rampSurfaceY,
+  inRampFootprint, rampSurfaceY, triangleMeshSurfaceY,
 } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from './weapons.js';
 import { aiTex } from './maps.js';
@@ -124,7 +124,7 @@ export function buildBotMesh(color, mounted = false) {
     g.add(hat);
 
     horse = new THREE.Group();
-    const coat = skin(0x704126, { roughness: 0.9 });
+    const coat = skin(0xffffff, { roughness: 0.9, ...aiTex('horse-coat', 1.7, 1.7) });
     const dark = skin(0x24170f, { roughness: 0.95 });
     const tack = skin(0x3a2418, { roughness: 0.82 });
     const horseBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.45, 5, 10), coat);
@@ -191,6 +191,8 @@ export class Bot {
     this.paralyzeT = 0;
     this.jetpack = null;
     this.grapple = false;
+    this.dualBlaster = false;
+    this._dualBlasterNextLeft = false;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -254,19 +256,30 @@ export class Bot {
     this.horseLegs = horseLegs;
     this._gunId = null;
     this._gun = null;
+    this._dualGun = null;
     scene.add(this.mesh);
   }
 
   // Show the weapon the bot is actually holding
   syncGunModel() {
-    if (this.weapon === this._gunId) return;
-    this._gunId = this.weapon;
+    const gunId = `${this.weapon}:${this.weapon === 'blaster' && this.dualBlaster ? 'dual' : 'single'}`;
+    if (gunId === this._gunId) return;
+    this._gunId = gunId;
     if (this._gun) this.mesh.remove(this._gun);
+    if (this._dualGun) this.mesh.remove(this._dualGun);
+    this._dualGun = null;
     this._gun = buildBlaster(this.weapon);
     this._gun.scale.setScalar(0.55);
     this._gun.position.set(0.32, this.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
     this._gun.rotation.y = Math.PI; // muzzle forward (+z, the bot's facing)
     this.mesh.add(this._gun);
+    if (this.weapon === 'blaster' && this.dualBlaster) {
+      this._dualGun = buildBlaster('blaster');
+      this._dualGun.scale.setScalar(0.55);
+      this._dualGun.position.set(-0.32, this.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
+      this._dualGun.rotation.y = Math.PI;
+      this.mesh.add(this._dualGun);
+    }
   }
 
   cancelWeaponWarmup() {
@@ -312,7 +325,15 @@ export class Bot {
 
   finishWeaponShot(w, extraCooldown) {
     if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
-    this.cooldown = w.warmup ? 0 : 1 / w.rof + extraCooldown;
+    const cadence = this.weapon === 'blaster' && this.dualBlaster ? 2 : 1;
+    this.cooldown = w.warmup ? 0 : 1 / (w.rof * cadence) + extraCooldown;
+  }
+
+  shotHandSide() {
+    if (this.weapon !== 'blaster' || !this.dualBlaster) return 1;
+    const side = this._dualBlasterNextLeft ? -1 : 1;
+    this._dualBlasterNextLeft = !this._dualBlasterNextLeft;
+    return side;
   }
 
   spawn(pos) {
@@ -330,6 +351,8 @@ export class Bot {
     this.paralyzeT = 0;
     this.jetpack = null;
     this.grapple = false;
+    this.dualBlaster = false;
+    this._dualBlasterNextLeft = false;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -777,7 +800,9 @@ export class Bot {
       aim.x += rand(-1, 1) * e; aim.y += rand(-1, 1) * e; aim.z += rand(-1, 1) * e;
       const dir = aim.sub(origin).normalize();
       this._face = dir.clone();
-      fire(this, origin.addScaledVector(dir, 0.9), dir, this.weapon);
+      const side = this.shotHandSide();
+      const right = new THREE.Vector3().crossVectors(dir, up).normalize();
+      fire(this, origin.addScaledVector(dir, 0.9).addScaledVector(right, side * 0.22), dir, this.weapon);
       this.finishWeaponShot(w, rand(0.3, 0.7));
     }
 
@@ -1145,7 +1170,10 @@ export class Bot {
       // lead the target a little (sloppily — beatable on the move)
       if (this.target.vel) aimAt.addScaledVector(this.target.vel, origin.distanceTo(aimAt) / w.speed * 0.35);
       const dir = aimAt.sub(origin).normalize();
-      fire(this, origin.addScaledVector(dir, 0.8 * ownerScale), dir, this.weapon);
+      const side = this.shotHandSide();
+      const right = new THREE.Vector3().crossVectors(dir, this.up || UPY).normalize();
+      fire(this, origin.addScaledVector(dir, 0.8 * ownerScale)
+        .addScaledVector(right, side * 0.22 * ownerScale), dir, this.weapon);
       this.finishWeaponShot(w, rand(0.25, 0.6));
     }
 
@@ -1480,6 +1508,9 @@ export class Bot {
         if (top > refY - 2.8 && top < refY + 1.4) return true;
       } else if (c.type === 'ellipsoid') {
         const top = ellipsoidSurfaceY(c, x, z);
+        if (top != null && top > refY - 2.8 && top < refY + 1.4) return true;
+      } else if (c.type === 'triangleMesh') {
+        const top = triangleMeshSurfaceY(c, x, z);
         if (top != null && top > refY - 2.8 && top < refY + 1.4) return true;
       } else if (c.type === 'cylinderShell') {
         const top = cylinderShellSurfaceY(c, x, z);
