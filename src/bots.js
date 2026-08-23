@@ -5,13 +5,18 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   moveCharacter, moveCharacterUp, cardinal, cylinderShellSurfaceY, ellipsoidSurfaceY, hasLOS,
   hasRouteClearance, findPath, nearestWaypoint, rand, pick, clamp, pointInZoneXZ,
+  inRampFootprint, rampSurfaceY,
 } from './engine.js';
 import { WEAPONS, WEAPON_ORDER, buildBlaster, updateWeaponWarmupVisual } from './weapons.js';
 import { aiTex } from './maps.js';
+import { HORSE_HEIGHT_DELTA, HORSE_LEG_HEIGHT } from './mount.js';
 import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 import { chooseCombatIntent, combatTargetScore, pickupUtility } from './bot-strategy.js';
 import { waterSpeedMultiplier } from './water-movement.js';
+import {
+  applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
+} from './grapple.js';
 
 const _combatRouteProbe = new THREE.Vector3();
 const WEAPON_PICKUP_AMMO = Object.fromEntries(
@@ -88,7 +93,7 @@ export function syncJetpackVisual(character, dt = 0, visual = character?.jetpack
   flames.scale.set(1, 0.82 + Math.sin(visual._phase) * 0.14, 1);
 }
 
-export function buildBotMesh(color) {
+export function buildBotMesh(color, mounted = false) {
   const g = new THREE.Group();
   const skin = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.7, ...extra });
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.8, 4, 10),
@@ -100,9 +105,65 @@ export function buildBotMesh(color) {
     skin(0x203040, { emissive: color, emissiveIntensity: 0.6 }));
   visor.position.set(0, 1.66, 0.22);
   const jetpack = buildJetpackVisual();
+  let horse = null;
+  let horseLegs = [];
+  if (mounted) {
+    const lift = 0.95 + HORSE_HEIGHT_DELTA;
+    body.position.y += lift;
+    head.position.y += lift;
+    visor.position.y += lift;
+    jetpack.position.y += lift;
+
+    const hat = new THREE.Group();
+    const felt = skin(0x4a2b1d, { roughness: 0.96 });
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.08, 16), felt);
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.33, 0.38, 12), felt);
+    crown.position.y = 0.22;
+    hat.add(brim, crown);
+    hat.position.y = 2.86 + HORSE_HEIGHT_DELTA;
+    g.add(hat);
+
+    horse = new THREE.Group();
+    const coat = skin(0x704126, { roughness: 0.9 });
+    const dark = skin(0x24170f, { roughness: 0.95 });
+    const tack = skin(0x3a2418, { roughness: 0.82 });
+    const horseBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.45, 5, 10), coat);
+    horseBody.rotation.x = Math.PI / 2;
+    horseBody.position.set(0, 0.9 + HORSE_HEIGHT_DELTA, 0.05);
+    horse.add(horseBody);
+    const neck = new THREE.Mesh(new THREE.CapsuleGeometry(0.27, 0.72, 4, 9), coat);
+    neck.rotation.x = -0.5;
+    neck.position.set(0, 1.25 + HORSE_HEIGHT_DELTA, 0.86);
+    horse.add(neck);
+    const horseHead = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.5, 0.9), coat);
+    horseHead.position.set(0, 1.55 + HORSE_HEIGHT_DELTA, 1.42);
+    horseHead.rotation.x = -0.13;
+    horse.add(horseHead);
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.36, 6), coat);
+      ear.position.set(side * 0.14, 1.96 + HORSE_HEIGHT_DELTA, 1.48);
+      horse.add(ear);
+    }
+    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.16, 0.84), tack);
+    saddle.position.set(0, 1.38 + HORSE_HEIGHT_DELTA, -0.05);
+    horse.add(saddle);
+    for (const [x, z, phase] of [[-.34,-.48,0],[.34,-.48,Math.PI],[-.34,.52,Math.PI],[.34,.52,0]]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, HORSE_LEG_HEIGHT, 7), coat);
+      leg.position.set(x, 0.28 + HORSE_HEIGHT_DELTA / 2, z);
+      leg.userData.gaitPhase = phase;
+      horse.add(leg);
+      horseLegs.push(leg);
+    }
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.15, 7), dark);
+    tail.rotation.x = -0.62;
+    tail.position.set(0, 0.9 + HORSE_HEIGHT_DELTA, -1.12);
+    horse.add(tail);
+    horse.traverse(child => { if (child.isMesh) child.castShadow = child.receiveShadow = true; });
+    g.add(horse);
+  }
   for (const m of [body, head, visor]) m.castShadow = true;
   g.add(body, head, visor, jetpack);
-  return { group: g, body, head, visor, jetpack };
+  return { group: g, body, head, visor, jetpack, horse, horseLegs };
 }
 
 export class Bot {
@@ -118,8 +179,8 @@ export class Bot {
     // remote client's orientation on every input packet. Keep `up` available
     // on ordinary maps too, not only after entering an Escher map.
     this.up = new THREE.Vector3(0, 1, 0);
-    this.radius = 0.45;
-    this.height = 1.8;
+    this.radius = world.mounted ? 0.58 : 0.45;
+    this.height = world.mounted ? 2.65 + HORSE_HEIGHT_DELTA : 1.8;
 
     this.hp = 100;
     this.shield = 0;
@@ -129,6 +190,7 @@ export class Bot {
     this.powerup = null;
     this.paralyzeT = 0;
     this.jetpack = null;
+    this.grapple = false;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -176,10 +238,20 @@ export class Bot {
     this._pursuitTarget = null;
     this._lastSeenTargetPos = new THREE.Vector3();
     this._targetMemoryT = 0;
+    this.horseHeading = 0;
+    this.grappleAttached = false;
+    this.grappleAnchor = null;
+    this.grappleRopeLength = 0;
+    this._grappleThinkT = rand(0.08, 0.28);
+    this._grappleAge = 0;
+    this._grappleGoalY = null;
+    this.grappleVisual = world.grappleEnabled ? createGrappleVisual(scene, 0x88d95a) : null;
 
-    const { group, jetpack } = buildBotMesh(color);
+    const { group, jetpack, horse, horseLegs } = buildBotMesh(color, world.mounted);
     this.mesh = group;
     this.jetpackVisual = jetpack;
+    this.horseVisual = horse;
+    this.horseLegs = horseLegs;
     this._gunId = null;
     this._gun = null;
     scene.add(this.mesh);
@@ -192,7 +264,7 @@ export class Bot {
     if (this._gun) this.mesh.remove(this._gun);
     this._gun = buildBlaster(this.weapon);
     this._gun.scale.setScalar(0.55);
-    this._gun.position.set(0.32, 1.05, 0.25);
+    this._gun.position.set(0.32, this.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
     this._gun.rotation.y = Math.PI; // muzzle forward (+z, the bot's facing)
     this.mesh.add(this._gun);
   }
@@ -245,6 +317,7 @@ export class Bot {
 
   spawn(pos) {
     this.cancelWeaponWarmup();
+    this.detachGrapple();
     this.pos.copy(pos);
     this.vel.set(0, 0, 0);
     this.hp = 100;
@@ -256,6 +329,7 @@ export class Bot {
     this.powerup = null;
     this.paralyzeT = 0;
     this.jetpack = null;
+    this.grapple = false;
     this.weapons = { blaster: true };
     this.ammo = { blaster: Infinity };
     this.weapon = 'blaster';
@@ -289,6 +363,7 @@ export class Bot {
     this._drownT = 0;
     this._drownDamageT = 0;
     this.up.set(0, 1, 0);
+    this.horseHeading = Math.atan2(-pos.x, -pos.z);
     // PRISM RUN: orient to whatever surface we spawned on
     if (this.world.escher) {
       const nf = this._nearSurfAt(this.pos);
@@ -325,11 +400,22 @@ export class Bot {
 
   die() {
     this.cancelWeaponWarmup();
+    this.detachGrapple();
     this.jetpack = null;
+    this.grapple = false;
     this._jetpackWants = false;
     this._noticedDropPending = false;
     this.alive = false;
     this.mesh.visible = false;
+  }
+
+  detachGrapple() {
+    this.grappleAttached = false;
+    this.grappleAnchor = null;
+    this.grappleRopeLength = 0;
+    this._grappleAge = 0;
+    this._grappleGoalY = null;
+    updateGrappleVisual(this.grappleVisual, null, null, false);
   }
 
   bestWeapon() {
@@ -341,7 +427,8 @@ export class Bot {
 
   eye() {
     const visualScale = this.world.characterVisualScale?.(this) || 1;
-    return new THREE.Vector3(this.pos.x, this.pos.y + 1.55 * visualScale, this.pos.z);
+    const eyeHeight = this.world.mounted ? 2.5 + HORSE_HEIGHT_DELTA : 1.55;
+    return new THREE.Vector3(this.pos.x, this.pos.y + eyeHeight * visualScale, this.pos.z);
   }
 
   // Target acquisition with human-ish senses:
@@ -356,7 +443,7 @@ export class Bot {
     const myEye = this.eye();
     const eyeOf = (ch) => ch.eye ? ch.eye() : new THREE.Vector3(
       ch.pos.x,
-      ch.pos.y + 1.5 * (this.world.characterVisualScale?.(ch) || 1),
+      ch.pos.y + (this.world.mounted ? 2.45 + HORSE_HEIGHT_DELTA : 1.5) * (this.world.characterVisualScale?.(ch) || 1),
       ch.pos.z,
     );
 
@@ -728,6 +815,7 @@ export class Bot {
     if (this.world.escher) return this.updateEscher(dt, characters, fire);
 
     if (this.paralyzeT > 0) {
+      this.detachGrapple();
       this.paralyzeT = Math.max(0, this.paralyzeT - dt);
       stepJetpack(this.jetpack, this.vel, dt, false);
       this.vel.x *= Math.exp(-12 * dt);
@@ -986,6 +1074,21 @@ export class Bot {
         moveX = away.x;
         moveZ = away.z;
       }
+      if (this.world.mounted && Math.hypot(moveX, moveZ) > 0.05) {
+        const desiredHorseHeading = Math.atan2(moveX, moveZ);
+        const maxHorseTurn = (this.world.horseTurnRate || 1.45) * dt;
+        this.horseHeading += clamp(
+          angDiff(desiredHorseHeading, this.horseHeading),
+          -maxHorseTurn,
+          maxHorseTurn,
+        );
+        moveX = Math.sin(this.horseHeading);
+        moveZ = Math.cos(this.horseHeading);
+        const along = this.vel.x * moveX + this.vel.z * moveZ;
+        const lateralDamp = Math.exp(-7.5 * dt);
+        this.vel.x = moveX * along + (this.vel.x - moveX * along) * lateralDamp;
+        this.vel.z = moveZ * along + (this.vel.z - moveZ * along) * lateralDamp;
+      }
       const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
       const accel = this.grounded ? 8 * traction : 1.5;
       this.vel.x += (moveX * speed - this.vel.x) * Math.min(1, accel * dt);
@@ -1008,8 +1111,10 @@ export class Bot {
       }
     }
     this._updateJetpack(dt, wpTarget, vine, water);
+    this._updateGrapple(dt, wpTarget, vine, water);
     const wasAirborne = !this.grounded;
     this.grounded = moveCharacter(this, this.world, dt);
+    this._syncGrappleVisual();
     if (this.grounded) this._lowGravHop = false;
     if (vine) this._trackVineStall(vine, dt, moveX, moveZ, wpTarget);
     else this._resetVineStall();
@@ -1035,7 +1140,7 @@ export class Bot {
       const targetScale = this.world.characterVisualScale?.(this.target) || 1;
       const aimAt = new THREE.Vector3(
         this.target.pos.x + rand(-1, 1) * this.aimError * 10 * targetScale,
-        this.target.pos.y + 1.2 * targetScale + rand(-1, 1) * this.aimError * 8 * targetScale,
+        this.target.pos.y + (this.world.mounted ? 2.05 + HORSE_HEIGHT_DELTA : 1.2) * targetScale + rand(-1, 1) * this.aimError * 8 * targetScale,
         this.target.pos.z + rand(-1, 1) * this.aimError * 10 * targetScale);
       // lead the target a little (sloppily — beatable on the move)
       if (this.target.vel) aimAt.addScaledVector(this.target.vel, origin.distanceTo(aimAt) / w.speed * 0.35);
@@ -1050,11 +1155,89 @@ export class Bot {
     syncJetpackVisual(this, dt);
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = this.aimYaw;
+    if (this.horseVisual) {
+      this.horseVisual.rotation.y = this.horseHeading - this.aimYaw;
+      const pace = Math.min(1, Math.hypot(this.vel.x, this.vel.z) / Math.max(1, this.world.playerSpeed));
+      const gait = performance.now() * 0.012;
+      for (const leg of this.horseLegs) leg.rotation.x = Math.sin(gait + leg.userData.gaitPhase) * 0.48 * pace;
+      this.horseVisual.position.y = Math.abs(Math.sin(gait * 2)) * 0.035 * pace;
+    }
 
     if (this.powerup) {
       this.powerup.timeLeft -= dt;
       if (this.powerup.timeLeft <= 0) { this.powerup = null; this.damageMult = 1; }
     }
+  }
+
+  // Canopy bots use the same authored collision/foliage targets as players.
+  // A bot grapples when its current route leg is substantially above it, then
+  // releases after reaching that level (or after a short safety timeout) and
+  // resumes the waypoint path with the momentum it gained.
+  _updateGrapple(dt, wpTarget, vine, water) {
+    if (!this.world.grappleEnabled || !this.grapple || this.remoteHuman) return;
+    const blocked = !!vine || !!water || this.paralyzeT > 0;
+    if (blocked) {
+      this.detachGrapple();
+      return;
+    }
+
+    this._grappleThinkT -= dt;
+    if (this.grappleAttached) {
+      this._grappleAge += dt;
+      const distance = this.grappleAnchor?.distanceTo(this.eye()) ?? 0;
+      const reachedRouteLevel = this._grappleGoalY != null && this.pos.y >= this._grappleGoalY - 0.8;
+      if (!this.grappleAnchor || distance < 3.8 || reachedRouteLevel || this._grappleAge > 4.2) {
+        this.detachGrapple();
+        this._grappleThinkT = rand(0.7, 1.1);
+        return;
+      }
+      applyGrapplePull(this, dt);
+      return;
+    }
+
+    if (this._grappleThinkT > 0) return;
+    this._grappleThinkT = rand(0.22, 0.38);
+    let goal = wpTarget;
+    if ((!goal || goal.y < this.pos.y + 4.5) && this.target?.alive &&
+        this.target.pos.y > this.pos.y + 7) goal = this.target.pos;
+    if (!goal) return;
+    const dy = goal.y - this.pos.y;
+    const flatDistance = Math.hypot(goal.x - this.pos.x, goal.z - this.pos.z);
+    if (dy < 4.5 || flatDistance > 50) return;
+
+    const origin = this.eye();
+    const direction = goal.clone().add(new THREE.Vector3(0, 0.45, 0)).sub(origin).normalize();
+    let hit = findGrappleAnchor(this.world, origin, direction);
+    if (!hit || hit.point.y < this.pos.y + 6) {
+      const crowns = [...(this.world.grappleFoliageTargets || [])]
+        .filter(target => target.center.y > this.pos.y + 6)
+        .sort((a, b) => (
+          Math.hypot(a.center.x - goal.x, a.center.z - goal.z) -
+          Math.hypot(b.center.x - goal.x, b.center.z - goal.z)
+        ));
+      for (const crown of crowns) {
+        const crownHit = findGrappleAnchor(
+          this.world, origin, crown.center.clone().sub(origin).normalize(),
+        );
+        if (crownHit?.point.y > this.pos.y + 6) { hit = crownHit; break; }
+      }
+    }
+    if (!hit || hit.point.y < this.pos.y + 6) return;
+    this.grappleAttached = true;
+    this.grappleAnchor = hit.point;
+    this.grappleRopeLength = Math.max(4.2, hit.point.distanceTo(this.pos) * 0.78);
+    this._grappleAge = 0;
+    this._grappleGoalY = goal.y;
+  }
+
+  _syncGrappleVisual() {
+    if (!this.grappleVisual || this.remoteHuman) return;
+    updateGrappleVisual(
+      this.grappleVisual,
+      this.eye(),
+      this.grappleAnchor,
+      this.grappleAttached && this.alive,
+    );
   }
 
   // Jetpacks supplement the waypoint graph rather than replacing it. Bots use
@@ -1304,6 +1487,12 @@ export class Bot {
       }
     }
     for (const r of this.world.ramps || []) {
+      if (r.oriented) {
+        if (!inRampFootprint(r, x, z)) continue;
+        const surf = rampSurfaceY(r, x, z);
+        if (surf > refY - 2.8 && surf < refY + 1.4) return true;
+        continue;
+      }
       const along = r.axis === 'x' ? x : z;
       const cross = r.axis === 'x' ? z : x;
       const min = r.axis === 'x' ? r.minX : r.minZ;

@@ -37,10 +37,12 @@ export class MobileControls {
     onLook,
     onFire,
     onJump,
+    onGrapple,
     onCycleWeapon,
     onPause,
     onEngage,
     shouldShow,
+    shouldShowGrapple,
   }) {
     this.root = root;
     this.onMove = onMove;
@@ -51,6 +53,7 @@ export class MobileControls {
     this.onPause = onPause;
     this.onEngage = onEngage;
     this.shouldShow = shouldShow;
+    this.shouldShowGrapple = shouldShowGrapple;
     this.active = !!root && touchControlsSupported();
     this.visible = false;
     this.movePointer = null;
@@ -69,6 +72,7 @@ export class MobileControls {
     this.fireButton = root.querySelector('#mobileFire');
     this.jumpButton = root.querySelector('#mobileJump');
     this.weaponButton = root.querySelector('#mobileWeapon');
+    this.grappleButton = root.querySelector('#mobileGrapple');
     this.pauseButton = root.querySelector('#mobilePause');
 
     this._bindMoveSurface();
@@ -79,6 +83,11 @@ export class MobileControls {
       this._consume(event);
       this._engage();
       onCycleWeapon?.();
+    });
+    this.grappleButton?.addEventListener('pointerdown', (event) => {
+      this._consume(event);
+      this._engage();
+      onGrapple?.();
     });
     this.pauseButton.addEventListener('click', (event) => {
       this._consume(event);
@@ -202,6 +211,7 @@ export class MobileControls {
 
   sync() {
     if (!this.active) return;
+    if (this.grappleButton) this.grappleButton.hidden = !this.shouldShowGrapple?.();
     const nextVisible = !!this.shouldShow?.();
     if (nextVisible === this.visible) return;
     this.visible = nextVisible;

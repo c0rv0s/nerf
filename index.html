@@ -432,6 +432,10 @@
     bottom:max(28px,calc(env(safe-area-inset-bottom) + 18px)); width:64px; height:64px; }
   #mobileWeapon { right:max(122px,calc(env(safe-area-inset-right) + 110px));
     bottom:max(104px,calc(env(safe-area-inset-bottom) + 94px)); width:58px; height:58px; }
+  #mobileGrapple { right:max(190px,calc(env(safe-area-inset-right) + 178px));
+    bottom:max(92px,calc(env(safe-area-inset-bottom) + 82px)); width:60px; height:60px;
+    border-color:rgba(168,255,112,.9); color:#dcffc7; }
+  #mobileGrapple[hidden] { display:none !important; }
   #mobilePause { right:max(14px,env(safe-area-inset-right)); top:max(14px,env(safe-area-inset-top));
     width:42px; height:42px; border-radius:12px; font-size:15px; letter-spacing:0; }
   #rotateHint { position:absolute; left:50%; top:max(16px,env(safe-area-inset-top));
@@ -538,6 +542,7 @@
   <button id="mobileFire" class="mobile-action" type="button" aria-label="Fire" aria-pressed="false">Fire</button>
   <button id="mobileJump" class="mobile-action" type="button" aria-label="Jump or use jetpack" aria-pressed="false">Jump</button>
   <button id="mobileWeapon" class="mobile-action" type="button" aria-label="Switch weapon">Swap</button>
+  <button id="mobileGrapple" class="mobile-action" type="button" aria-label="Fire or detach Canopy grapple" hidden>Grapple</button>
   <button id="mobilePause" class="mobile-action" type="button" aria-label="Pause">Ⅱ</button>
   <div id="rotateHint">Turn sideways for the full arena</div>
 </div>

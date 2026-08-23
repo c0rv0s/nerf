@@ -6,6 +6,7 @@ import {
 } from './engine.js';
 import { aiTex } from './maps.js';
 import { sfx } from './audio.js';
+import { HORSE_HEIGHT_DELTA } from './mount.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const BEAM_SAMPLE_HEIGHTS = [0.35, 0.55, 0.8];
@@ -420,6 +421,11 @@ export class ProjectileSystem {
     this._segmentPoint = new THREE.Vector3();
     this._bodyFoot = new THREE.Vector3();
     this._bodyHead = new THREE.Vector3();
+    this._horseForward = new THREE.Vector3();
+    this._horseBodyStart = new THREE.Vector3();
+    this._horseBodyEnd = new THREE.Vector3();
+    this._horseBodyCenter = new THREE.Vector3();
+    this._horseHead = new THREE.Vector3();
     this._headCenter = new THREE.Vector3();
     this._headOffset = new THREE.Vector3();
     this._headClosest = new THREE.Vector3();
@@ -952,7 +958,35 @@ export class ProjectileSystem {
         .addScaledVector(up, ch.height * fraction * visualScale);
       if (this.distancePointToSegment(this._segmentPoint, a, b) < r) return true;
     }
+    if (this.world.mounted) {
+      this.mountedHorseHitVolumes(ch, visualScale);
+      const horseRadius = 0.58 * visualScale + pad;
+      for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
+        this._segmentPoint.lerpVectors(this._horseBodyStart, this._horseBodyEnd, fraction);
+        if (this.distancePointToSegment(this._segmentPoint, a, b) < horseRadius) return true;
+      }
+      if (this.distancePointToSegment(this._horseHead, a, b) < 0.48 * visualScale + pad) return true;
+    }
     return false;
+  }
+
+  mountedHorseHitVolumes(ch, visualScale = 1) {
+    const up = ch.up || WORLD_UP;
+    const heading = ch.horseHeading ?? ch.yaw ?? 0;
+    // Player movement defines forward as -Z at yaw zero; Bot instances define
+    // their rendered horse as +Z. Both resolve to the horse's actual world
+    // direction here, including host-controlled multiplayer riders.
+    if (ch.isPlayer) this._horseForward.set(-Math.sin(heading), 0, -Math.cos(heading));
+    else this._horseForward.set(Math.sin(heading), 0, Math.cos(heading));
+    this._horseBodyCenter.copy(ch.pos)
+      .addScaledVector(up, (0.92 + HORSE_HEIGHT_DELTA) * visualScale);
+    this._horseBodyStart.copy(this._horseBodyCenter)
+      .addScaledVector(this._horseForward, -0.95 * visualScale);
+    this._horseBodyEnd.copy(this._horseBodyCenter)
+      .addScaledVector(this._horseForward, 1.25 * visualScale);
+    this._horseHead.copy(ch.pos)
+      .addScaledVector(up, (1.58 + HORSE_HEIGHT_DELTA) * visualScale)
+      .addScaledVector(this._horseForward, 1.42 * visualScale);
   }
 
   projectileHitCharacter(ch, p) {
@@ -966,9 +1000,18 @@ export class ProjectileSystem {
       ch.height * 0.55 * visualScale,
     );
     const head = this._bodyHead.copy(ch.pos).addScaledVector(up, headHeight);
-    if (this.distancePointToSegment(p.pos, foot, head) >= scaledRadius + projectileRadius + 0.35) {
-      return null;
+    const riderHit = this.distancePointToSegment(p.pos, foot, head) <
+      scaledRadius + projectileRadius + 0.35;
+    let horseHit = false;
+    if (this.world.mounted) {
+      this.mountedHorseHitVolumes(ch, visualScale);
+      const bodyHitRadius = 0.58 * visualScale + projectileRadius + 0.28;
+      const headHitRadius = 0.48 * visualScale + projectileRadius + 0.22;
+      horseHit = this.distancePointToSegment(
+        p.pos, this._horseBodyStart, this._horseBodyEnd,
+      ) < bodyHitRadius || p.pos.distanceToSquared(this._horseHead) < headHitRadius ** 2;
     }
+    if (!riderHit && !horseHit) return null;
 
     // The generous body capsule reaches in front of the visible head, so a
     // point-only head test would resolve a head-bound dart as a body hit first.
@@ -983,7 +1026,7 @@ export class ProjectileSystem {
     const ahead = travelSq > 1e-6 ? toHead.dot(p.vel) / travelSq : 0;
     const closestPoint = this._headClosest.copy(p.pos)
       .addScaledVector(p.vel, Math.max(0, ahead));
-    const headshot = p.weapon.headshotDmg != null &&
+    const headshot = riderHit && p.weapon.headshotDmg != null &&
       closestPoint.distanceToSquared(headCenter) < hitRadius ** 2;
     return { headshot };
   }
@@ -1261,7 +1304,15 @@ export class ProjectileSystem {
       if (ch === p.owner) continue; // no self-splash damage (keeps zooka fun)
       if (p.weapon.splashExcludesDirect && ch === p.directTarget) continue;
       const center = ch.pos.clone(); center.y += ch.height * 0.5;
-      const d = center.distanceTo(p.pos);
+      let d = center.distanceTo(p.pos);
+      if (this.world.mounted) {
+        const visualScale = this.world.characterVisualScale?.(ch) || 1;
+        this.mountedHorseHitVolumes(ch, visualScale);
+        const bodyDistance = Math.max(0,
+          this.distancePointToSegment(p.pos, this._horseBodyStart, this._horseBodyEnd) - 0.58 * visualScale);
+        const headDistance = Math.max(0, p.pos.distanceTo(this._horseHead) - 0.48 * visualScale);
+        d = Math.min(d, bodyDistance, headDistance);
+      }
       if (d < p.weapon.splash) {
         const dmg = p.weapon.flatSplash
           ? p.weapon.splashDmg

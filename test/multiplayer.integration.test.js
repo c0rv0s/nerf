@@ -120,8 +120,8 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   clients.push(guest);
   const guestJoined = await guest.joined;
 
-  host.send({ type: 'voteMap', mapId: 'arena' });
-  guest.send({ type: 'voteMap', mapId: 'arena' });
+  host.send({ type: 'voteMap', mapId: 'canopy' });
+  guest.send({ type: 'voteMap', mapId: 'canopy' });
   const playing = await host.waitFor(message =>
     message.type === 'phaseChanged' && message.phase === 'playing', 4000);
   const epoch = playing.authorityEpoch;
@@ -156,6 +156,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     y: canonical.y,
     z: canonical.z,
   };
+  const grappleAnchor = { x: shifted.x, y: 30, z: shifted.z };
 
   snapshotSeq++;
   host.send({
@@ -187,6 +188,8 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
           ammo: { scatter: 7 },
           damageMult: 2,
           powerup: { kind: 'silver', timeLeft: 24.5 },
+          grapple: true,
+          grappleAnchor,
         },
       ],
       events: [{
@@ -237,6 +240,8 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   assert.equal(guestState.shield, 75);
   assert.equal(guestState.damageMult, 2);
   assert.deepEqual(guestState.powerup, { kind: 'silver', timeLeft: 24.5 });
+  assert.equal(guestState.grapple, true);
+  assert.deepEqual(guestState.grappleAnchor, grappleAnchor);
   assert.deepEqual(shiftedSnapshot.events, [{
     type: 'damage',
     attackerId: guestSlot,
@@ -268,6 +273,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     vel: { x: 0, y: 0, z: 0 },
     alive: true,
     weapon: 'scatter',
+    grappleAnchor,
   });
   const accepted = await host.waitFor(message =>
     message.type === 'remoteInput' &&
@@ -275,6 +281,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     message.input.seq === 1);
   assert.deepEqual(accepted.input.pos, shifted);
   assert.equal(accepted.input.weapon, 'scatter');
+  assert.deepEqual(accepted.input.grappleAnchor, grappleAnchor);
 
   snapshotSeq++;
   host.send({

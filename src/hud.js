@@ -96,7 +96,18 @@ export class HUD {
       setStyle(e.power, 'display', 'none');
     }
 
-    if (player.jetpack) {
+    if (world?.mounted) {
+      const stamina = Math.max(0, player.gallopStamina || 0);
+      setStyle(e.jetpack, 'display', 'block');
+      setClass(e.jetpack, 'panel' + (player.galloping ? ' active' : stamina <= 0.01 ? ' cooling' : ''));
+      setText(e.jetpack, player.galloping
+        ? `GALLOP · ${stamina.toFixed(1)}s`
+        : player.gallopExhausted
+          ? `HORSE WINDED · ${stamina.toFixed(1)}s`
+        : stamina < (world.horseGallopDuration || 15)
+          ? `HORSE STAMINA · ${stamina.toFixed(1)}s`
+          : 'HORSE READY · HOLD SHIFT');
+    } else if (player.jetpack) {
       const pack = player.jetpack;
       setStyle(e.jetpack, 'display', 'block');
       if (pack.cooldown > 0) {

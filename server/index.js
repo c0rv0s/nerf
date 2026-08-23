@@ -61,6 +61,7 @@ const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
+  { id: 'oldwest', name: 'RED ROCK RANGE', bounds: 230, spawns: [[-190, 0.1, -108], [190, 0.1, 108], [-190, 0.1, 108], [190, 0.1, -108], [0, 0.1, -152], [0, 0.1, 152], [-172, 0.1, 0], [172, 0.1, 0]] },
   { id: 'asteroids', name: 'ASTEROID BELT', bounds: 78, spawns: [[-45, 8, -20], [45, 8, 20], [-30, 8, 35], [30, 8, -35], [0, 8, -45], [0, 8, 45], [-55, 8, 0], [55, 8, 0]] },
   // Mirrors buildCanopy's FFA pool. The previous corner coordinates were
   // inside the solid tree trunks, so the authoritative multiplayer snapshot
@@ -496,6 +497,7 @@ function handleMessage(conn, msg) {
       jetpackActive: msg.jetpackActive === true,
       pos,
       vel: sanitizeVel(msg.vel),
+      grappleAnchor: sanitizeGrappleAnchor(msg.grappleAnchor, lobby.map, pos),
       alive: slot.alive !== false,
     };
     slot.input = input;
@@ -583,6 +585,13 @@ function sanitizeVel(vel) {
     y: Math.max(-160, Math.min(160, finite(vel.y, 0))),
     z: Math.max(-120, Math.min(120, finite(vel.z, 0))),
   };
+}
+
+function sanitizeGrappleAnchor(anchor, map, playerPos) {
+  if (map?.id !== 'canopy' || !anchor || !playerPos) return null;
+  const point = sanitizePos(anchor, map);
+  if (!point || distance3(point, playerPos) > 116) return null;
+  return point;
 }
 
 function plausibleBloomRecursiveJump(from, to, maxDistance) {
@@ -1224,6 +1233,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     const weapons = sanitizeWeapons(p.weapons, selectedWeapon);
     const ammo = sanitizeAmmo(p.ammo, weapons);
     const powerup = sanitizePowerup(p.powerup);
+    const grapple = p.grapple === true;
     return {
       id,
       name: canonical?.name || cleanName(p.name || id),
@@ -1250,6 +1260,8 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       warmup: weapon === 'whomper' ? Math.max(-1, Math.min(1, finite(p.warmup, -1))) : -1,
       jetpack: p.jetpack === true,
       jetpackActive: p.jetpack === true && p.jetpackActive === true,
+      grapple,
+      grappleAnchor: grapple ? sanitizeGrappleAnchor(p.grappleAnchor, lobby.map, pos) : null,
     };
   }).filter(Boolean);
   for (const [id, slot] of humanSlots) {
@@ -1263,7 +1275,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       awards: {}, respawn: slot.respawn || 0, weapon: 'blaster',
       weapons: ['blaster'], ammo: {},
       damageMult: slot.damageMult || 1, powerup: slot.powerup || null,
-      warmup: -1, jetpack: false, jetpackActive: false,
+      warmup: -1, jetpack: false, jetpackActive: false, grapple: false, grappleAnchor: null,
     });
   }
   // Missing canonical humans are restored above. Keep those before bots if a

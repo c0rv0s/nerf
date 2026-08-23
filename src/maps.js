@@ -274,6 +274,7 @@ const AI_TEX_SOURCES = {
   'crocodile-scales': './textures/crocodile-scales.webp',
   'canopy-bark': './textures/canopy-bark.webp',
   'canopy-wall': './textures/canopy-wall.webp',
+  'canopy-grapple': './textures/canopy-grapple.webp',
   'infinite-bloom-sky-eyeless': './textures/infinite-bloom-sky-eyeless.webp',
   'infinite-bloom-eye-atlas': './textures/infinite-bloom-eye-atlas.webp',
   parasite: './textures/parasite.webp',
@@ -330,6 +331,7 @@ const TEXTURE_NAMES = Object.freeze([
   'whomper', 'hyper', 'parasite', 'refractor', 'power-gold', 'power-silver',
   'infinite-bloom-surface', 'neonwall', 'neonfloor', 'atrium-grass', 'flowers', 'poster1', 'target',
   'canopy-bark', 'tidebreaker-deck', 'atrium-gate-frame-atlas',
+  'canopy-grapple',
   'checker', 'crate', 'rock', 'arcade', 'fortress-royal', 'crocodile-scales',
   'canopy-wall', 'grass', 'dirt', 'door', 'lava', 'poster2', 'poster3', 'poster4',
   'poster5', 'poster6', 'poster7', 'hazard', 'tidebreaker-orange-steel',
@@ -2373,7 +2375,11 @@ function addCityElevator(scene, world, {
 
 function wp(world, x, y, z) { world.waypoints.push({ pos: V(x, y, z), links: [] }); }
 function pk(world, kind, x, y, z, extra = {}) {
-  world.pickups.push(Object.assign({ kind, pos: V(x, y, z) }, extra));
+  const def = Object.assign({ kind, pos: V(x, y, z) }, extra);
+  if (kind === 'points' && (!Number.isFinite(def.amount) || def.amount <= 0)) {
+    throw new Error(`[map pickup] points pickup at (${x}, ${y}, ${z}) requires a positive amount`);
+  }
+  world.pickups.push(def);
 }
 
 function baseLighting(scene, skyColor, groundColor, sunDir, shadowHalf) {
@@ -3430,6 +3436,596 @@ function addFortressPresentation(scene, world) {
 }
 
 /* ============ MAP 2 — FORTRESS FALLS (150×90: trench, keep, towers) ============ */
+function addOldWestCactus(scene, world, x, z, height = 4.8, rotation = 0) {
+  const cactus = new THREE.Group();
+  const green = mat(0x39754a, { roughness: 0.94, flatShading: true });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.56, height, 9), green);
+  trunk.position.y = height / 2;
+  cactus.add(trunk);
+  for (const [side, armY, armHeight] of [[-1, height * 0.48, height * 0.34], [1, height * 0.63, height * 0.27]]) {
+    const horizontal = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 1.25, 8), green);
+    horizontal.rotation.z = Math.PI / 2;
+    horizontal.position.set(side * 0.62, armY, 0);
+    cactus.add(horizontal);
+    const upright = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, armHeight, 8), green);
+    upright.position.set(side * 1.2, armY + armHeight * 0.38, 0);
+    cactus.add(upright);
+  }
+  cactus.position.set(x, 0, z);
+  cactus.rotation.y = rotation;
+  cactus.traverse(child => { if (child.isMesh) child.castShadow = child.receiveShadow = true; });
+  scene.add(cactus);
+  world.colliders.push({ type: 'box', min: V(x - 0.58, 0, z - 0.58), max: V(x + 0.58, height, z + 0.58) });
+  (world.cactusHazards ||= []).push({ x, z, radius: 0.58 });
+}
+
+function addOldWestCactusContactDamage(world) {
+  world.postCharacterMove = (character) => {
+    if (!character?.alive) return;
+    const previousContacts = character._oldWestCactusContacts || new Set();
+    const currentContacts = new Set();
+    const characterRadius = character.radius || 0.4;
+    for (let i = 0; i < world.cactusHazards.length; i++) {
+      const cactus = world.cactusHazards[i];
+      const dx = character.pos.x - cactus.x;
+      const dz = character.pos.z - cactus.z;
+      const contactRadius = cactus.radius + characterRadius + 0.14;
+      if (dx * dx + dz * dz > contactRadius * contactRadius) continue;
+      currentContacts.add(i);
+      if (!previousContacts.has(i)) world.onCactusHit?.(character);
+    }
+    // A cactus cannot hit again until the rider has physically separated from
+    // it. This makes each collision exactly one five-damage impact rather than
+    // frame-rate-dependent damage while the movement collider holds them back.
+    character._oldWestCactusContacts = currentContacts;
+  };
+}
+
+function addOldWestHill(scene, world, x, z, rx, height, rz, color = 0xb95f35, collide = true) {
+  const ry = Math.max(11, height * 2.1);
+  const centerY = height - ry;
+  const geometry = new THREE.IcosahedronGeometry(1, 3);
+  geometry.scale(rx, ry, rz);
+  const hill = new THREE.Mesh(geometry, mat(color, { tex: 'rock', repeat: [8, 5], roughness: 0.98, flatShading: true }));
+  hill.position.set(x, centerY, z);
+  hill.castShadow = hill.receiveShadow = true;
+  scene.add(hill);
+  if (collide) {
+    world.colliders.push({
+      type: 'ellipsoid', center: V(x, centerY, z), radii: V(rx, ry, rz),
+      rotation: new THREE.Quaternion(), inverseRotation: new THREE.Quaternion(),
+      debugName: 'old-west-wide-hill',
+    });
+  }
+}
+
+function addOldWestArch(scene, world, x, z) {
+  const red = 0xa83f24;
+  addBox(scene, world, x - 10, 3.5, z, 5.5, 7, 6.5, red, { tex: 'rock', repeat: [2, 3] });
+  addBox(scene, world, x + 10, 3.5, z, 5.5, 7, 6.5, red, { tex: 'rock', repeat: [2, 3] });
+  const arch = new THREE.Mesh(
+    new THREE.TorusGeometry(10, 2.8, 9, 34, Math.PI),
+    mat(red, { tex: 'rock', repeat: [5, 2], roughness: 0.98, flatShading: true }),
+  );
+  arch.position.set(x, 5.2, z);
+  arch.castShadow = arch.receiveShadow = true;
+  scene.add(arch);
+  world.colliders.push({
+    type: 'box',
+    min: V(x - 8.5, 10.4, z - 3.1),
+    max: V(x + 8.5, 15.8, z + 3.1),
+    debugName: 'red-stone-arch-crown',
+  });
+}
+
+function addOldWestCliff(scene, world) {
+  const centerX = 50, centerZ = -40;
+  const length = 120, width = 66;
+  const lowY = 0, highY = 28;
+  // Keep the cliff south of the railway, but close enough that its low
+  // southeast end is part of the central fight rather than an outer-edge ride.
+  // The tall drop continues to face northwest into the arena.
+  const yaw = Math.atan2(40, -70);
+  const cos = Math.cos(yaw), sin = Math.sin(yaw);
+  const toWorld = (along, y, cross) => V(
+    centerX + along * cos - cross * sin,
+    y,
+    centerZ + along * sin + cross * cos,
+  );
+  const sections = [
+    [-60, 56], [-46, 61], [-31, 64], [-15, 67],
+    [0, 66], [16, 69], [31, 65], [46, 62], [60, 58],
+  ].map(([along, sectionWidth]) => ({
+    along,
+    width: sectionWidth,
+    y: lowY + (highY - lowY) * (along / length + 0.5),
+  }));
+  const positions = [];
+  const colors = [];
+  const palette = [0x8d3524, 0xa84428, 0xb65331, 0x963823, 0xc15e35];
+  const pushTri = (a, b, c, color) => {
+    const tint = new THREE.Color(color);
+    // The cliff is authored from its outer shell. Keep every triangle wound
+    // outward; the previous order pointed the normals into the rock, which
+    // culled whichever near face the camera was looking directly at.
+    for (const p of [a, c, b]) {
+      positions.push(p.x, p.y, p.z);
+      colors.push(tint.r, tint.g, tint.b);
+    }
+  };
+  for (let i = 0; i < sections.length - 1; i++) {
+    const a = sections[i], b = sections[i + 1];
+    const al = toWorld(a.along, a.y, -a.width / 2);
+    const ar = toWorld(a.along, a.y, a.width / 2);
+    const bl = toWorld(b.along, b.y, -b.width / 2);
+    const br = toWorld(b.along, b.y, b.width / 2);
+    const abl = toWorld(a.along, -0.45, -a.width / 2);
+    const abr = toWorld(a.along, -0.45, a.width / 2);
+    const bbl = toWorld(b.along, -0.45, -b.width / 2);
+    const bbr = toWorld(b.along, -0.45, b.width / 2);
+    pushTri(al, bl, br, palette[(i + 2) % palette.length]);
+    pushTri(al, br, ar, palette[(i + 2) % palette.length]);
+    pushTri(abl, bbl, bl, palette[i % palette.length]);
+    pushTri(abl, bl, al, palette[i % palette.length]);
+    pushTri(ar, br, bbr, palette[(i + 1) % palette.length]);
+    pushTri(ar, bbr, abr, palette[(i + 1) % palette.length]);
+  }
+  const low = sections[0], high = sections.at(-1);
+  const lowL = toWorld(low.along, low.y, -low.width / 2);
+  const lowR = toWorld(low.along, low.y, low.width / 2);
+  const lowBL = toWorld(low.along, -0.45, -low.width / 2);
+  const lowBR = toWorld(low.along, -0.45, low.width / 2);
+  pushTri(lowBL, lowL, lowR, 0x8f3a26);
+  pushTri(lowBL, lowR, lowBR, 0x8f3a26);
+  const highL = toWorld(high.along, high.y, -high.width / 2);
+  const highR = toWorld(high.along, high.y, high.width / 2);
+  const highBL = toWorld(high.along, -0.45, -high.width / 2);
+  const highBR = toWorld(high.along, -0.45, high.width / 2);
+  pushTri(highBL, highR, highL, 0x7c2d20);
+  pushTri(highBL, highBR, highR, 0x7c2d20);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  // Project UVs per face so the sandy rock texture stays legible on both the
+  // sloped top and the tall vertical cuts. The texture is white/neutral and
+  // therefore multiplies over, rather than replacing, the authored red shades.
+  const uvs = [];
+  const uvScale = 0.11;
+  const triA = new THREE.Vector3();
+  const triB = new THREE.Vector3();
+  const triC = new THREE.Vector3();
+  const triNormal = new THREE.Vector3();
+  for (let i = 0; i < positions.length; i += 9) {
+    triA.fromArray(positions, i);
+    triB.fromArray(positions, i + 3);
+    triC.fromArray(positions, i + 6);
+    triNormal.subVectors(triB, triA).cross(triC.clone().sub(triA)).normalize();
+    const ax = Math.abs(triNormal.x);
+    const ay = Math.abs(triNormal.y);
+    const az = Math.abs(triNormal.z);
+    for (const point of [triA, triB, triC]) {
+      if (ay >= ax && ay >= az) uvs.push(point.x * uvScale, point.z * uvScale);
+      else if (ax >= az) uvs.push(point.z * uvScale, point.y * uvScale);
+      else uvs.push(point.x * uvScale, point.y * uvScale);
+    }
+  }
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.computeVertexNormals();
+  const cliff = new THREE.Mesh(geometry, mat(0xffffff, {
+    tex: 'rock', vertexColors: true, roughness: 0.99, metalness: 0,
+    flatShading: true, repeat: [1, 1],
+  }));
+  cliff.castShadow = cliff.receiveShadow = true;
+  scene.add(cliff);
+
+  const extentX = Math.abs(cos) * length / 2 + Math.abs(sin) * width / 2;
+  const extentZ = Math.abs(sin) * length / 2 + Math.abs(cos) * width / 2;
+  const ramp = {
+    oriented: true, centerX, centerZ, length, width, yaw, h0: lowY, h1: highY,
+    solidToGround: true, solidBottom: -0.45,
+    minX: centerX - extentX, maxX: centerX + extentX,
+    minZ: centerZ - extentZ, maxZ: centerZ + extentZ,
+  };
+  world.ramps.push(ramp);
+  world.oldWestCliffRamp = ramp;
+
+  // Embedded crags roughen the high half of the formation. They sit inside
+  // the main mass, so there are no detached or floating decorative strips.
+  for (const [along, cross, sx, sy, sz, shade] of [
+    [18,-24,11,5,8,0x873021], [31,22,9,6,11,0xa83f27],
+    [44,-15,13,7,9,0x913522], [52,16,10,8,8,0xb34b2b],
+  ]) {
+    const rock = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1, 1),
+      mat(shade, { tex: 'rock', repeat: [3, 2], roughness: 1, flatShading: true }),
+    );
+    const surfaceY = lowY + (highY - lowY) * (along / length + 0.5);
+    rock.position.copy(toWorld(along, surfaceY - sy * 0.65, cross));
+    rock.scale.set(sx, sy, sz);
+    rock.rotation.set(0.18, -yaw * 0.55 + along * 0.006, -0.12);
+    rock.castShadow = rock.receiveShadow = true;
+    scene.add(rock);
+    const rotation = rock.quaternion.clone();
+    world.colliders.push({
+      type: 'ellipsoid',
+      center: rock.position.clone(),
+      radii: V(sx, sy, sz),
+      rotation,
+      inverseRotation: rotation.clone().invert(),
+      debugName: 'old-west-cliff-boulder',
+    });
+  }
+}
+
+function addOldWestRideBoundary(world) {
+  // The playable slab ends at x ±230 / z ±180. Let riders approach within a
+  // few metres of that visual seam before the horse shies and turns inward.
+  const halfX = 228.5, halfZ = 178.5, margin = 4.5;
+  world.rideBoundary = { halfX, halfZ, margin };
+  world.anim.push((dt, t, characters) => {
+    for (const ch of characters) {
+      if (!ch?.alive || !ch.pos || !ch.vel) continue;
+      const ax = Math.abs(ch.pos.x), az = Math.abs(ch.pos.z);
+      const atEdge = ax >= halfX || az >= halfZ;
+      const nearEdge = ax >= halfX - margin || az >= halfZ - margin;
+      if (!nearEdge) continue;
+
+      const inward = V(-ch.pos.x / (halfX * halfX), 0, -ch.pos.z / (halfZ * halfZ));
+      if (inward.lengthSq() < 1e-6) inward.set(0, 0, -1);
+      inward.normalize();
+      const outwardMotion = ch.vel.x * -inward.x + ch.vel.z * -inward.z;
+      if (!atEdge && outwardMotion <= 0.05) continue;
+
+      if (atEdge) {
+        ch.pos.x = Math.max(-halfX, Math.min(halfX, ch.pos.x));
+        ch.pos.z = Math.max(-halfZ, Math.min(halfZ, ch.pos.z));
+        const returnSpeed = world.playerSpeed * (ch.isPlayer ? 1.05 : 0.86);
+        ch.vel.x = inward.x * returnSpeed;
+        ch.vel.z = inward.z * returnSpeed;
+      } else {
+        ch.vel.x += inward.x * world.playerSpeed * dt * 2.8;
+        ch.vel.z += inward.z * world.playerSpeed * dt * 2.8;
+      }
+
+      if (ch.isPlayer) ch.horseHeading = Math.atan2(-inward.x, -inward.z);
+      else ch.horseHeading = Math.atan2(inward.x, inward.z);
+      ch.galloping = false;
+    }
+  });
+}
+
+function addOldWestStorefront(scene, { x, z, w, d, label, accent, kind }) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 640;
+  const g = canvas.getContext('2d');
+
+  // One painted panel covers the whole street-facing wall. The plank seams,
+  // faded trim, lettering, windows, and doors are all intentionally flat so
+  // the little frontier buildings stay readable without becoming doorways or
+  // snagging a mounted player on extra collision geometry.
+  g.fillStyle = '#c68a50';
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  for (let y = 0; y < canvas.height; y += 54) {
+    g.fillStyle = y % 108 === 0 ? 'rgba(88,45,24,.12)' : 'rgba(255,224,164,.08)';
+    g.fillRect(0, y, canvas.width, 5);
+  }
+  for (let i = 0; i < 70; i++) {
+    const px = (i * 173) % canvas.width;
+    const py = (i * 97) % canvas.height;
+    g.fillStyle = `rgba(75,38,22,${0.025 + (i % 4) * 0.012})`;
+    g.fillRect(px, py, 18 + (i % 6) * 8, 3);
+  }
+
+  g.fillStyle = accent;
+  g.fillRect(55, 35, canvas.width - 110, 172);
+  g.strokeStyle = '#4a2819';
+  g.lineWidth = 18;
+  g.strokeRect(55, 35, canvas.width - 110, 172);
+  g.strokeStyle = '#e7bd72';
+  g.lineWidth = 5;
+  g.strokeRect(78, 58, canvas.width - 156, 126);
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `900 ${label.length > 9 ? 94 : 112}px Georgia, serif`;
+  g.lineWidth = 13;
+  g.strokeStyle = '#3a2117';
+  g.strokeText(label, canvas.width / 2, 121);
+  g.fillStyle = '#f4d492';
+  g.fillText(label, canvas.width / 2, 121);
+
+  const window = (cx, cy, ww = 210, wh = 225) => {
+    g.fillStyle = '#422b25';
+    g.fillRect(cx - ww / 2 - 16, cy - wh / 2 - 16, ww + 32, wh + 32);
+    g.fillStyle = '#315866';
+    g.fillRect(cx - ww / 2, cy - wh / 2, ww, wh);
+    const shine = g.createLinearGradient(cx - ww / 2, cy - wh / 2, cx + ww / 2, cy + wh / 2);
+    shine.addColorStop(0, 'rgba(218,237,214,.5)');
+    shine.addColorStop(.42, 'rgba(218,237,214,.08)');
+    shine.addColorStop(.45, 'rgba(255,255,255,.38)');
+    shine.addColorStop(.58, 'rgba(255,255,255,.05)');
+    g.fillStyle = shine;
+    g.fillRect(cx - ww / 2, cy - wh / 2, ww, wh);
+    g.strokeStyle = '#d4a15f';
+    g.lineWidth = 12;
+    g.beginPath();
+    g.moveTo(cx, cy - wh / 2); g.lineTo(cx, cy + wh / 2);
+    g.moveTo(cx - ww / 2, cy); g.lineTo(cx + ww / 2, cy);
+    g.stroke();
+  };
+  const door = (cx, top, ww = 205, hh = 300) => {
+    g.fillStyle = '#3c241a';
+    g.fillRect(cx - ww / 2 - 18, top - 18, ww + 36, hh + 18);
+    g.fillStyle = kind === 'hotel' ? '#38576a' : '#7b3f27';
+    g.fillRect(cx - ww / 2, top, ww, hh);
+    g.strokeStyle = '#d4a15f';
+    g.lineWidth = 11;
+    g.strokeRect(cx - ww / 2 + 24, top + 28, ww - 48, hh - 56);
+    g.fillStyle = '#e4b75e';
+    g.beginPath(); g.arc(cx + ww * .28, top + hh * .55, 11, 0, Math.PI * 2); g.fill();
+  };
+
+  if (kind === 'saloon') {
+    window(230, 405, 190, 205);
+    window(794, 405, 190, 205);
+    // Painted batwing doors make the saloon distinct even at gallop speed.
+    g.fillStyle = '#40251a';
+    g.fillRect(386, 260, 252, 330);
+    for (const side of [-1, 1]) {
+      g.fillStyle = '#8d4328';
+      g.beginPath();
+      g.moveTo(512 + side * 8, 350);
+      g.lineTo(512 + side * 118, 306);
+      g.lineTo(512 + side * 118, 520);
+      g.lineTo(512 + side * 8, 558);
+      g.closePath(); g.fill();
+      g.strokeStyle = '#d4a15f'; g.lineWidth = 9; g.stroke();
+    }
+  } else if (kind === 'hotel') {
+    window(215, 405, 180, 215);
+    door(512, 286, 190, 304);
+    window(809, 405, 180, 215);
+  } else {
+    window(215, 405, 190, 215);
+    door(512, 286, 210, 304);
+    window(809, 405, 190, 215);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  const facade = new THREE.Mesh(
+    new THREE.PlaneGeometry(w - 0.5, 6),
+    new THREE.MeshStandardMaterial({ map: texture, roughness: 0.92, side: THREE.DoubleSide, ...DECOR_DEPTH_BIAS }),
+  );
+  // Face the town street (-Z) so the lettering is not mirrored from the side
+  // players actually approach.
+  facade.rotation.y = Math.PI;
+  facade.position.set(x, 3.15, z - d / 2 - SURFACE_LAYER_EPS);
+  facade.castShadow = false;
+  facade.receiveShadow = true;
+  scene.add(facade);
+}
+
+function addOldWestRailroad(scene, world) {
+  const railZ = 35;
+  const horizonLength = 1500;
+  const iron = 0x4a4039;
+  const tieWood = 0x573722;
+  // Keep every rail component below a horse's step height and visual-only.
+  // The line can therefore cross the full range without turning into hundreds
+  // of tiny movement colliders.
+  addBox(scene, world, 0, 0.035, railZ, horizonLength, 0.07, 7.5, 0x805338, {
+    tex: 'rock', repeat: [190, 2], collide: false,
+  });
+  for (let x = -horizonLength / 2 + 3; x <= horizonLength / 2 - 3; x += 4) {
+    addBox(scene, world, x, 0.13, railZ, 0.62, 0.22, 6.4, tieWood, {
+      collide: false, shadow: false, roughness: 1,
+    });
+  }
+  for (const z of [railZ - 2, railZ + 2]) {
+    addBox(scene, world, 0, 0.29, z, horizonLength, 0.2, 0.22, iron, {
+      collide: false, metalness: 0.72, roughness: 0.34,
+    });
+  }
+
+  // A low timber depot platform sits between the storefronts and the track,
+  // turning the painted façades into a proper station-facing town frontage.
+  addBox(scene, world, -32, 0.38, 45.5, 86, 0.76, 9.5, tieWood, {
+    tex: 'panel', repeat: [15, 2], debugName: 'old-west-station-platform',
+  });
+  addBox(scene, world, -32, 0.82, 41.05, 86, 0.14, 0.25, 0xd4a568, {
+    collide: false, shadow: false,
+  });
+}
+
+function buildOldWest(scene) {
+  const world = newWorld({
+    killY: -25, playerSpeed: 12.6, waypointLinkDist: 72, waypointLinkDy: 7.5,
+    mounted: true, horseTurnRate: 1.45, horseGallopSpeed: 19.5,
+    horseGallopDuration: 15, horseGallopRecharge: 0.65,
+  });
+  scene.background = new THREE.Color(0x79b6d0);
+  scene.fog = new THREE.Fog(0xd8a366, 300, 920);
+  baseLighting(scene, 0xffd9a4, 0x71402c, [-85, 125, 55], 260);
+  addDaytimeSkyDome(scene);
+
+  // A visual-only desert ring surrounds, but never overlaps, the playable
+  // 460×360 slab. The exact hole removes the shallow-angle z-fighting seam
+  // that a single full-size plane produced across the arena.
+  const desertRingShape = new THREE.Shape();
+  desertRingShape.moveTo(-800, -800);
+  desertRingShape.lineTo(800, -800);
+  desertRingShape.lineTo(800, 800);
+  desertRingShape.lineTo(-800, 800);
+  desertRingShape.closePath();
+  const playableHole = new THREE.Path();
+  playableHole.moveTo(-230, -180);
+  playableHole.lineTo(-230, 180);
+  playableHole.lineTo(230, 180);
+  playableHole.lineTo(230, -180);
+  playableHole.closePath();
+  desertRingShape.holes.push(playableHole);
+  const desertRingGeometry = new THREE.ShapeGeometry(desertRingShape);
+  const ringPositions = desertRingGeometry.getAttribute('position');
+  const ringUvs = desertRingGeometry.getAttribute('uv');
+  for (let i = 0; i < ringPositions.count; i++) {
+    // Use the playable slab's repeats-per-world-unit and align both textures
+    // at world origin, so the butt joint does not change scale or phase.
+    ringUvs.setXY(i, ringPositions.getX(i) * 64 / 460, ringPositions.getY(i) * 50 / 360);
+  }
+  ringUvs.needsUpdate = true;
+  const horizon = new THREE.Mesh(
+    desertRingGeometry,
+    mat(0xc77b45, { tex: 'rock', repeat: [1, 1], roughness: 1 }),
+  );
+  horizon.rotation.x = -Math.PI / 2;
+  horizon.position.y = 0;
+  horizon.receiveShadow = true;
+  scene.add(horizon);
+  addBox(scene, world, 0, -0.65, 0, 460, 1.3, 360, 0xc77b45, {
+    tex: 'rock', repeat: [64, 50], debugName: 'old-west-desert-floor',
+  });
+  addOldWestHill(scene, world, -140, 112, 58, 9, 42, 0xb75b31);
+  addOldWestHill(scene, world, 132, 108, 52, 7.5, 58, 0xc46d3b);
+  addOldWestHill(scene, world, -55, -78, 42, 6.5, 36, 0xb85a32);
+  addOldWestArch(scene, world, -145, -45);
+  addOldWestCliff(scene, world);
+  addOldWestRailroad(scene, world);
+  addOldWestRideBoundary(world);
+
+  // Distant formations are scenery only: they sell a continuous Utah desert
+  // beyond the ride boundary and dissolve into the warm horizon fog.
+  for (const spec of [
+    [-430,250,150,58,105,0x9a482e], [390,-330,190,70,120,0xa95331],
+    [470,180,105,82,70,0x8d3b28], [-330,-410,170,48,130,0xb45b35],
+  ]) addOldWestHill(scene, world, ...spec, false);
+
+  const timber = 0x784625, plaster = 0xd4a568, roof = 0x5d3022;
+  for (const [x, z, w, d, label, accent, kind] of [
+    [-48, 62, 15, 10, 'GENERAL STORE', '#7f3b29', 'store'],
+    [-27, 66, 18, 12, 'HOTEL', '#315e73', 'hotel'],
+    [-2, 63, 14, 10, 'SALOON', '#8a472a', 'saloon'],
+  ]) {
+    addBox(scene, world, x, 3.2, z, w, 6.4, d, plaster, { tex: 'panel', repeat: [3, 2] });
+    addBox(scene, world, x, 6.8, z, w + 1.2, 0.8, d + 1.2, roof, { tex: 'rock', repeat: [3, 2] });
+    addOldWestStorefront(scene, { x, z, w, d, label, accent, kind });
+    for (const sx of [-1, 1]) addBox(scene, world, x + sx * (w / 2 - 0.7), 1.6, z - d / 2 - 2.1, 0.45, 3.2, 0.45, timber);
+    addBox(scene, world, x, 0.35, z - d / 2 - 2.1, w, 0.7, 4, timber, { tex: 'panel', repeat: [4, 1] });
+  }
+
+  const cactusSpecs = [
+    [-205,-145,5.8,.2],[-178,-65,4.5,1.1],[-202,142,5.1,2.4],[-154,126,4.3,.7],
+    [-118,-142,5.5,2.8],[-105,142,4.7,1.6],[-72,-118,3.9,.4],[-62,132,5.6,2.1],
+    [22,-148,4.6,1.3],[35,142,5.2,2.7],[82,130,4.2,.8],[105,-143,5.9,1.9],
+    [196,-118,4.8,2.5],[208,-8,5.4,.5],[172,135,4.1,1.5],[-210,12,4.9,2.9],
+    [-105,2,3.8,.9],[80,5,4.5,2.2],[-20,-20,3.9,.3],[-52,18,4.2,1.7],
+    [145,-32,5.4,.6],[188,72,4.6,1.8],[-165,45,5.1,2.5],[12,112,4.3,.9],
+    [122,152,5.8,2.2],[-22,-132,4.7,1.4],[204,118,4.2,.2],[-192,-15,5.2,2.8],
+  ];
+  for (const spec of cactusSpecs) addOldWestCactus(scene, world, ...spec);
+  addOldWestCactusContactDamage(world);
+
+  world.spawns.blue = [V(-190, 0.1, -108), V(-190, 0.1, 0), V(-190, 0.1, 108), V(-142, 0.1, -30)];
+  world.spawns.red = [V(190, 0.1, 108), V(190, 0.1, 0), V(190, 0.1, -108), V(175, 0.1, -45)];
+  world.spawns.ffa = [
+    V(-190,0.1,-108), V(190,0.1,108), V(-190,0.1,108), V(190,0.1,-108),
+    V(0,0.1,-152), V(0,0.1,152), V(-172,0.1,0), V(172,0.1,0),
+  ];
+  // The enlarged range needs a broad open-ground graph; otherwise bots would
+  // only navigate inside the original central footprint. Exclude authored
+  // hills, the frontier buildings, and the cliff, then link their dedicated
+  // elevated routes into this grid below.
+  const cliffRamp = world.oldWestCliffRamp;
+  for (let x = -200; x <= 200; x += 50) for (let z = -150; z <= 150; z += 50) {
+    const inWestHill = ((x + 140) / 62) ** 2 + ((z - 112) / 46) ** 2 < 1;
+    const inEastHill = ((x - 132) / 56) ** 2 + ((z - 108) / 63) ** 2 < 1;
+    const inSouthwestHill = ((x + 55) / 46) ** 2 + ((z + 78) / 40) ** 2 < 1;
+    const inTown = x > -62 && x < 10 && z > 48 && z < 82;
+    const cliffDx = x - cliffRamp.centerX;
+    const cliffDz = z - cliffRamp.centerZ;
+    const cliffAlong = cliffDx * Math.cos(cliffRamp.yaw) + cliffDz * Math.sin(cliffRamp.yaw);
+    const cliffCross = -cliffDx * Math.sin(cliffRamp.yaw) + cliffDz * Math.cos(cliffRamp.yaw);
+    const inCliff = Math.abs(cliffAlong) < cliffRamp.length / 2 + 8 &&
+      Math.abs(cliffCross) < cliffRamp.width / 2 + 8;
+    if (!inWestHill && !inEastHill && !inSouthwestHill && !inTown && !inCliff) wp(world, x, 0, z);
+  }
+  for (const [x, y, z] of [
+    [-205,0,0],[-170,0,-92],[-140,7,112],[-105,0,0],[-55,6,-78],[-62,0,132],
+    [0,0,-152],[0,0,-82],[0,0,10],[-60,.8,45.5],[-30,.8,45.5],[0,.8,45.5],[0,0,142],[68,0,58],
+    [132,6,108],[170,0,142],[102,0,-70],[76,7,-55],[50,14,-40],[24,21,-25],[-2,28,-10],[205,0,-85],
+  ]) wp(world, x, y, z);
+  world.manualLinks.push(
+    [132,6,108,170,0,142], [102,0,-70,76,7,-55], [76,7,-55,50,14,-40],
+    [50,14,-40,24,21,-25], [24,21,-25,-2,28,-10], [102,0,-70,150,0,-100],
+    [-140,7,112,-105,0,0], [-140,7,112,-62,0,132],
+    [-55,6,-78,-100,0,-100], [-55,6,-78,0,0,-50],
+  );
+  for (const [kind, x, y, z, extra] of [
+    ['weapon', -118, 0.7, -64, { weapon: 'scatter', amount: 8 }],
+    ['weapon', 72, 0.7, 18, { weapon: 'sidewinder', amount: 10 }],
+    ['weapon', 5, 26.7, -14, { weapon: 'pulsar', amount: 14 }],
+    ['weapon', -145, 0.7, -45, { weapon: 'zooka', amount: 4 }],
+    ['weapon', 0, 0.9, 45.5, { weapon: 'hyper', amount: 5 }],
+    ['weapon', 132, 7.7, 108, { weapon: 'parasite', amount: 8 }],
+    ['weapon', -140, 9.2, 112, { weapon: 'whomper', amount: 4 }],
+    ['ammo', -185, 0.7, -85, { weapon: 'scatter' }],
+    ['ammo', -70, 0.7, -145, { weapon: 'scatter' }],
+    ['ammo', 155, 0.7, 5, { weapon: 'sidewinder' }],
+    ['ammo', 70, 0.7, 65, { weapon: 'sidewinder' }],
+    ['ammo', 25, 0.7, -105, { weapon: 'pulsar' }],
+    ['ammo', 180, 0.7, -145, { weapon: 'pulsar' }],
+    ['ammo', -80, 0.7, 5, { weapon: 'zooka' }],
+    ['ammo', -20, 0.7, -115, { weapon: 'zooka' }],
+    ['ammo', -75, 0.7, 80, { weapon: 'hyper' }],
+    ['ammo', 65, 0.7, 95, { weapon: 'hyper' }],
+    ['ammo', 190, 0.7, 145, { weapon: 'parasite' }],
+    ['ammo', 205, 0.7, 55, { weapon: 'parasite' }],
+    ['ammo', -205, 0.7, 60, { weapon: 'whomper' }],
+    ['ammo', -75, 0.7, 150, { weapon: 'whomper' }],
+    ['health', -42, 0.7, 46, {}], ['shield', 18, 0.7, 82, {}],
+    ['speed', -155, 0.7, 92, {}], ['points', 205, 0.7, -82, { amount: 250 }],
+  ]) pk(world, kind, x, y, z, extra);
+
+  // Secret Shot is granted on spawn; every other regular loadout slot must be
+  // represented by a physical pickup somewhere in the range.
+  const requiredWeapons = ['scatter', 'pulsar', 'sidewinder', 'zooka', 'hyper', 'parasite', 'whomper'];
+  const missingWeapons = requiredWeapons.filter(weapon =>
+    !world.pickups.some(pickup => pickup.kind === 'weapon' && pickup.weapon === weapon));
+  if (missingWeapons.length) {
+    throw new Error(`[oldwest] missing regular weapon pickup(s): ${missingWeapons.join(', ')}`);
+  }
+  const invalidAmmoCounts = requiredWeapons.map(weapon => ({
+    weapon,
+    count: world.pickups.filter(pickup => pickup.kind === 'ammo' && pickup.weapon === weapon).length,
+  })).filter(({ count }) => count < 1 || count > 2);
+  if (invalidAmmoCounts.length) {
+    throw new Error(`[oldwest] regular weapons require 1-2 ammo pickups: ${invalidAmmoCounts
+      .map(({ weapon, count }) => `${weapon}=${count}`).join(', ')}`);
+  }
+
+  // Hard invariant: no authored team or FFA spawn may sit beneath the
+  // diagonal cliff. Fail during map construction instead of spawning a rider
+  // inside the rock if these coordinates are ever edited into its footprint.
+  const unsafeCliffSpawns = [...world.spawns.blue, ...world.spawns.red, ...world.spawns.ffa]
+    .filter(spawn => {
+      const dx = spawn.x - cliffRamp.centerX;
+      const dz = spawn.z - cliffRamp.centerZ;
+      const along = dx * Math.cos(cliffRamp.yaw) + dz * Math.sin(cliffRamp.yaw);
+      const cross = -dx * Math.sin(cliffRamp.yaw) + dz * Math.cos(cliffRamp.yaw);
+      if (Math.abs(along) > cliffRamp.length / 2 || Math.abs(cross) > cliffRamp.width / 2) return false;
+      const surfaceY = cliffRamp.h0 + (cliffRamp.h1 - cliffRamp.h0) * (along / cliffRamp.length + 0.5);
+      return spawn.y + 1 < surfaceY;
+    });
+  if (unsafeCliffSpawns.length) {
+    throw new Error(`[oldwest] ${unsafeCliffSpawns.length} spawn point(s) are underneath the cliff`);
+  }
+
+  mergeStatic(scene, world);
+  return world;
+}
+
 function buildFortress(scene) {
   const world = newWorld({
     killY: -20,
@@ -4408,12 +5004,134 @@ function buildAsteroids(scene) {
   return world;
 }
 
-/* ============== MAP 4 — CANOPY (giant forest, vertical to y=30) ==============
-   Five colossal trees with branch decks at 10/20, a tiered center tree
-   (8/16/24/crown 30 with the gold), edge bridges, ramps and pad chains up. */
+function addCanopyVillageBridge(scene, world, start, end, width = 4.2) {
+  const delta = end.clone().sub(start);
+  const length = Math.hypot(delta.x, delta.z);
+  const yaw = Math.atan2(delta.x, delta.z);
+  const bridge = new THREE.Mesh(
+    new THREE.BoxGeometry(width, 0.62, length),
+    mat(0x8f693d, { tex: 'crate', repeat: [2, Math.max(3, length / 5)], roughness: 0.94 }),
+  );
+  // Sink the rendered top four centimetres below the collision plane. The
+  // bridge ends overlap the destination decks for seamless walking, and a
+  // coplanar top there used to shimmer badly at the four council corners.
+  bridge.position.copy(start).add(end).multiplyScalar(0.5).add(V(0, -0.35, 0));
+  bridge.rotation.y = yaw;
+  bridge.name = 'canopy-village-bridge';
+  bridge.castShadow = bridge.receiveShadow = true;
+  scene.add(bridge);
+
+  // Short overlapping support cells follow the diagonal without filling the
+  // empty corners of its bounding box.
+  const steps = Math.max(3, Math.ceil(length / 2.4));
+  const stepX = delta.x / steps;
+  const stepZ = delta.z / steps;
+  let previous = null;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const p = V(start.x + delta.x * t, start.y, start.z + delta.z * t);
+    world.colliders.push({
+      type: 'box',
+      min: V(p.x - Math.abs(stepX) * 0.62 - width * 0.42, p.y - 0.62,
+        p.z - Math.abs(stepZ) * 0.62 - width * 0.42),
+      max: V(p.x + Math.abs(stepX) * 0.62 + width * 0.42, p.y,
+        p.z + Math.abs(stepZ) * 0.62 + width * 0.42),
+    });
+    if (i % 2 === 0 || i === steps) {
+      wp(world, p.x, p.y, p.z);
+      world.waypoints[world.waypoints.length - 1].manualLinksOnly = true;
+      if (previous) world.manualLinks.push([...previous, p.x, p.y, p.z]);
+      previous = [p.x, p.y, p.z];
+    }
+  }
+
+  // Rope rails make the long diagonal crossings read as village suspension
+  // bridges rather than floating boards. Their slim segmented colliders trace
+  // the ropes closely, preventing falls without filling diagonal bridge lanes
+  // with one oversized axis-aligned blocker.
+  const forward = delta.clone().setY(0).normalize();
+  const side = V(forward.z, 0, -forward.x);
+  const ropeMaterial = mat(0x5b3d25, { roughness: 1 });
+  for (const sign of [-1, 1]) {
+    const ropeStart = start.clone().addScaledVector(side, sign * width * 0.47).add(V(0, 1.05, 0));
+    const ropeEnd = end.clone().addScaledVector(side, sign * width * 0.47).add(V(0, 1.05, 0));
+    const ropeDelta = ropeEnd.clone().sub(ropeStart);
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, ropeDelta.length(), 6), ropeMaterial);
+    rope.quaternion.setFromUnitVectors(V(0, 1, 0), ropeDelta.clone().normalize());
+    rope.position.copy(ropeStart).add(ropeEnd).multiplyScalar(0.5);
+    rope.castShadow = true;
+    scene.add(rope);
+
+    const railSteps = Math.max(4, Math.ceil(length / 1.4));
+    const railStepX = (ropeEnd.x - ropeStart.x) / railSteps;
+    const railStepZ = (ropeEnd.z - ropeStart.z) / railSteps;
+    for (let i = 0; i <= railSteps; i++) {
+      const t = i / railSteps;
+      const x = ropeStart.x + (ropeEnd.x - ropeStart.x) * t;
+      const z = ropeStart.z + (ropeEnd.z - ropeStart.z) * t;
+      world.colliders.push({
+        type: 'box',
+        min: V(x - Math.abs(railStepX) * 0.53 - 0.1, start.y,
+          z - Math.abs(railStepZ) * 0.53 - 0.1),
+        max: V(x + Math.abs(railStepX) * 0.53 + 0.1, start.y + 1.35,
+          z + Math.abs(railStepZ) * 0.53 + 0.1),
+      });
+    }
+  }
+}
+
+function addCanopyTreehouse(scene, world, x, floorY, z, doorSignX, accent = 0xffc45c) {
+  const wood = 0x76502f;
+  const halfW = 3.8;
+  const halfD = 3.3;
+  const wallH = 4.3;
+  const facing = Math.sign(doorSignX) || 1;
+  const frontX = x + facing * halfW;
+  addBox(scene, world, x, floorY + wallH / 2, z - halfD, halfW * 2, wallH, 0.48, wood,
+    { tex: 'crate', repeat: [3, 2] });
+  addBox(scene, world, x, floorY + wallH / 2, z + halfD, halfW * 2, wallH, 0.48, wood,
+    { tex: 'crate', repeat: [3, 2] });
+  // Matching doors in both tangential walls turn the hut into a walk-through
+  // room parallel to the trunk rather than a dead end at the balcony edge.
+  for (const wallSign of [-1, 1]) {
+    const wallX = x + wallSign * halfW;
+    for (const side of [-1, 1]) addBox(
+      scene, world, wallX, floorY + wallH / 2, z + side * 2.4,
+      0.48, wallH, 1.8, wood, { tex: 'crate', repeat: [1, 2] },
+    );
+    addBox(scene, world, wallX, floorY + wallH - 0.45, z, 0.48, 0.9, 3, wood,
+      { tex: 'crate' });
+  }
+
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(5.8, 2.7, 4),
+    mat(0x3f6f3d, { tex: 'grass', repeat: [2, 2], roughness: 0.98 }),
+  );
+  roof.position.set(x, floorY + wallH + 1.25, z);
+  roof.rotation.y = Math.PI / 4;
+  roof.name = 'canopy-village-treehouse-roof';
+  roof.castShadow = roof.receiveShadow = true;
+  scene.add(roof);
+
+  const lantern = new THREE.PointLight(accent, 12, 12);
+  lantern.position.set(frontX + facing * 0.45, floorY + 2.6, z);
+  scene.add(lantern);
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.24, 8, 6),
+    new THREE.MeshBasicMaterial({ color: accent, toneMapped: false }),
+  );
+  glow.position.copy(lantern.position);
+  scene.add(glow);
+}
+
+/* ============== MAP 4 — CANOPY (giant forest, vertical to y=50) ==============
+   Five colossal trees with branch decks at 10/20, a connected village at 30,
+   and living crowns above y=40. Edge bridges, vines, ramps, and pad chains
+   make the whole forest playable from riverbed to treetop roofs. */
 function buildCanopy(scene) {
   const world = newWorld({
     killY: -20,
+    grappleEnabled: true,
     waypointLinkDist: 24,
     waypointLinkDy: 4.6,
     // Keep the victory presentation below the treetops on the open west side
@@ -4509,14 +5227,24 @@ function buildCanopy(scene) {
   // floating platforms + pads
   addBox(scene, world, 30, 13.7, 55, 10, 0.6, 10, 0x8a6a40, { tex: 'crate' });
   addJumpPad(scene, world, 21, 0, 55, 30, 5, 0, 0xffd23c);
+  // Launch from the far outside corner. The steeper arc rises above the
+  // village deck before moving beneath its footprint, then descends on top.
+  addJumpPad(scene, world, 26.5, 14, 58.5, 36, 9, -6, 0xa8ff70);
   pk(world, 'star', 30, 14.2, 55, { hidden: true });
   wp(world, 21, 0, 55); wp(world, 30, 14, 55);
-  world.manualLinks.push([21, 0, 55, 30, 14, 55, true]);
+  world.manualLinks.push(
+    [21, 0, 55, 30, 14, 55, true],
+    [30, 14, 55, 51.2, 30, 45, true],
+  );
   addBox(scene, world, -35, 11.7, -60, 10, 0.6, 10, 0x8a6a40, { tex: 'crate' });
   addJumpPad(scene, world, -44, 0, -60, 28, 5, 0, 0xffd23c);
+  addJumpPad(scene, world, -31.5, 12, -63.5, 36, -9, 8, 0xa8ff70);
   pk(world, 'health', -35, 12.2, -60);
   wp(world, -44, 0, -60); wp(world, -35, 12, -60);
-  world.manualLinks.push([-44, 0, -60, -35, 12, -60, true]);
+  world.manualLinks.push(
+    [-44, 0, -60, -35, 12, -60, true],
+    [-35, 12, -60, -51.2, 30, -45, true],
+  );
   // tournament banners on the hedges + the big tree
   addScoreTarget(scene, world, -20, 8, -79.94, 10, 0);
   addDecal(scene, 'poster4', 20, 9, 79.94, 10, Math.PI);
@@ -4545,10 +5273,10 @@ function buildCanopy(scene) {
   // Trunks: NE/NW/SE solid; the SW tree is HOLLOW — slip in the ground door,
   // ride the hidden pad shaft to an attic, and step out onto the 20-deck.
   for (const [tx, tz] of [[45, -45], [-45, 45], [45, 45]]) {
-    addBox(scene, world, tx, 15, tz, 8, 30, 8, 0xffffff, { tex: 'canopy-bark', repeat: [2, 8] });
+    addBox(scene, world, tx, 21, tz, 8, 42, 8, 0xffffff, { tex: 'canopy-bark', repeat: [2, 11] });
   }
   const TR = 0xffffff;
-  addBox(scene, world, -45, 26.5, -45, 8, 7, 8, TR, { tex: 'canopy-bark', repeat: [2, 2] }); // solid crown section
+  addBox(scene, world, -45, 32.5, -45, 8, 19, 8, TR, { tex: 'canopy-bark', repeat: [2, 5] }); // solid upper trunk
   addBox(scene, world, -48.4, 11.5, -45, 1.2, 23, 8, TR, { tex: 'canopy-bark', repeat: [2, 6] }); // shaft walls
   addBox(scene, world, -41.6, 11.5, -45, 1.2, 23, 8, TR, { tex: 'canopy-bark', repeat: [2, 6] });
   addBox(scene, world, -45, 11.5, -48.4, 5.6, 23, 1.2, TR, { tex: 'canopy-bark', repeat: [2, 6] });
@@ -4580,7 +5308,7 @@ function buildCanopy(scene) {
   const roomLight = new THREE.PointLight(0xffb060, 25, 18);
   roomLight.position.set(0, 5, 0);
   scene.add(roomLight);
-  addBox(scene, world, 0, 18.5, 0, 5, 21, 5, 0xffffff, { tex: 'canopy-bark', repeat: [2, 6] });
+  addBox(scene, world, 0, 24, 0, 5, 32, 5, 0xffffff, { tex: 'canopy-bark', repeat: [2, 8] });
 
   // hedge lanes — break up the open lawn into corridors, plus a small maze
   // pocket in the SE quadrant (the pulsar sits inside it)
@@ -4644,9 +5372,97 @@ function buildCanopy(scene) {
   addBox(scene, world, -5, 7.5, -5, 10, 1, 6, 0x8a6a40, { tex: 'crate' });
   addBox(scene, world, 9, 7.5, -5, 2, 1, 6, 0x8a6a40, { tex: 'crate' });
   addBox(scene, world, 0, 7.5, 4, 20, 1, 12, 0x8a6a40, { tex: 'crate' });
-  addBox(scene, world, 0, 15.5, 0, 14, 1, 14, 0x8a6a40, { tex: 'crate' });
-  addBox(scene, world, -3, 23.5, 0, 10, 1, 10, 0x8a6a40, { tex: 'crate' });
-  addBox(scene, world, 4, 29.5, 0, 8, 1, 8, 0x9a7a4c, { tex: 'crate' });
+  // Broad upper terraces leave enough room to circulate around the trunk and
+  // receive the spiral ramps below. The top council deck extends slightly
+  // farther so the four suspension bridges meet it with generous landings.
+  addBox(scene, world, 0, 15.5, 0, 20, 1, 20, 0x8a6a40, { tex: 'crate', repeat: [5, 5] });
+  addBox(scene, world, 0, 23.5, 0, 20, 1, 20, 0x8a6a40, { tex: 'crate', repeat: [5, 5] });
+  addBox(scene, world, 0, 29.5, 0, 24, 1, 24, 0x9a7a4c, { tex: 'crate', repeat: [6, 6] });
+
+  // TREETOP VILLAGE — broad settlement decks sit above the older combat
+  // platforms, with treehouses tucked against the outer rim and suspension
+  // bridges converging on the center-tree council platform.
+  const villageY = 30;
+  const villageCorners = [[-45, -45], [45, -45], [-45, 45], [45, 45]];
+  const addVillageNavRing = (cx, cz, radius = 6.2) => {
+    const points = [];
+    for (let i = 0; i < 8; i++) {
+      const angle = i * Math.PI / 4;
+      const point = [cx + Math.cos(angle) * radius, villageY, cz + Math.sin(angle) * radius];
+      points.push(point);
+      wp(world, ...point);
+      world.waypoints[world.waypoints.length - 1].manualLinksOnly = true;
+    }
+    for (let i = 0; i < points.length; i++) {
+      world.manualLinks.push([...points[i], ...points[(i + 1) % points.length]]);
+    }
+    return points;
+  };
+  const nearestVillagePoint = (points, x, z) => points.reduce((best, candidate) => (
+    Math.hypot(candidate[0] - x, candidate[2] - z)
+      < Math.hypot(best[0] - x, best[2] - z) ? candidate : best
+  ));
+  const centerVillageRing = addVillageNavRing(0, 0, 6.2);
+  // Tie the new council-square loop into the existing crown landing. The
+  // village nodes deliberately opt out of broad automatic links so bots do
+  // not cut across the trunk or hut walls.
+  world.manualLinks.push([4, villageY, 0, ...nearestVillagePoint(centerVillageRing, 4, 0)]);
+  for (let index = 0; index < villageCorners.length; index++) {
+    const [tx, tz] = villageCorners[index];
+    const sx = Math.sign(tx);
+    const sz = Math.sign(tz);
+    addBox(scene, world, tx, villageY - 0.5, tz, 26, 1, 26, 0x86613a,
+      { tex: 'crate', repeat: [6, 6] });
+    const cornerRing = addVillageNavRing(tx, tz, 6.2);
+
+    const bridgeStart = V(tx - sx * 10.5, villageY, tz - sz * 10.5);
+    const bridgeEnd = V(sx * 8, villageY, sz * 8);
+    addCanopyVillageBridge(scene, world, bridgeStart, bridgeEnd, 4.4);
+    world.manualLinks.push(
+      [bridgeStart.x, bridgeStart.y, bridgeStart.z, ...nearestVillagePoint(cornerRing, bridgeStart.x, bridgeStart.z)],
+      [bridgeEnd.x, bridgeEnd.y, bridgeEnd.z, ...nearestVillagePoint(centerVillageRing, bridgeEnd.x, bridgeEnd.z)],
+    );
+
+    // Doors face tangentially toward the bridge-side balcony instead of
+    // opening radially toward the trunk or the outside edge.
+    addCanopyTreehouse(
+      scene, world, tx, villageY, tz + sz * 8.6, -sx,
+      [0xffc45c, 0x75e0ff, 0xff8ac7, 0xa5ff78][index],
+    );
+    pk(world, 'grapple', tx, villageY + 0.2, tz + sz * 8.6);
+
+    // The two corners without floating-platform launch chains receive a
+    // continuous exterior vine from the lawn to the village deck.
+    if (sx !== sz) {
+      const fullVineX = tx + sx * 13.28;
+      addVine(scene, world, fullVineX, tz, 0.2, villageY + 0.15, 0.95,
+        sx * 0.16, 0, -sx, 0);
+      wp(world, fullVineX, 0.2, tz);
+      wp(world, fullVineX, villageY, tz);
+      world.manualLinks.push([fullVineX, 0.2, tz, fullVineX, villageY, tz, true]);
+    }
+
+    // Existing upper decks remain useful: a living vine continues from y=20
+    // to the village, making the new tier reversible without relying on pads.
+    const vineX = tx + sx * 7.35;
+    const vineZ = tz;
+    addVine(scene, world, vineX, vineZ, 20.1, villageY + 0.15, 0.9,
+      sx * 0.16, 0, -sx, 0);
+    wp(world, vineX, 20.1, vineZ);
+    world.manualLinks.push(
+      [tx + sx * 5, 20, tz + sz * 5.5, vineX, 20.1, vineZ],
+      [vineX, 20.1, vineZ, ...nearestVillagePoint(cornerRing, vineX, vineZ)],
+    );
+  }
+
+  // A small council canopy and lanterns make the center platform read as the
+  // village square while leaving the trunk and gold pickup approachable.
+  for (const [px, pz] of [[-7.8, -7.8], [7.8, -7.8], [-7.8, 7.8], [7.8, 7.8]]) {
+    addBox(scene, world, px, 32.5, pz, 0.45, 5, 0.45, 0x704b2e, { tex: 'crate' });
+    const lantern = new THREE.PointLight(0xffce72, 8, 10);
+    lantern.position.set(px, 34.2, pz);
+    scene.add(lantern);
+  }
 
   // Edge bridges butt exactly into the deck edges at the same height. Their
   // runs stop at z/x ±38, leaving no 2cm lip and no coplanar overlap.
@@ -4674,14 +5490,57 @@ function buildCanopy(scene) {
   addVine(scene, world, 31.38, 16, 0.2, 4.2, 0.75, 0.16, 0, -1, 0);     // ranger hut roof east edge
   addVine(scene, world, -11, 61.18, 0.2, 3.8, 0.8, 0, 0.16, 0, -1);     // north hedge lane
   addVine(scene, world, 61.18, -3, 0.2, 3.8, 0.8, 0.16, 0, -1, 0);      // east hedge lane
+  addVine(scene, world, 12.28, -6, 16.1, 30.1, 0.9, 0.16, 0, -1, 0);    // council deck east drop
+  addVine(scene, world, -12.28, 6, 8.1, 30.1, 0.9, -0.16, 0, 1, 0);     // council deck west drop
 
   // Ramps: ground ↔ center deck 8; bridges ↔ center 16 / center 8
   addRamp(scene, world, { axis: 'x', minX: 10, maxX: 42, minZ: -2, maxZ: 2, h0: 8, h1: 0, color: 0x8a6a40 });
   addRamp(scene, world, { axis: 'x', minX: -42, maxX: -10, minZ: -2, maxZ: 2, h0: 0, h1: 8, color: 0x8a6a40 });
   addRamp(scene, world, { axis: 'x', minX: -43.5, maxX: -7, minZ: -2, maxZ: 2, h0: 20, h1: 16, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'x', minX: 7, maxX: 43.5, minZ: -2, maxZ: 2, h0: 16, h1: 20, color: 0x8a6a40 });
+  // The east middle-tier catwalk doubles as the launch runway for the
+  // level-16 pad. Keep it broad enough to circulate past the pad safely.
+  addRamp(scene, world, { axis: 'x', minX: 7, maxX: 43.5, minZ: -4, maxZ: 4,
+    h0: 16, h1: 20, color: 0x8a6a40 });
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -43.5, maxZ: -10, h0: 10, h1: 8, color: 0x8a6a40 });
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 10, maxZ: 43.5, h0: 8, h1: 10, color: 0x8a6a40 });
+
+  // Continuous center-tree ascent. Every flight now runs fully outside the
+  // destination deck footprint. Short level landings meet the deck edges, so
+  // climbers rise beside each floor and step sideways onto its top instead of
+  // walking into the underside.
+  addRamp(scene, world, { axis: 'z', minX: 10.5, maxX: 14, minZ: -9, maxZ: 9,
+    h0: 8, h1: 16, color: 0x8a6a40, visualInset: 0.08 });
+  addBox(scene, world, 12, 7.75, -9.5, 4, 0.5, 1, 0x8a6a40, { tex: 'crate' });
+  addBox(scene, world, 12, 15.75, 9.5, 4, 0.5, 1, 0x8a6a40, { tex: 'crate' });
+
+  addRamp(scene, world, { axis: 'z', minX: -14, maxX: -10.5, minZ: -9, maxZ: 9,
+    h0: 24, h1: 16, color: 0x8a6a40, visualInset: 0.08 });
+  addBox(scene, world, -12, 15.75, 9.5, 4, 0.5, 1, 0x8a6a40, { tex: 'crate' });
+  addBox(scene, world, -12, 23.75, -9.5, 4, 0.5, 1, 0x8a6a40, { tex: 'crate' });
+
+  addRamp(scene, world, { axis: 'x', minX: -9, maxX: 9, minZ: -16, maxZ: -12.5,
+    h0: 24, h1: 30, color: 0x8a6a40, visualInset: 0.08 });
+  addBox(scene, world, -9.5, 23.75, -13, 1, 0.5, 6, 0x8a6a40,
+    { tex: 'crate', repeat: [1, 2] });
+  addBox(scene, world, 9.5, 29.75, -14, 1, 0.5, 4, 0x8a6a40,
+    { tex: 'crate' });
+  // An additional direct approach rises from the west level-20 catwalk to the
+  // council deck. Stop the sloped slab before the deck underside and bridge
+  // the last metre with a level landing, so the ramp meets the open deck lip
+  // instead of visually and physically disappearing into the floor.
+  addRamp(scene, world, { axis: 'x', minX: -43.5, maxX: -16, minZ: -9, maxZ: -5,
+    h0: 20, h1: 30, color: 0x8a6a40, visualInset: 0.08 });
+  addBox(scene, world, -14, 29.75, -7, 4, 0.5, 8, 0x8a6a40,
+    { tex: 'crate', repeat: [2, 2] });
+  for (const [a, b] of [
+    [[12, 8, -9.5], [12, 16, 9.5]],
+    [[-12, 16, 9.5], [-12, 24, -9.5]],
+    [[-9.5, 24, -14], [9.5, 30, -14]],
+    [[-43.5, 20, -7], [-14, 30, -7]],
+  ]) {
+    wp(world, ...a); wp(world, ...b);
+    world.manualLinks.push([...a, ...b]);
+  }
 
   // Pads: ground → corner decks, plus a direct center-tree launch to the
   // concealed gold fort. The upper-tier pads remain as alternate routes.
@@ -4689,30 +5548,55 @@ function buildCanopy(scene) {
   addJumpPad(scene, world, 30, 0, -30, 24, 11.5, -11.5, 0x9dff70);
   addJumpPad(scene, world, -30, 0, 30, 24, -11.5, 11.5, 0x9dff70);
   addJumpPad(scene, world, 30, 0, 30, 24, 11.5, 11.5, 0x9dff70);
-  // Opposite corner from the center-tree vines and outside the upper deck's
-  // footprint. The gentle diagonal enters that footprint only once high
-  // enough to clear its underside.
-  addJumpPad(scene, world, -8, 8, 8, 38.5, 5.2, -2.2, 0xffd23c); // 8 → hidden gold fort
-  addJumpPad(scene, world, 7, 16, 0, 22, -8, 0, 0xffd23c);    // 16 → 24 (offset west)
+  // Move the lower center pad out onto the south catwalk. Its northward arc
+  // stays beyond the level-16 deck until it is already above the underside,
+  // then settles near the crown gold instead of firing into a ceiling.
+  addJumpPad(scene, world, -1.3, 8.4, 16, 38.5, 3.3, -7, 0xffd23c); // 8 → crown
+  // Start out on the south side of the widened east catwalk. The westward
+  // diagonal remains beyond the upper deck edge until it has climbed above
+  // the underside, then settles onto level 24 instead of bonking the ceiling.
+  addJumpPad(scene, world, 15, 17, 2.5, 22, -8, -1.2, 0xffd23c); // 16 → 24
   addJumpPad(scene, world, -6, 24, 0, 20, 8.3, 0, 0xffd23c);  // 24 → crown (offset east)
 
-  // Broad, layered treetops with visible spreading limbs. Their foliage zones
+  // Broad, layered treetops now rise well above the village roofs. Their
+  // foliage zones
   // deliberately retain the old radii so this visual upgrade does not expand
   // the movement slowdown or camera-leaf overlay into the bridge routes.
   const deco = { colliders: [], ramps: [] };
-  addCanopyCrown(scene, 45, 29.5, 45, 13, 1, true, 30); // one tree turns first
-  (world.foliageZones ||= []).push({ x: 45, y: 33, z: 45, r: 12.5 });
+  world.grappleFoliageTargets = [
+    { center: V(45, 45.5, 45), radius: 12.5, embed: 1 },
+    { center: V(-45, 45.5, -45), radius: 12.5, embed: 1 },
+    { center: V(45, 45.5, -45), radius: 12.5, embed: 1 },
+    { center: V(-45, 45.5, 45), radius: 12.5, embed: 1 },
+    { center: V(0, 50.5, 0), radius: 15.2, embed: 1 },
+  ];
+  addCanopyCrown(scene, 45, 45.5, 45, 13, 1, true, 42); // one tree turns first
+  (world.foliageZones ||= []).push({ x: 45, y: 49, z: 45, r: 12.5 });
   for (const [x, z, seed] of [
     [-45, -45, 2], [45, -45, 3], [-45, 45, 4],
   ]) {
-    addCanopyCrown(scene, x, 29.5, z, 13, seed, false, 30);
-    world.foliageZones.push({ x, y: 33, z, r: 13 * 0.95 });
+    addCanopyCrown(scene, x, 45.5, z, 13, seed, false, 42);
+    world.foliageZones.push({ x, y: 49, z, r: 13 * 0.95 });
   }
   // The center crown sits around the gold platform like a hidden tree fort.
-  // Its limbs begin at the existing trunk top (y=29), eliminating the visual
-  // gap while leaving the jump-pad landing and platform collision untouched.
-  addCanopyCrown(scene, 0, 34.5, 0, 16, 5, false, 29);
-  world.foliageZones.push({ x: 0, y: 39, z: 0, r: 16 * 0.95 });
+  // Its limbs begin above the extended trunk, sheltering the council deck
+  // while leaving the jump-pad landing and platform collision untouched.
+  addCanopyCrown(scene, 0, 50.5, 0, 16, 5, false, 40);
+  world.foliageZones.push({ x: 0, y: 55, z: 0, r: 16 * 0.95 });
+  // A second, inaccessible tree line beyond the arena wall closes the horizon
+  // into a continuous canopy. These trees are presentation-only: their limbs
+  // never alter the playable collision or bot graph inside the village.
+  const horizonBark = mat(0xffffff, { tex: 'canopy-bark', repeat: [2, 10], roughness: 0.96 });
+  for (const [x, z, seed] of [
+    [-98, -48, 11], [-98, 42, 12], [98, -40, 13], [98, 50, 14],
+    [-44, -98, 15], [48, 98, 16],
+  ]) {
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 4.1, 44, 10), horizonBark);
+    trunk.position.set(x, 22, z);
+    trunk.castShadow = trunk.receiveShadow = true;
+    scene.add(trunk);
+    addCanopyCrown(scene, x, 47, z, 11, seed, seed % 4 === 0, 42);
+  }
   // Smaller ground bushes keep their compact silhouette.
   for (const [x, y, z, r] of [
     [-20, 1, -60, 3], [60, 1, 20, 3], [-60, 1, 10, 2.5], [25, 1, 60, 3],
@@ -4742,6 +5626,7 @@ function buildCanopy(scene) {
   pk(world, 'speed', 20, 0.2, 42);                       // NE lawn
   pk(world, 'djump', 55, 0.2, -20);                      // on the dirt road
   pk(world, 'gold', 4, 30.2, 0);                          // the crown
+  pk(world, 'grapple', -4, 30.2, 0);                      // opposite the crown gold
   pk(world, 'silver', 0, 0.2, 0);                         // hidden in the tree-base room
   pk(world, 'health', 0, 16.2, 4);
   pk(world, 'weapon', 40, 20.2, 39, { weapon: 'whomper' });
@@ -4817,8 +5702,8 @@ function buildCanopy(scene) {
     // SW hollow tree: door, shaft, ledge, attic, top exit
     [-45, 0, -38], [-45, 0, -45], [-45, 10, -47.4], [-45, 20, -44.5], [-45, 20, -40],
     // center tiers (+ pad spots)
-    [0, 8, -7], [0, 8, 7], [-7, 8, 0], [-8, 8, 8],
-    [0, 16, 4.5], [7, 16, 0], [-5, 16, -4], [-5, 16, 4],
+    [0, 8, -7], [0, 8, 7], [-7, 8, 0], [-1.3, 8.4, 16],
+    [0, 16, 4.5], [15, 17, 2.5], [-5, 16, -4], [-5, 16, 4],
     [-3, 24, 3], [-6, 24, 0],
     [4, 30, 0],
     // corner decks (offset off the trunk that pierces them)
@@ -4839,8 +5724,8 @@ function buildCanopy(scene) {
     [-45, 0, -45, -45, 10, -47.4, true],  // SW tree shaft pads
     [-45, 10, -47.4, -45, 20, -44.5, true],
     [0, -2.6, 64, 0, -3.5, 55], [0, -3.5, 55, 0, 0, 39], // connector branch and exit
-    [-8, 8, 8, 4, 30, 0, true],       // direct pad to the hidden gold fort
-    [7, 16, 0, -3, 24, 3, true],
+    [-1.3, 8.4, 16, 4, 30, 0, true],   // direct pad to the crown gold
+    [15, 17, 2.5, -3, 24, 3, true],
     [-6, 24, 0, 4, 30, 0, true],
     [4, 30, 0, 0, 8, 7, true],        // step off the crown to descend
     [-45, 20, -45, -45, 10, -45, true], [45, 20, -45, 45, 10, -45, true],
@@ -7791,7 +8676,7 @@ function addAtriumControlsSign(scene, world, x, y, z, yaw) {
     'Space — jump',
     '1–9 / wheel — weapons',
     'Tab — scoreboard',
-    'F — fullscreen · G — glow',
+    'F — fullscreen',
     'Esc — pause',
     '',
     'Walk into a gate to play!',
@@ -8079,7 +8964,9 @@ function addAtriumHeroSign(scene, x, y, z) {
   scene.add(mesh);
 }
 
-const GATE_FRAME_INDEX = { arena: 0, fortress: 1, asteroids: 2, canopy: 3, city: 4, sanctum: 5 };
+const GATE_FRAME_INDEX = {
+  arena: 0, fortress: 1, oldwest: 1, asteroids: 2, canopy: 3, city: 4, sanctum: 5,
+};
 const gateFrameCache = {};
 function gateFrameTex(index) {
   if (gateFrameCache[index]) return gateFrameCache[index];
@@ -8891,6 +9778,13 @@ function addAtriumSkyDome(scene) {
 }
 
 function gateBrickMaterial(id, color) {
+  if (id === 'oldwest') {
+    return mat(0xd58a4c, {
+      tex: 'rock', repeat: [1.35, 1.6],
+      roughness: 0.96, metalness: 0,
+      emissive: 0x6f2d16, emissiveIntensity: 0.1,
+    });
+  }
   if (id === 'mycelium') {
     return mat(0x7d6bc7, {
       tex: 'canopy-bark', repeat: [1.1, 1.4],
@@ -9000,14 +9894,15 @@ export function buildAtrium(scene) {
   addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
   addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
 
-  // Gate bays. The long side walls hold the six arenas; the axial gates are
+  // Gate bays. The long side walls hold the eight arenas; the axial gates are
   // reserved for the Hall of Fame ahead and multiplayer behind the spawn.
   world.portals = [];
   const bays = [
     ['hall', 'HALL OF FAME', 0xffd45a, 'n', 0, 'hall'],
-    ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 24, 'map'],
-    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', 0, 'map'],
-    ['tidebreaker', 'TIDEBREAKER', 0x35b9d0, 'w', -24, 'map'],
+    ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 36, 'map'],
+    ['oldwest', 'RED ROCK RANGE', 0xd46a32, 'w', 12, 'map'],
+    ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', -12, 'map'],
+    ['tidebreaker', 'TIDEBREAKER', 0x35b9d0, 'w', -36, 'map'],
     ['arena', 'BLAST COMPLEX', 0xd88a2b, 'e', 36, 'map'],
     ['canopy', 'CANOPY', 0x4dbf6a, 'e', 12, 'map'],
     ['mycelium', 'MYCELIUM GROVE', 0xa96eff, 'e', -12, 'map'],
@@ -9079,6 +9974,7 @@ export function buildAtrium(scene) {
 const HALL_MAP_NAMES = {
   arena: 'BLAST COMPLEX',
   fortress: 'FORTRESS FALLS',
+  oldwest: 'RED ROCK RANGE',
   asteroids: 'ASTEROID BELT',
   canopy: 'CANOPY',
   mycelium: 'MYCELIUM GROVE',
@@ -16931,11 +17827,14 @@ export const MAPS = [
   { id: 'fortress', name: 'FORTRESS FALLS', emoji: '🏰',
     desc: 'A royal canal fortress: three bridges, sniper battlements, a ramp-fed siege deck, close-range sluice, and a keep with a concealed rear passage.',
     thumb: 'linear-gradient(135deg,#5c24c9,#35cce6 58%,#ffb527)', build: buildFortress },
+  { id: 'oldwest', name: 'RED ROCK RANGE', emoji: '🤠',
+    desc: 'A vast Utah-style frontier range built for horseback combat: open desert, wide red hills, cactus fields, a frontier strip, a towering stone arch, and an eastern cliff.',
+    thumb: 'linear-gradient(135deg,#6f2f25,#c46b38 52%,#e5b86a)', build: buildOldWest },
   { id: 'asteroids', name: 'ASTEROID BELT', emoji: '☄️',
     desc: 'Flat-topped rock plateaus around a derelict station: a cave, a canyon under-deck, balconies. Low gravity, long jumps, fatal void.',
     thumb: 'linear-gradient(135deg,#05060f,#334466)', build: buildAsteroids },
   { id: 'canopy', name: 'CANOPY', emoji: '🌲',
-    desc: 'Giant forest: branch decks at three heights, treetop bridges, pad chains to a golden crown 30m up.',
+    desc: 'A towering forest village: climb from river paths to branch decks, suspension bridges, treehouses, and a golden council crown.',
     thumb: 'linear-gradient(135deg,#14291f,#5d9c46)', build: buildCanopy },
   { id: 'mycelium', name: 'MYCELIUM GROVE', emoji: '🍄',
     desc: 'A moonlit mushroom forest: bounce across living caps, climb connected tree villages, and break through a waterfall into the glowing cave behind it.',

@@ -6,6 +6,11 @@ import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBl
 import { sfx, startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 import { waterSpeedMultiplier } from './water-movement.js';
+import {
+  applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
+} from './grapple.js';
+import { aiTex } from './maps.js';
+import { HORSE_HEIGHT_DELTA } from './mount.js';
 
 export class Player {
   constructor(camera, world) {
@@ -17,9 +22,9 @@ export class Player {
 
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
-    this.radius = 0.45;
-    this.height = 1.8;
-    this.eyeHeight = 1.6;
+    this.radius = world.mounted ? 0.58 : 0.45;
+    this.height = world.mounted ? 2.65 + HORSE_HEIGHT_DELTA : 1.8;
+    this.eyeHeight = world.mounted ? 2.48 + HORSE_HEIGHT_DELTA : 1.6;
 
     this.hp = 100;
     this.shield = 0;
@@ -48,6 +53,7 @@ export class Player {
     this._nrm = new THREE.Vector3();
     this.djumpTime = 0;        // double-jump powerup timer
     this.jetpack = null;       // {fuel, cooldown, active}; cleared on death
+    this.grapple = false;      // Canopy pickup; retained until death
     this._airJumped = false;
     this.keys = {};
     this.moveInput = { strafe: 0, forward: 0 };
@@ -62,6 +68,16 @@ export class Player {
     this.stepDistance = 0;
     this.wasGrounded = false;
     this.wantJump = false;
+    this.horseHeading = 0;
+    this.gallopStamina = world.horseGallopDuration || 0;
+    this.galloping = false;
+    this.gallopExhausted = false;
+    this.grappleAttached = false;
+    this.grappleAnchor = null;
+    this.grappleRopeLength = 0;
+    this.grappleVisual = world.grappleEnabled
+      ? createGrappleVisual(camera.parent, 0xa8ff70)
+      : null;
 
     this.buildViewmodel();
   }
@@ -89,6 +105,92 @@ export class Player {
     this.viewmodel = g;
     this.camera.add(g);
 
+    if (this.world.mounted) {
+      const horse = new THREE.Group();
+      const coat = new THREE.MeshStandardMaterial({ color: 0x6f3f25, roughness: 0.88 });
+      const mane = new THREE.MeshStandardMaterial({ color: 0x24170f, roughness: 0.94 });
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.55, 1.05), coat);
+      head.position.set(0, -0.62, -1.25);
+      head.rotation.x = -0.12;
+      horse.add(head);
+      for (const side of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.42, 6), coat);
+        ear.position.set(side * 0.16, -0.24, -1.53);
+        ear.rotation.x = -0.18;
+        horse.add(ear);
+      }
+      const forelock = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 6), mane);
+      forelock.position.set(0, -0.34, -1.54);
+      forelock.rotation.x = Math.PI * 0.42;
+      horse.add(forelock);
+      horse.traverse(child => { if (child.isMesh) child.castShadow = true; });
+      this.horseViewmodel = horse;
+      this.camera.add(horse);
+    }
+
+    // The grapple is an innate left-hand tool, not part of the equipped-gun
+    // hierarchy. Keeping it in a separate camera child means weapon recoil,
+    // equip kick, and powerup skins can never move or recolor it.
+    if (this.world.grappleEnabled) {
+      const launcher = new THREE.Group();
+      const shell = new THREE.MeshStandardMaterial({
+        color: 0xffffff, roughness: 0.5, metalness: 0.34,
+        emissive: 0x18381d, emissiveIntensity: 0.13,
+        ...aiTex('canopy-grapple', 0.72, 0.72),
+      });
+      const brass = new THREE.MeshStandardMaterial({
+        color: 0xc59135, roughness: 0.34, metalness: 0.76,
+      });
+      const glow = new THREE.MeshBasicMaterial({ color: 0xbaff70, toneMapped: false });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.72), shell);
+      body.rotation.z = 0.05;
+      launcher.add(body);
+      const topHousing = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.42), shell);
+      topHousing.position.set(0, 0.2, -0.02);
+      launcher.add(topHousing);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.15, 0.55, 10), brass);
+      barrel.name = 'canopy-grapple-barrel';
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.z = -0.56;
+      launcher.add(barrel);
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.038, 7, 14), glow);
+      coil.position.z = -0.85;
+      launcher.add(coil);
+      const sideSpool = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.13, 10), brass);
+      sideSpool.rotation.z = Math.PI / 2;
+      sideSpool.position.set(0.31, 0.02, 0.08);
+      launcher.add(sideSpool);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.52, 0.25), shell);
+      grip.name = 'canopy-grapple-hand-grip';
+      grip.position.set(0, -0.35, 0.16);
+      grip.rotation.x = -0.24;
+      launcher.add(grip);
+      const gripCollar = new THREE.Mesh(new THREE.BoxGeometry(0.31, 0.1, 0.3), brass);
+      gripCollar.name = 'canopy-grapple-grip-collar';
+      gripCollar.position.set(0, -0.12, 0.07);
+      gripCollar.rotation.x = -0.08;
+      launcher.add(gripCollar);
+      const status = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.065, 0.22), glow);
+      status.position.set(0, 0.31, -0.02);
+      launcher.add(status);
+      const muzzleAnchor = new THREE.Object3D();
+      muzzleAnchor.name = 'canopy-grapple-muzzle';
+      muzzleAnchor.position.set(0, 0, -0.87);
+      launcher.add(muzzleAnchor);
+      launcher.name = 'canopy-grapple-launcher';
+
+      const grappleViewmodel = new THREE.Group();
+      grappleViewmodel.add(launcher);
+      grappleViewmodel.scale.setScalar(0.48);
+      grappleViewmodel.position.set(-0.37, -0.28, -0.68);
+      grappleViewmodel.rotation.set(-0.04, -0.12, -0.06);
+      this.grappleLauncher = launcher;
+      this.grappleMuzzle = muzzleAnchor;
+      this.grappleViewmodel = grappleViewmodel;
+      grappleViewmodel.visible = this.grapple;
+      this.camera.add(grappleViewmodel);
+    }
+
     const flashMat = new THREE.SpriteMaterial({
       color: 0xffe2a0, transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
@@ -114,6 +216,7 @@ export class Player {
 
   spawn(pos) {
     this.cancelWeaponWarmup();
+    this.detachGrapple();
     this.pos.copy(pos);
     this.vel.set(0, 0, 0);
     this.hp = 100;
@@ -128,11 +231,17 @@ export class Player {
     this.showWeaponModel('blaster'); // hand model back to blaster
     this.setSkin(null);
     this.yaw = Math.atan2(pos.x, pos.z); // face map center
+    this.horseHeading = this.yaw;
+    this.gallopStamina = this.world.horseGallopDuration || 0;
+    this.galloping = false;
+    this.gallopExhausted = false;
     this.pitch = 0;
     this.up.set(0, 1, 0);
     this._camSnap = true;   // snap the roll on spawn, don't ease from stale
     this.djumpTime = 0;
     this.jetpack = null;
+    this.grapple = false;
+    if (this.grappleViewmodel) this.grappleViewmodel.visible = false;
     this._airJumped = false;
     this.recoil = 0;
     this.cameraKick = 0;
@@ -171,6 +280,43 @@ export class Player {
   setMoveInput(strafe, forward) {
     this.moveInput.strafe = clamp(Number(strafe) || 0, -1, 1);
     this.moveInput.forward = clamp(Number(forward) || 0, -1, 1);
+  }
+
+  toggleGrapple() {
+    if (!this.world.grappleEnabled || !this.grapple || !this.alive) return false;
+    if (this.grappleAttached) {
+      this.detachGrapple();
+      return false;
+    }
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    const hit = findGrappleAnchor(this.world, this.camera.position, direction);
+    if (!hit) return false;
+    this.grappleAttached = true;
+    this.grappleAnchor = hit.point;
+    this.grappleRopeLength = Math.max(4.2, hit.point.distanceTo(this.pos) * 0.82);
+    this._syncGrappleVisual();
+    return true;
+  }
+
+  detachGrapple() {
+    this.grappleAttached = false;
+    this.grappleAnchor = null;
+    this.grappleRopeLength = 0;
+    updateGrappleVisual(this.grappleVisual, null, null, false);
+  }
+
+  _syncGrappleVisual() {
+    if (!this.grappleVisual) return;
+    const start = new THREE.Vector3();
+    if (this.grappleMuzzle) this.grappleMuzzle.getWorldPosition(start);
+    else start.copy(this.camera.position);
+    updateGrappleVisual(
+      this.grappleVisual,
+      start,
+      this.grappleAnchor,
+      this.grappleAttached && this.alive,
+    );
   }
 
   _forwardInput() {
@@ -235,6 +381,7 @@ export class Player {
 
   update(dt, fire) {
     if (!this.alive) {
+      this.detachGrapple();
       this.cancelWeaponWarmup();
       updateWeaponWarmupVisual(this.vmWeapons.whomper, -1);
       return;
@@ -249,6 +396,7 @@ export class Player {
     }
     if (this.world.escher) this._moveEscher(dt);
     else this._moveNormal(dt);
+    this._syncGrappleVisual();
 
     // Firing
     this.cooldown -= dt;
@@ -311,6 +459,32 @@ export class Player {
       0.06 - this.lookSwayX,
       this.equipT * 0.12 - bobX * 0.8,
     );
+    if (this.grappleViewmodel) {
+      this.grappleViewmodel.position.set(
+        -0.37 - bobX * 0.7 - this.lookSwayX * 0.24,
+        -0.28 + bobY * 0.7 + this.lookSwayY * 0.18,
+        -0.68,
+      );
+      this.grappleViewmodel.rotation.set(
+        -0.04 + this.lookSwayY * 0.28,
+        -0.12 - this.lookSwayX * 0.28,
+        -0.06 + bobX * 0.35,
+      );
+    }
+    if (this.horseViewmodel) {
+      const gait = this.galloping ? 0.019 : 0.013;
+      const stride = Math.sin(now * (this.galloping ? 0.021 : 0.013)) * moving;
+      const horseViewYaw = Math.atan2(
+        Math.sin(this.horseHeading - this.yaw),
+        Math.cos(this.horseHeading - this.yaw),
+      );
+      this.horseViewmodel.position.set(0, stride * 0.018, Math.abs(stride) * gait);
+      this.horseViewmodel.rotation.set(
+        stride * 0.012,
+        horseViewYaw,
+        Math.cos(now * 0.009) * moving * 0.006,
+      );
+    }
     this.camera.rotateX(this.cameraKick);
 
     this.muzzleT = Math.max(0, this.muzzleT - dt);
@@ -358,13 +532,50 @@ export class Player {
     const env = this._environmentState();
     const moveScale = this.world.characterMoveScale?.(this) || 1;
     const traction = THREE.MathUtils.clamp(this.world.characterTraction?.(this) ?? 1, 0.04, 1);
-    const speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * env.speedMult;
+    let speed = this.world.playerSpeed * moveScale * (this.speedMult || 1) * env.speedMult;
     const f = paralyzed ? 0 : this._forwardInput();
     const s = paralyzed ? 0 : this._strafeInput();
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     let wx = (-sin * f + cos * s), wz = (-cos * f - sin * s);
     const wl = Math.hypot(wx, wz);
     if (wl > 0) { wx /= wl; wz /= wl; }
+
+    if (this.world.mounted) {
+      const maxStamina = this.world.horseGallopDuration || 15;
+      const shiftHeld = !!(this.keys.ShiftLeft || this.keys.ShiftRight);
+      if (!shiftHeld && this.gallopStamina >= Math.min(3, maxStamina)) this.gallopExhausted = false;
+      const wantsGallop = shiftHeld && !this.gallopExhausted && wl > 0.05;
+      this.galloping = wantsGallop && this.gallopStamina > 0.001 && !paralyzed;
+      if (this.galloping) {
+        this.gallopStamina = Math.max(0, this.gallopStamina - dt);
+        if (this.gallopStamina <= 0.001) this.gallopExhausted = true;
+        speed = (this.world.horseGallopSpeed || speed * 1.55) * moveScale * (this.speedMult || 1) * env.speedMult;
+      } else {
+        this.gallopStamina = Math.min(maxStamina,
+          this.gallopStamina + (this.world.horseGallopRecharge || 0.65) * dt);
+      }
+      if (wl > 0.05) {
+        const desiredHeading = Math.atan2(-wx, -wz);
+        const difference = Math.atan2(
+          Math.sin(desiredHeading - this.horseHeading),
+          Math.cos(desiredHeading - this.horseHeading),
+        );
+        const turn = clamp(difference,
+          -(this.world.horseTurnRate || 1.45) * dt,
+          (this.world.horseTurnRate || 1.45) * dt);
+        this.horseHeading += turn;
+        wx = -Math.sin(this.horseHeading) * Math.min(1, wl);
+        wz = -Math.cos(this.horseHeading) * Math.min(1, wl);
+
+        // A horse arcs into a new travel direction; it never keeps a large
+        // sideways velocity while its body points somewhere else. Remove the
+        // lateral component quickly while preserving forward momentum.
+        const along = this.vel.x * wx + this.vel.z * wz;
+        const lateralDamp = Math.exp(-7.5 * dt);
+        this.vel.x = wx * along + (this.vel.x - wx * along) * lateralDamp;
+        this.vel.z = wz * along + (this.vel.z - wz * along) * lateralDamp;
+      }
+    }
 
     const prevHs = Math.hypot(this.vel.x, this.vel.z);
     const accel = this.grounded ? 60 * traction : 18;
@@ -418,6 +629,8 @@ export class Player {
       const canThrust = this.keys['Space'] && !paralyzed && !vine && !waterfall && !water && !env.lava;
       stepJetpack(this.jetpack, this.vel, dt, canThrust);
     }
+
+    if (this.grapple && !paralyzed && !waterfall) applyGrapplePull(this, dt);
 
     this.grounded = moveCharacter(this, this.world, dt);
     if (this.grounded) this._airJumped = false;

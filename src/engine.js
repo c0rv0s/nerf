@@ -408,6 +408,27 @@ export function cylinderShellSurfaceY(collider, x, z) {
 // Lazily build a ramp's oriented-box collider matching its visual slab.
 function rampOBB(r) {
   if (!r._obb) {
+    if (r.oriented) {
+      const len = r.length;
+      const width = r.width;
+      const dh = r.h1 - r.h0;
+      const slopeLen = Math.hypot(len, dh);
+      const ang = Math.atan2(dh, len);
+      const halfThickness = 0.22;
+      const yaw = r.yaw || 0;
+      const rot = new THREE.Matrix4().makeRotationY(-yaw)
+        .multiply(new THREE.Matrix4().makeRotationZ(ang));
+      r._obb = {
+        c: new THREE.Vector3(
+          r.centerX + Math.cos(yaw) * halfThickness * Math.sin(ang),
+          (r.h0 + r.h1) / 2 - halfThickness * Math.cos(ang),
+          r.centerZ + Math.sin(yaw) * halfThickness * Math.sin(ang),
+        ),
+        rot, inv: rot.clone().invert(),
+        he: new THREE.Vector3(slopeLen / 2, halfThickness, width / 2),
+      };
+      return r._obb;
+    }
     const len = r.axis === 'x' ? r.maxX - r.minX : r.maxZ - r.minZ;
     const width = r.axis === 'x' ? r.maxZ - r.minZ : r.maxX - r.minX;
     const dh = r.h1 - r.h0;
@@ -461,6 +482,13 @@ function resolveSphereOBB(pos, radius, obb) {
 }
 
 export function rampSurfaceY(r, x, z) {
+  if (r.oriented) {
+    const dx = x - r.centerX;
+    const dz = z - r.centerZ;
+    const along = dx * Math.cos(r.yaw || 0) + dz * Math.sin(r.yaw || 0);
+    const t = along / r.length + 0.5;
+    return r.h0 + (r.h1 - r.h0) * clamp(t, 0, 1);
+  }
   const t = r.axis === 'x'
     ? (x - r.minX) / (r.maxX - r.minX)
     : (z - r.minZ) / (r.maxZ - r.minZ);
@@ -490,13 +518,35 @@ export function pointInZoneXZ(zone, x, z) {
   return true;
 }
 
-function inRampFootprint(r, x, z, pad = 0) {
+export function inRampFootprint(r, x, z, pad = 0) {
+  if (r.oriented) {
+    const dx = x - r.centerX;
+    const dz = z - r.centerZ;
+    const yaw = r.yaw || 0;
+    const along = dx * Math.cos(yaw) + dz * Math.sin(yaw);
+    const cross = -dx * Math.sin(yaw) + dz * Math.cos(yaw);
+    return Math.abs(along) <= r.length / 2 + pad && Math.abs(cross) <= r.width / 2 + pad;
+  }
   return x >= r.minX - pad && x <= r.maxX + pad && z >= r.minZ - pad && z <= r.maxZ + pad;
 }
 
 // Support can continue a short distance invisibly beneath a destination deck.
 // This is collision-only: the rendered ramp still ends at the exact seam.
 function rampSupportY(r, x, z, pad = 0) {
+  if (r.oriented) {
+    const dx = x - r.centerX;
+    const dz = z - r.centerZ;
+    const yaw = r.yaw || 0;
+    const along = dx * Math.cos(yaw) + dz * Math.sin(yaw);
+    const cross = -dx * Math.sin(yaw) + dz * Math.cos(yaw);
+    if (Math.abs(cross) > r.width / 2 + pad) return null;
+    const min = -r.length / 2;
+    const max = r.length / 2;
+    if (along < min - pad - (r.supportPad0 || 0) || along > max + pad + (r.supportPad1 || 0)) return null;
+    if (along <= min) return r.h0;
+    if (along >= max) return r.h1;
+    return rampSurfaceY(r, x, z);
+  }
   const along = r.axis === 'x' ? x : z;
   const min = r.axis === 'x' ? r.minX : r.minZ;
   const max = r.axis === 'x' ? r.maxX : r.maxZ;
@@ -635,6 +685,48 @@ function moveCharacterStep(char, world, dt) {
   for (const ramp of world.ramps) {
     const surf = rampSupportY(ramp, char.pos.x, char.pos.z, char.radius + 0.2);
     if (surf == null) continue;
+    // Ordinary ramps are thin constructed slabs. Natural cliff ramps can opt
+    // into a solid mass extending from their rideable top down to the ground.
+    // If a capsule is beneath that top, eject it through the nearest footprint
+    // edge instead of letting it travel inside the wedge or teleporting it up
+    // onto a very high cliff.
+    if (ramp.solidToGround && char.pos.y + char.height > (ramp.solidBottom ?? -0.5) &&
+        char.pos.y < surf - 1.1) {
+      const yaw = ramp.yaw || 0;
+      const cos = Math.cos(yaw), sin = Math.sin(yaw);
+      const dx = char.pos.x - ramp.centerX;
+      const dz = char.pos.z - ramp.centerZ;
+      const along = dx * cos + dz * sin;
+      const cross = -dx * sin + dz * cos;
+      const halfLength = ramp.length / 2;
+      const halfWidth = ramp.width / 2;
+      if (Math.abs(along) <= halfLength + char.radius &&
+          Math.abs(cross) <= halfWidth + char.radius) {
+        const exits = [
+          [-halfLength - char.radius - along, 0],
+          [halfLength + char.radius - along, 0],
+          [0, -halfWidth - char.radius - cross],
+          [0, halfWidth + char.radius - cross],
+        ].sort((a, b) => Math.hypot(...a) - Math.hypot(...b));
+        const [alongPush, crossPush] = exits[0];
+        const pushX = alongPush * cos - crossPush * sin;
+        const pushZ = alongPush * sin + crossPush * cos;
+        char.pos.x += pushX;
+        char.pos.z += pushZ;
+        const pushLength = Math.hypot(pushX, pushZ);
+        if (pushLength > 1e-6) {
+          const nx = pushX / pushLength;
+          const nz = pushZ / pushLength;
+          const into = char.vel.x * nx + char.vel.z * nz;
+          if (into < 0) {
+            char.vel.x -= nx * into;
+            char.vel.z -= nz * into;
+          }
+        }
+        // Re-evaluate the ramp after moving outside its solid footprint.
+        continue;
+      }
+    }
     // Snap onto the surface only when walking/falling — never while rising,
     // or a jump from below would teleport the character through the slab.
     if (char.vel.y <= 0.01 && char.pos.y <= surf + 0.02 && char.pos.y > surf - 1.1) {
@@ -875,6 +967,13 @@ export function pointHitsWorld(p, radius, world, skipRamps = false) {
     } else if (c.type === 'cylinderShell') {
       if (sphereHitsCylinderShell(p, radius, c)) return true;
     }
+  }
+  // Unlike a normal thin ramp slab, a cliff marked solidToGround blocks shots,
+  // line of sight, and navigation throughout the rock beneath its top surface.
+  for (const ramp of world.ramps) {
+    if (!ramp.solidToGround || !inRampFootprint(ramp, p.x, p.z, radius)) continue;
+    const surf = rampSurfaceY(ramp, p.x, p.z);
+    if (p.y < surf + radius && p.y > (ramp.solidBottom ?? -0.5) - radius) return true;
   }
   if (!skipRamps) {
     for (const ramp of world.ramps) {

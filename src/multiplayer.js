@@ -123,6 +123,9 @@ class MultiplayerClient extends EventTarget {
       firing: !!player.firing,
       weapon: player.weapon || 'blaster',
       jetpackActive: !!player.jetpack?.active,
+      grappleAnchor: player.world?.grappleEnabled && player.grapple && player.grappleAttached && player.grappleAnchor
+        ? { x: player.grappleAnchor.x, y: player.grappleAnchor.y, z: player.grappleAnchor.z }
+        : null,
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
       vel: player.vel ? { x: player.vel.x, y: player.vel.y, z: player.vel.z } : { x: 0, y: 0, z: 0 },
       alive: player.alive !== false,

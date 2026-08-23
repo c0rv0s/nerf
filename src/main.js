@@ -11,7 +11,7 @@ import {
   sharedTexturesReady, texturesReady,
 } from './maps.js';
 import {
-  buildCollisionIndex, buildWaypointGraph, pick, rand, rampSurfaceY, pointInZoneXZ,
+  buildCollisionIndex, buildWaypointGraph, pick, rand, inRampFootprint, rampSurfaceY, pointInZoneXZ,
   cylinderShellSurfaceY, ellipsoidSurfaceY, pointHitsWorld,
   sphereHitsCylinderShell, sphereHitsEllipsoid,
 } from './engine.js';
@@ -33,9 +33,13 @@ import { createJetpack } from './jetpack.js';
 import { unlockSecretMap } from './secret-maps.js';
 import { byId, setStyle, setText } from './dom.js';
 import { mapPlayerLimit } from './map-rules.js';
+import { HORSE_HEIGHT_DELTA } from './mount.js';
 import { damageMultiplierForPowerup, resolveShieldedDamage } from './combat.js';
 import { MobileControls } from './mobile-controls.js';
 import { isStandaloneApp, setupPwaInstall } from './pwa.js';
+import {
+  createGrappleVisual, disposeGrappleVisual, updateGrappleVisual,
+} from './grapple.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -78,6 +82,7 @@ const METEOR = { name: 'Meteor', color: '#ff9a42', isPlayer: false, kills: 0, te
 const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team: 'comet' };
 const GATOR = { name: 'Canal Gator', color: '#8fbd45', isPlayer: false, kills: 0, team: 'gator' };
 const SHARK = { name: 'Shark', color: '#79b7c8', isPlayer: false, kills: 0, team: 'shark' };
+const CACTUS = { name: 'Cactus', color: '#4f9b55', isPlayer: false, kills: 0, team: 'cactus' };
 const SOLAR_FLARE = { name: 'Solar Flare', color: '#ff4b24', isPlayer: false, kills: 0, team: 'solar' };
 const EVENT_BLAST_RADIUS = 10;
 const EVENT_BLAST_DAMAGE = 50;
@@ -721,7 +726,7 @@ function syncRecursivePlayerAvatar(player) {
   let state = player._recursiveAvatarState;
   if (!state) {
     const color = colorHex(player);
-    const { group, body, head, visor, jetpack } = buildBotMesh(color);
+    const { group, body, head, visor, jetpack } = buildBotMesh(color, player.world.mounted);
     group.name = 'infinite-bloom-local-player-source';
     state = {
       root: group,
@@ -760,7 +765,7 @@ function syncRecursivePlayerAvatar(player) {
     syncHierarchyPairs(state.gunPairs);
     state.gun.visible = true;
     state.gun.scale.setScalar(0.55);
-    state.gun.position.set(0.32, 1.05, 0.25);
+    state.gun.position.set(0.32, player.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
     state.gun.rotation.set(0, Math.PI, 0);
   }
   syncJetpackVisual(player, 0, state.jetpack);
@@ -873,6 +878,8 @@ function teardown() {
   for (const ch of G.characters || []) {
     ch.cancelWeaponWarmup?.();
     ch.warmupAudioStop?.();
+    disposeGrappleVisual(ch.grappleVisual);
+    ch.grappleVisual = null;
     disposeNameTag(ch);
   }
   G.projectiles.clear();
@@ -886,6 +893,7 @@ function teardown() {
   dmgMarkers = [];
   dmgMarkerPool = [];
   camera.remove(G.player.viewmodel);
+  camera.remove(G.player.grappleViewmodel);
   hud.els.hud.classList.remove('endboard');
   setStyle(hud.els.board, 'display', 'none');
   setStyle(hud.els.board, 'top', '');
@@ -1007,6 +1015,7 @@ function updateDeathCamera(dt) {
       camera.fov = 70;
       camera.updateProjectionMatrix();
       if (G.player.viewmodel) G.player.viewmodel.visible = false;
+      if (G.player.grappleViewmodel) G.player.grappleViewmodel.visible = false;
     }
     camera.position.copy(G.deathSpectate.pos);
     camera.lookAt(G.deathSpectate.anchor);
@@ -1016,6 +1025,7 @@ function updateDeathCamera(dt) {
   if (G.deathSpectate) {
     G.deathSpectate = null;
     if (G.player.viewmodel) G.player.viewmodel.visible = true;
+    if (G.player.grappleViewmodel) G.player.grappleViewmodel.visible = !!G.player.grapple;
   }
   if (Math.abs(camera.fov - G.deathBaseFov) > 0.01) {
     camera.fov = G.deathBaseFov;
@@ -1322,6 +1332,11 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
     sfx('gatorhit', ch.isPlayer ? null : ch.pos);
     if (ch.isPlayer) hud.message('SHARK BITE -55', '#8ed8e8');
   };
+  world.onCactusHit = (ch) => {
+    if (!ch?.alive) return;
+    applyDamage(ch, 5, CACTUS, { environmental: true });
+    if (ch.isPlayer) hud.message('CACTUS -5', '#8dcf72');
+  };
   world.onSharkBeached = () => hud.message('SHARK ON DECK!', '#8ed8e8');
   world.onTideWarning = () => sfx('siren');
   world.onSurgeHit = (ch) => {
@@ -1359,6 +1374,9 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   for (const ch of characters) respawnCharacter(ch, true);
   G.spawnBatchUsed = null;
   G.spawnBatchUsedFaces = null;
+
+  if (world.grappleEnabled) hud.message('FIND A TREETOP GRAPPLE — SHIFT / RIGHT CLICK ONCE EQUIPPED', '#a8ff70');
+  else if (world.mounted) hud.message('HORSEBACK — HOLD SHIFT TO GALLOP (15 SEC STAMINA)', '#f2c274');
 
   player.update(0, () => {});      // camera on the spawn point before the first tick
   yield {
@@ -1577,6 +1595,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa') {
   setMapLoadingProgress(82, 'Network combatants and pickups ready', loadingToken);
 
   respawnCharacter(player, true);
+  if (world.grappleEnabled) hud.message('FIND A TREETOP GRAPPLE — SHIFT / RIGHT CLICK ONCE EQUIPPED', '#a8ff70');
   player.update(0, () => {});
   setMapLoadingProgress(88, 'Spawn point and camera ready', loadingToken);
   prewarmMatchVisuals(scene, player, characters, projectiles, fxPool);
@@ -1672,6 +1691,18 @@ function applyHostHandoffSnapshot(snap) {
       ? state.weapon
       : 'blaster';
     applyMultiplayerCombatState(ch, state);
+    ch.grapple = state.grapple === true;
+    if (ch.grappleViewmodel) ch.grappleViewmodel.visible = ch.grapple && ch.alive;
+    if (!ch.grapple) ch.detachGrapple?.();
+    if (ch.isPlayer) {
+      ch.grappleAttached = !!state.grappleAnchor;
+      ch.grappleAnchor = state.grappleAnchor
+        ? new THREE.Vector3(state.grappleAnchor.x, state.grappleAnchor.y, state.grappleAnchor.z)
+        : null;
+      ch.grappleRopeLength = ch.grappleAnchor ? ch.grappleAnchor.distanceTo(ch.pos) : 0;
+    } else {
+      setRemoteGrappleState(ch, state.grappleAnchor);
+    }
     ch.jetpack = state.jetpack ? createJetpack() : null;
     if (ch.jetpack) ch.jetpack.active = !!state.jetpackActive;
     ch.mesh && (ch.mesh.visible = ch.alive);
@@ -1732,6 +1763,8 @@ function ensureHostRemoteHuman(slot) {
 function removeCharacter(ch) {
   ch.cancelWeaponWarmup?.();
   ch.warmupAudioStop?.();
+  disposeGrappleVisual(ch.grappleVisual);
+  ch.grappleVisual = null;
   const idx = G.characters.indexOf(ch);
   if (idx >= 0) G.characters.splice(idx, 1);
   disposeNameTag(ch);
@@ -1832,6 +1865,7 @@ function updateRemoteHuman(ch, dt, fire) {
     ch.up ||= new THREE.Vector3(0, 1, 0);
     ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
   }
+  setRemoteGrappleState(ch, input.grappleAnchor);
   if (ch.jetpack) ch.jetpack.active = !!input.jetpackActive;
   if (input.weapon && (input.weapon === 'blaster' || (ch.weapons[input.weapon] && ch.ammo[input.weapon] > 0))) {
     if (input.weapon !== ch.weapon) ch.cancelWeaponWarmup();
@@ -1851,7 +1885,7 @@ function updateRemoteHuman(ch, dt, fire) {
     const up = ch.up || new THREE.Vector3(0, 1, 0);
     const visualScale = G.world.characterVisualScale?.(ch) || 1;
     const origin = ch.pos.clone()
-      .addScaledVector(up, 1.55 * visualScale)
+      .addScaledVector(up, (G.world.mounted ? 2.5 + HORSE_HEIGHT_DELTA : 1.55) * visualScale)
       .addScaledVector(dir, 0.8 * visualScale);
     fire(ch, origin, dir, ch.weapon || 'blaster');
     ch.finishWeaponShot(w, 0);
@@ -1866,6 +1900,15 @@ function updateRemoteHuman(ch, dt, fire) {
     syncJetpackVisual(ch, dt);
     ch.mesh.position.copy(ch.pos);
     ch.mesh.rotation.y = ch.yaw || 0;
+    if (ch.horseVisual) {
+      const horizontalSpeed = Math.hypot(ch.vel.x, ch.vel.z);
+      if (horizontalSpeed > 0.08) ch.horseHeading = Math.atan2(ch.vel.x, ch.vel.z);
+      ch.horseVisual.rotation.y = (ch.horseHeading || 0) - (ch.yaw || 0);
+      const gait = performance.now() * 0.012;
+      const pace = Math.min(1, horizontalSpeed / Math.max(1, G.world.playerSpeed));
+      for (const leg of ch.horseLegs || []) leg.rotation.x = Math.sin(gait + leg.userData.gaitPhase) * 0.48 * pace;
+      ch.horseVisual.position.y = Math.abs(Math.sin(gait * 2)) * 0.035 * pace;
+    }
   }
   if (ch.powerup) {
     ch.powerup.timeLeft -= dt;
@@ -1939,13 +1982,40 @@ function syncMultiplayerNameTags() {
   }
 }
 
+function setRemoteGrappleState(ch, anchor) {
+  if (!ch || ch.isPlayer || !G?.world?.grappleEnabled || !ch.grapple || !anchor) {
+    if (ch && !ch.isPlayer) {
+      ch.grappleAttached = false;
+      ch.grappleAnchor = null;
+      updateGrappleVisual(ch.grappleVisual, null, null, false);
+    }
+    return;
+  }
+  ch.grappleAttached = true;
+  ch.grappleAnchor ||= new THREE.Vector3();
+  ch.grappleAnchor.set(anchor.x || 0, anchor.y || 0, anchor.z || 0);
+  ch.grappleVisual ||= createGrappleVisual(G.scene, 0xa8ff70);
+  syncRemoteGrappleVisual(ch);
+}
+
+function syncRemoteGrappleVisual(ch) {
+  if (!ch?.grappleVisual) return;
+  const start = ch.pos.clone().addScaledVector(ch.up || new THREE.Vector3(0, 1, 0), 1.28);
+  updateGrappleVisual(
+    ch.grappleVisual,
+    start,
+    ch.grappleAnchor,
+    ch.grappleAttached && ch.alive,
+  );
+}
+
 function syncRemoteSlotGun(remote) {
   if (!remote?.mesh || remote._gunId === remote.weapon) return;
   remote._gunId = remote.weapon;
   if (remote._gun) remote.mesh.remove(remote._gun);
   remote._gun = buildBlaster(remote.weapon || 'blaster');
   remote._gun.scale.setScalar(0.55);
-  remote._gun.position.set(0.32, 1.05, 0.25);
+  remote._gun.position.set(0.32, G.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
   remote._gun.rotation.y = Math.PI;
   remote.mesh.add(remote._gun);
 }
@@ -1953,7 +2023,10 @@ function syncRemoteSlotGun(remote) {
 function ensureRemoteSlot(state) {
   let remote = G.remoteSlots.get(state.id);
   if (remote) return remote;
-  const { group, jetpack } = buildBotMesh(parseInt(String(state.color || '#ffffff').replace('#', ''), 16));
+  const { group, jetpack, horse, horseLegs } = buildBotMesh(
+    parseInt(String(state.color || '#ffffff').replace('#', ''), 16),
+    G.world.mounted,
+  );
   group.visible = false;
   G.scene.add(group);
   remote = {
@@ -1967,9 +2040,11 @@ function ensureRemoteSlot(state) {
     up: new THREE.Vector3(0, 1, 0),
     mesh: group,
     jetpackVisual: jetpack,
+    horseVisual: horse,
+    horseLegs,
     team: state.team || state.id,
-    radius: 0.45,
-    height: 1.8,
+    radius: G.world.mounted ? 0.58 : 0.45,
+    height: G.world.mounted ? 2.65 + HORSE_HEIGHT_DELTA : 1.8,
     hp: 100,
     shield: 0,
     alive: true,
@@ -1980,6 +2055,7 @@ function ensureRemoteSlot(state) {
     killChain: null,
     damageMult: 1,
     powerup: null,
+    grapple: false,
     weapons: { blaster: true },
     ammo: { blaster: Infinity },
     weapon: 'blaster',
@@ -2032,12 +2108,24 @@ function applyMultiplayerSnapshot(snap) {
       if (!state.alive && G.player.alive) {
         G.player.alive = false;
         G.player.jetpack = null;
+        G.player.grapple = false;
+        if (G.player.grappleViewmodel) G.player.grappleViewmodel.visible = false;
         G.mpSyncedSelf = false;
         hud.showRespawn(true, state.respawn || RESPAWN_TIME);
         sfx('death');
       } else if (state.alive && !G.player.alive) {
         G.player.spawn(statePos);
         G.mpSyncedSelf = true;
+      }
+      const hadGrapple = G.player.grapple;
+      G.player.grapple = state.grapple === true;
+      if (G.player.grappleViewmodel) {
+        G.player.grappleViewmodel.visible = G.player.grapple && state.alive !== false;
+      }
+      if (!G.player.grapple) G.player.detachGrapple();
+      if (!hadGrapple && G.player.grapple && G.mpSawSelfSnapshot) {
+        sfx('powerup');
+        hud.message('GRAPPLE EQUIPPED — SHIFT / RIGHT CLICK', '#a8ff70');
       }
       if (state.alive) hud.showRespawn(false);
       if (!state.alive) hud.showRespawn(true, state.respawn || 0);
@@ -2062,9 +2150,11 @@ function applyMultiplayerSnapshot(snap) {
     }
     remote.weapon = nextWeapon;
     remote.jetpack = state.jetpack ? { active: !!state.jetpackActive } : null;
+    remote.grapple = state.grapple === true;
     syncRemoteSlotGun(remote);
     remote.yaw = state.yaw || 0;
     if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
+    setRemoteGrappleState(remote, state.grappleAnchor);
     setNameTag(remote, remote.name, remote.color);
     remote.targetPos.set(state.pos.x, state.pos.y, state.pos.z);
     if (remote.pos.lengthSq() === 0) remote.pos.copy(remote.targetPos);
@@ -2311,10 +2401,22 @@ function updateRemoteSlots(dt) {
   if (!G?.remoteSlots) return;
   const a = Math.min(1, dt * 14);
   for (const remote of G.remoteSlots.values()) {
+    const beforeX = remote.pos.x;
+    const beforeZ = remote.pos.z;
     if (remote.pos.distanceToSquared(remote.targetPos) > REMOTE_SLOT_SNAP_DIST ** 2) remote.pos.copy(remote.targetPos);
     else remote.pos.lerp(remote.targetPos, a);
     remote.mesh.position.copy(remote.pos);
     remote.mesh.rotation.y = remote.yaw || 0;
+    if (remote.horseVisual) {
+      const dx = remote.pos.x - beforeX;
+      const dz = remote.pos.z - beforeZ;
+      if (dx * dx + dz * dz > 1e-6) remote.horseHeading = Math.atan2(dx, dz);
+      remote.horseVisual.rotation.y = (remote.horseHeading || 0) - (remote.yaw || 0);
+      const gait = performance.now() * 0.012;
+      const pace = Math.min(1, Math.hypot(dx, dz) / Math.max(0.001, dt * G.world.playerSpeed));
+      for (const leg of remote.horseLegs || []) leg.rotation.x = Math.sin(gait + leg.userData.gaitPhase) * 0.48 * pace;
+    }
+    syncRemoteGrappleVisual(remote);
     syncJetpackVisual(remote, dt);
     updateWeaponWarmupVisual(
       remote._gun,
@@ -2604,8 +2706,7 @@ function spawnHasSupport(pos, ch) {
     if (drop >= -0.08 && drop <= footSlack) return true;
   }
   for (const ramp of G.world.ramps) {
-    if (pos.x < ramp.minX - sideSlack || pos.x > ramp.maxX + sideSlack ||
-        pos.z < ramp.minZ - sideSlack || pos.z > ramp.maxZ + sideSlack) continue;
+    if (!inRampFootprint(ramp, pos.x, pos.z, sideSlack)) continue;
     const drop = pos.y - rampSurfaceY(ramp, pos.x, pos.z);
     if (drop >= -0.08 && drop <= footSlack) return true;
   }
@@ -2828,10 +2929,10 @@ function makePodiumRankSprite(rank, color) {
 }
 
 function buildPodiumAvatar(ch, place) {
-  const { group, jetpack } = buildBotMesh(colorHex(ch));
+  const { group, jetpack } = buildBotMesh(colorHex(ch), G.world.mounted);
   const gun = buildBlaster(ch.weapon || 'blaster');
   gun.scale.setScalar(0.55);
-  gun.position.set(0.32, 1.05, 0.25);
+  gun.position.set(0.32, G.world.mounted ? 2 + HORSE_HEIGHT_DELTA : 1.05, 0.25);
   gun.rotation.y = Math.PI;
   group.add(gun);
   syncJetpackVisual(ch, 0, jetpack);
@@ -2849,7 +2950,7 @@ function podiumSurfaceYAt(x, z) {
     if (y === null || c.max.y > y) y = c.max.y;
   }
   for (const ramp of G.world.ramps) {
-    if (x < ramp.minX - pad || x > ramp.maxX + pad || z < ramp.minZ - pad || z > ramp.maxZ + pad) continue;
+    if (!inRampFootprint(ramp, x, z, pad)) continue;
     const ry = rampSurfaceY(ramp, x, z);
     if (y === null || ry > y) y = ry;
   }
@@ -3093,6 +3194,7 @@ function showVictoryPodium(result) {
   G.pickups.clear();
   G.fxPool.clear();
   camera.remove(G.player.viewmodel);
+  camera.remove(G.player.grappleViewmodel);
   for (const ch of G.characters) {
     if (!ch.isPlayer && ch.mesh) ch.mesh.visible = false;
   }
@@ -3410,6 +3512,10 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
 
   if (target.hp <= 0) {
     target.jetpack = null;
+    target.grapple = false;
+    if (target.grappleViewmodel) target.grappleViewmodel.visible = false;
+    if (target.isPlayer) target.detachGrapple?.();
+    else setRemoteGrappleState(target, null);
     target.deaths++;
     attacker.kills++;
     recordKillAwards(attacker, target, ctx);
@@ -3578,10 +3684,26 @@ function onPickup(ch, def) {
         announce('JETPACK EQUIPPED — HOLD JUMP TO FLY', '#43cfff');
       }
       return true;
+    case 'grapple':
+      if (ch.grapple) return false;
+      ch.grapple = true;
+      if (ch.grappleViewmodel) ch.grappleViewmodel.visible = true;
+      if (ch.isPlayer) {
+        sfx('powerup');
+        announce('GRAPPLE EQUIPPED — SHIFT / RIGHT CLICK', '#a8ff70');
+      }
+      return true;
     case 'points':
-      ch.score += def.amount;
-      if (G.mode === 'tdm') G.scores[ch.team] += def.amount;
-      if (ch.isPlayer) { sfx('coin'); announce(`+${def.amount} PTS!`, '#ffd23c'); }
+      {
+        const amount = Number(def.amount);
+        // Invalid point data must never poison a player's score with NaN.
+        // Authored pickups are rejected while building the map; this second
+        // guard also covers malformed temporary or multiplayer drops.
+        if (!Number.isFinite(amount) || amount <= 0) return false;
+        ch.score += amount;
+        if (G.mode === 'tdm') G.scores[ch.team] += amount;
+        if (ch.isPlayer) { sfx('coin'); announce(`+${amount} PTS!`, '#ffd23c'); }
+      }
       checkEnd();
       return true;
     case 'star':
@@ -3728,6 +3850,7 @@ function openMobilePause() {
   mobilePauseOpenedAt = performance.now();
   G.player.firing = false;
   G.player.cancelWeaponWarmup?.();
+  G.player.detachGrapple?.();
   G.player.setMoveInput?.(0, 0);
   G.player.keys.Space = false;
   const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
@@ -3764,6 +3887,9 @@ const mobileControls = new MobileControls({
     G.player.keys.Space = !!pressed;
     if (pressed && !G.paused && !mobilePauseOpen) G.player.wantJump = true;
   },
+  onGrapple: () => {
+    if (G && !G.paused && !mobilePauseOpen && G.player.alive) G.player.toggleGrapple();
+  },
   onCycleWeapon: () => {
     if (G && !G.paused && !mobilePauseOpen && G.player.alive) G.player.cycleWeapon(1);
   },
@@ -3771,6 +3897,7 @@ const mobileControls = new MobileControls({
   onEngage: enterMobileImmersiveMode,
   shouldShow: () => !!G && !G.over && !G.paused && !mobilePauseOpen && !mapLoadInProgress &&
     !G.mpConnectionPaused && !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
+  shouldShowGrapple: () => !!(G?.world?.grappleEnabled && G?.player?.grapple),
 });
 setupPwaInstall();
 
@@ -3781,6 +3908,7 @@ document.addEventListener('pointerlockchange', () => {
     if (!locked) {
       G.player.firing = false;
       G.player.cancelWeaponWarmup?.();
+      G.player.detachGrapple?.();
     }
     const multiplayerMatch = !!(G.multiplayer || G.multiplayerHost);
     const multiplayerPanelOpen = multiplayer.overlay && !multiplayer.overlay.hidden;
@@ -3870,10 +3998,19 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 document.addEventListener('mousedown', (e) => {
-  if (G && document.pointerLockElement === canvas && e.button === 0) {
+  if (!G || document.pointerLockElement !== canvas) return;
+  if (e.button === 0) {
     G.player.firing = true;
     // Open atrium URL signs during the click gesture so popups aren't blocked.
     tryOpenAimedUrlSign();
+  } else if (e.button === 2 && G.world?.grappleEnabled && G.player.grapple) {
+    e.preventDefault();
+    G.player.toggleGrapple();
+  }
+});
+document.addEventListener('contextmenu', (e) => {
+  if (G?.world?.grappleEnabled && G?.player?.grapple && document.pointerLockElement === canvas) {
+    e.preventDefault();
   }
 });
 document.addEventListener('mouseup', (e) => {
@@ -3900,20 +4037,17 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   G.player.keys[e.code] = true;
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat &&
+      G.world?.grappleEnabled && G.player.grapple && !G.paused && !mobilePauseOpen && !G.over) {
+    G.player.toggleGrapple();
+    e.preventDefault();
+  }
   if (e.code === 'KeyF' && !e.repeat) { enterFullscreen(); e.preventDefault(); }
   if (e.code === 'Space') { G.player.wantJump = true; e.preventDefault(); }
   if (e.code === 'Tab') { G.showBoard = true; e.preventDefault(); }
   const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'].indexOf(e.code);
   const mapWeapons = G.world?.availableWeapons || WEAPON_ORDER;
   if (slot >= 0 && slot < mapWeapons.length) G.player.switchWeapon(mapWeapons[slot]);
-  if (e.code === 'KeyG') { // glow toggle for slower machines
-    if (usesLightRenderPath()) {
-      hud.message('GLOW IS DISABLED ON LOW GRAPHICS', '#7fd0ff');
-    } else {
-      bloomPass.enabled = !bloomPass.enabled;
-      hud.message(bloomPass.enabled ? 'GLOW ON' : 'GLOW OFF', '#7fd0ff');
-    }
-  }
 });
 document.addEventListener('keyup', (e) => {
   if (!G) return;
@@ -4253,7 +4387,7 @@ function meteorSurfaceY(world, x, z) {
     }
   }
   for (const ramp of ramps) {
-    if (x < ramp.minX || x > ramp.maxX || z < ramp.minZ || z > ramp.maxZ) continue;
+    if (!inRampFootprint(ramp, x, z)) continue;
     best = Math.max(best, rampSurfaceY(ramp, x, z));
   }
   return best;
@@ -4549,6 +4683,7 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
     obj.visible = true;
   });
   reveal(player.viewmodel);
+  reveal(player.grappleViewmodel);
   for (const character of characters) reveal(character.mesh);
   reveal(projectiles.lightningArcPool?.[0]?.group);
   const cleanupDropPrewarm = G?.pickups?.prepareDropPrewarm?.() || (() => {});
@@ -5309,6 +5444,8 @@ function step(dt) {
     if (!voided && !sunHit) continue;
     ch.hp = 0;
     ch.jetpack = null;
+    ch.grapple = false;
+    if (ch.grappleViewmodel) ch.grappleViewmodel.visible = false;
     ch.deaths++;
     const source = sunHit
       ? { id: 'solar', name: sunHit.name || 'The Sun', color: sunHit.color || '#ff8a24' }
@@ -5392,6 +5529,10 @@ function serializeCharacter(ch, i) {
     warmup: warming ? Math.max(0, Math.min(1, 1 - ch.warmupT / weapon.warmup)) : -1,
     jetpack: !!ch.jetpack,
     jetpackActive: !!ch.jetpack?.active,
+    grapple: !!ch.grapple,
+    grappleAnchor: G.world.grappleEnabled && ch.grapple && ch.grappleAttached && ch.grappleAnchor
+      ? { x: ch.grappleAnchor.x, y: ch.grappleAnchor.y, z: ch.grappleAnchor.z }
+      : null,
   };
 }
 

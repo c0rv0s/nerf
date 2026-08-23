@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { WEAPONS, buildBlaster } from './weapons.js';
 import { aiTex } from './maps.js';
 
-const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45, jetpack: 60 };
+const RESPAWN = { weapon: 18, ammo: 14, health: 16, shield: 40, star: 45, gold: 60, silver: 50, speed: 45, djump: 45, jetpack: 60, grapple: 60 };
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const weaponPickupModels = {};
 const temporaryPickupModels = {};
@@ -167,6 +167,32 @@ function makeMesh(def) {
     g.add(wing);
     const light = new THREE.PointLight(0x43cfff, 16, 9);
     light.position.y = -0.25;
+    g.add(light);
+  } else if (def.kind === 'grapple') {
+    const shell = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: 0.5, metalness: 0.34,
+      emissive: 0x18381d, emissiveIntensity: 0.13,
+      ...aiTex('canopy-grapple', 0.72, 0.72),
+    });
+    const brass = new THREE.MeshStandardMaterial({
+      color: 0xc59135, roughness: 0.34, metalness: 0.76,
+    });
+    const glow = glowMat(0xbaff70, 1.05);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.42, 0.95), shell);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 0.72, 10), brass);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.z = -0.78;
+    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.05, 7, 14), glow);
+    coil.position.z = -1.14;
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.68, 0.32), shell);
+    grip.position.set(0, -0.48, 0.18);
+    grip.rotation.x = -0.24;
+    const spool = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.18, 10), brass);
+    spool.rotation.z = Math.PI / 2;
+    spool.position.set(0.43, 0.02, 0.12);
+    g.add(body, barrel, coil, grip, spool);
+    const light = new THREE.PointLight(0xa8ff70, 16, 9);
+    light.position.z = -0.7;
     g.add(light);
   } else if (def.kind === 'star') {
     const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), glowMat(0xffe040, 1.4));
