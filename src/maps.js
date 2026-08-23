@@ -15243,16 +15243,19 @@ function addMyceliumFairyToads(scene, world) {
   ];
   const patternNames = ['spots', 'twin-stripe', 'mosaic', 'constellation'];
   const personalityProfiles = [
-    { name: 'mosey', mode: 'walk', speed: 0.46, cycle: 1.18 },
-    { name: 'patient-popper', mode: 'surprise', cycle: 4.2, hopStart: 0.72,
-      hopDuration: 0.18, stepDistance: 1.4, hopHeight: 0.58 },
-    { name: 'pitter-patter', mode: 'hop', cycle: 0.62, airTime: 0.64,
-      stepDistance: 0.48, hopHeight: 0.16 },
-    { name: 'big-bounder', mode: 'hop', cycle: 1.55, airTime: 0.78,
-      stepDistance: 1.85, hopHeight: 0.82 },
-    { name: 'excitable', mode: 'hop', cycle: 0.78, airTime: 0.7,
-      stepDistance: 1.05, hopHeight: 0.34 },
-    { name: 'wanderer', mode: 'walk', speed: 0.66, cycle: 0.88 },
+    // A few remain genuinely unhurried, while the other personalities cover
+    // a much wider speed and jump range. The old sub-20cm pitter hops barely
+    // lifted the model's feet and made every toad read as slow at a distance.
+    { name: 'mosey', mode: 'walk', speed: 0.42, cycle: 1.18 },
+    { name: 'patient-popper', mode: 'surprise', cycle: 3.8, hopStart: 0.7,
+      hopDuration: 0.25, stepDistance: 2.4, hopHeight: 1.15 },
+    { name: 'pitter-patter', mode: 'hop', cycle: 0.46, airTime: 0.62,
+      stepDistance: 0.9, hopHeight: 0.46 },
+    { name: 'big-bounder', mode: 'hop', cycle: 1.15, airTime: 0.72,
+      stepDistance: 3.2, hopHeight: 1.55 },
+    { name: 'excitable', mode: 'hop', cycle: 0.58, airTime: 0.68,
+      stepDistance: 1.75, hopHeight: 0.82 },
+    { name: 'wanderer', mode: 'walk', speed: 1.08, cycle: 0.72 },
   ];
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
   const shadowGeometry = new THREE.CircleGeometry(0.62, 12);
@@ -15410,10 +15413,10 @@ function addMyceliumFairyToads(scene, world) {
       personality: personality.name,
       behavior: personality.mode,
       hopping: personality.mode !== 'walk',
-      speed: (personality.speed || 0) * (0.94 + (index % 3) * 0.06),
-      hopPeriod: personality.cycle * (0.94 + (index % 3) * 0.04),
-      hopHeight: (personality.hopHeight || 0) * (0.92 + (index % 4) * 0.055),
-      stepDistance: (personality.stepDistance || 0) * (0.94 + (index % 3) * 0.055),
+      speed: (personality.speed || 0) * (0.82 + (index % 3) * 0.24),
+      hopPeriod: personality.cycle * (0.88 + (index % 3) * 0.1),
+      hopHeight: (personality.hopHeight || 0) * (0.88 + (index % 4) * 0.16),
+      stepDistance: (personality.stepDistance || 0) * (0.86 + (index % 3) * 0.2),
       airTime: personality.airTime || 0,
       hopStart: personality.hopStart || 0,
       hopDuration: personality.hopDuration || 0,
@@ -15733,10 +15736,27 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, opti
     body.castShadow = body.receiveShadow = true;
     scene.add(body);
 
+    const matchingDeck = point => world.myceliumCanopyDecks?.find(deck => (
+      Math.hypot(point.x - deck.x, point.z - deck.z) < 0.08
+      && Math.abs(point.y - deck.y) < 0.08
+    ));
+    const startDeck = matchingDeck(start);
+    const endDeck = matchingDeck(end);
+    // Routes are authored center-to-center for pathfinding and collision. The
+    // visible bark crown must begin at the circular balcony rim, though, or it
+    // lies directly on the deck's top face and the two textures z-fight over a
+    // large wedge. Leave the lower structural body and colliders overlapping
+    // beneath the deck so the transition remains completely walkable.
+    const seamGap = 0.04;
+    const autoStartInset = startDeck ? startDeck.topRadius + seamGap : 0;
+    const autoEndInset = endDeck ? endDeck.topRadius + seamGap : 0;
     const maxInset = Math.max(0, delta.length() - 0.2);
-    const crownStartInset = Math.min(Math.max(0, options.crownStartInset || 0), maxInset);
+    const crownStartInset = Math.min(
+      Math.max(0, options.crownStartInset ?? autoStartInset),
+      maxInset,
+    );
     const crownEndInset = Math.min(
-      Math.max(0, options.crownEndInset || 0),
+      Math.max(0, options.crownEndInset ?? autoEndInset),
       maxInset - crownStartInset,
     );
     const crownLength = delta.length() - crownStartInset - crownEndInset;
@@ -15871,8 +15891,9 @@ function addHollowMyceliumLogTunnel(scene, world, x, z, length = 48, radius = 5.
   // The east bank rises under the log, so keep this climb nearer the center
   // where its full capsule clears both the hill and the rounded bark bands.
   const rightVineX = x + Math.min(4, half - 2);
-  const leftVineZ = z - radius - 1.35;
-  const rightVineZ = z + radius + 1.35;
+  const vineEdgeGap = 0.06;
+  const leftVineZ = z - radius - vineEdgeGap;
+  const rightVineZ = z + radius + vineEdgeGap;
   addVine(scene, world, leftVineX, leftVineZ, 0.1, radius * 1.94 + 0.1,
     0.95, 0, -0.18, 0, 1, 0.18, 1.35, 0x65ef9b);
   addVine(scene, world, rightVineX, rightVineZ, 0.1, radius * 1.94 + 0.1,
@@ -16005,7 +16026,7 @@ function addHollowMyceliumTree(scene, world, x, baseY, z) {
   // An exterior vine keeps the lower ring reachable in either direction; the
   // launcher is the fast interior route to the upper canopy.
   const vineAngle = Math.PI * 3 / 4;
-  const vineRadius = radius + 1.35;
+  const vineRadius = radius + 0.06;
   const vineX = x + Math.cos(vineAngle) * vineRadius;
   const vineZ = z + Math.sin(vineAngle) * vineRadius;
   addVine(scene, world, vineX, vineZ, baseY + 0.1, baseY + 8.15, 0.95,
@@ -16043,6 +16064,9 @@ function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed, trunkRadius 
   deck.rotation.y = seed * 0.61;
   deck.castShadow = deck.receiveShadow = true;
   scene.add(deck);
+  (world.myceliumCanopyDecks ||= []).push({
+    x, y, z, radius: balconyRadius, topRadius: balconyRadius * 0.94,
+  });
 
   // Follow the circular balcony instead of filling its bounding square with
   // an invisible floor. Short tangent cells provide full-width support while
@@ -16267,7 +16291,7 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
     const vineAngle = clearFace ?? (alongX
       ? (dir > 0 ? 0 : Math.PI)
       : (dir > 0 ? Math.PI / 2 : -Math.PI / 2));
-    const vineOffset = deckRadius + 1.45;
+    const vineOffset = deckRadius + 0.06;
     const outwardX = Math.cos(vineAngle);
     const outwardZ = Math.sin(vineAngle);
     const vineX = x + outwardX * vineOffset;
@@ -16415,10 +16439,9 @@ function buildMyceliumGrove(scene) {
   tunnelCeiling.position.set(-52, 5.19, 37);
   tunnelCeiling.receiveShadow = true;
   scene.add(tunnelCeiling);
-  addRamp(scene, world, {
-    axis: 'x', minX: -76, maxX: -63, minZ: 27, maxZ: 47,
-    h0: 0, h1: 7.5, color: 0x345b42, tex: 'grass',
-  });
+  // Keep the wall-facing west exterior clean. The old ramp was squeezed into
+  // the narrow strip between the tunnel ridge and perimeter wall and read as
+  // an awkward green wedge; the east ramp remains the route onto the roof.
   addRamp(scene, world, {
     axis: 'x', minX: -41, maxX: -28, minZ: 27, maxZ: 47,
     h0: 7.5, h1: 0, color: 0x345b42, tex: 'grass',
@@ -16655,18 +16678,20 @@ function buildMyceliumGrove(scene) {
   addBouncyMushroom(scene, world, -54, 9, -9, 0.35, 1.25, 13.5, 0xd58aff, 7.0, 8.8);
   addBouncyMushroom(scene, world, 63, 5.5, -18, 0.35, 1.25, 13.5, 0x7edcff, -7.9, 8.8);
   addBouncyMushroom(scene, world, 54, 9, -8, 0.35, 1.25, 13.5, 0xe08bff, -7.0, 8.8);
-  addVine(scene, world, -66, -24, 0.1, 5.65, 0.95, -0.12, -0.1, 0.514, 0.857,
-    0.18, 1.3, 0x66e6a0);
-  addVine(scene, world, 68.2, -18, 0.1, 5.65, 0.95, 0.12, 0, -1, 0,
-    0.18, 1.3, 0x9c78ff);
-  wp(world, -66, 0.1, -24);
-  wp(world, 68.2, 0.1, -18);
+  const westOuterVine = [-65.71, -23.51];
+  const eastOuterVine = [68.26, -18];
+  addVine(scene, world, westOuterVine[0], westOuterVine[1], 0.1, 5.65, 0.95,
+    -0.12, -0.1, 0.514, 0.857, 0.18, 1.3, 0x66e6a0);
+  addVine(scene, world, eastOuterVine[0], eastOuterVine[1], 0.1, 5.65, 0.95,
+    0.12, 0, -1, 0, 0.18, 1.3, 0x9c78ff);
+  wp(world, westOuterVine[0], 0.1, westOuterVine[1]);
+  wp(world, eastOuterVine[0], 0.1, eastOuterVine[1]);
   world.manualLinks.push(
-    [-66, 0.1, -24, -63, 5.5, -19],
+    [westOuterVine[0], 0.1, westOuterVine[1], -63, 5.5, -19],
     [-63, 5.5, -19, -54, 9, -9],
     [-54, 9, -9, -46, 12.5, 1],
     [-46, 12.5, 1, -37, 14, -5],
-    [68.2, 0.1, -18, 63, 5.5, -18],
+    [eastOuterVine[0], 0.1, eastOuterVine[1], 63, 5.5, -18],
     [63, 5.5, -18, 54, 9, -8],
     [54, 9, -8, 46, 12.5, 2],
     [46, 12.5, 2, 37, 14, -4],
@@ -16680,11 +16705,16 @@ function buildMyceliumGrove(scene) {
   addBouncyMushroom(scene, world, 12, 18.5, -44, 0.3, 1.25, 14.5, 0xff92c8, -4.8, -3.5);
 
   // Vines make each new chain reversible and create deliberate up/down loops.
-  addVine(scene, world, -20.1, 23.4, 0.1, 8.15, 0.9, -0.15, 0.1, 1, -0.15, 0.18, 1.25, 0x66e6a0);
-  addVine(scene, world, 10.69, 23.42, 0.1, 8.15, 0.9, -0.17, 0.05, 0.966, -0.259, 0.18, 1.25, 0xa878ef);
-  addVine(scene, world, -14.5, 51, 7.1, 14.15, 0.9, 0.18, 0, -1, 0, 0.18, 1.25, 0x67efb2);
-  addVine(scene, world, 14.5, 51, 8.1, 14.65, 0.9, -0.18, 0, 1, 0, 0.18, 1.25, 0x9c76ed);
-  addVine(scene, world, -7.5, -46.5, 10.1, 20.15, 0.95, 0, 0.18, 0, -1, 0.18, 1.35, 0x7fe6bd);
+  addVine(scene, world, -20.1, 23.4, 0.1, 8.15, 0.9, -0.15, 0.1, 1, -0.15,
+    0.18, 1.25, 0x66e6a0);
+  addVine(scene, world, 11.5, 23.21, 0.1, 8.15, 0.9, -0.17, 0.05, 0.966, -0.259,
+    0.18, 1.25, 0xa878ef);
+  addVine(scene, world, -15.64, 51, 7.1, 14.15, 0.9, 0.18, 0, -1, 0,
+    0.18, 1.25, 0x67efb2);
+  addVine(scene, world, 15.64, 51, 8.1, 14.65, 0.9, -0.18, 0, 1, 0,
+    0.18, 1.25, 0x9c76ed);
+  addVine(scene, world, -7.5, -47.54, 10.1, 20.15, 0.95, 0, 0.18, 0, -1,
+    0.18, 1.35, 0x7fe6bd);
 
   addMyceliumPatch(scene, world, 118);
   addMyceliumSpores(scene, world);
@@ -16730,7 +16760,12 @@ function buildMyceliumGrove(scene) {
   pk(world, 'health', 55, 0.2, 66);
   pk(world, 'shield', 0, 0.2, 36);
   pk(world, 'speed', -25, 0.2, -19);
+  // Three Double Jumps total: one in the central understory and one atop each
+  // outer mushroom chain, where the mobility reward naturally feeds into the
+  // neighboring upper branches without overlapping the chain's bounce pads.
   pk(world, 'djump', 27, 0.2, -18);
+  pk(world, 'djump', -46, 12.7, 1);
+  pk(world, 'djump', 46, 12.7, 2);
   pk(world, 'silver', -4, 0.25, -72);
   pk(world, 'gold', 5, 23.2, -66);
   pk(world, 'star', 0, 0.25, -73, { hidden: true });
@@ -16747,7 +16782,7 @@ function buildMyceliumGrove(scene) {
     [-24, 10, -63], [0, 10, -63], [24, 10, -63],
     [-66, 0, 30], [66, 0, 30], [-72, 0, -25], [72, 0, -25],
     [-10, 0, -8], [10, 0, -8], [-50, 0, -63], [50, 0, -63],
-    [-76, 0, 37], [-28, 0, 37], [-52, 7.5, 43],
+    [-28, 0, 37], [-52, 7.5, 43],
   ]) wp(world, x, y, z);
   const linkRoute = points => {
     for (let i = 1; i < points.length; i++) {
@@ -16762,7 +16797,7 @@ function buildMyceliumGrove(scene) {
   linkRoute([[-56, 0, -12], [-35, 0, -18], [-18, 0, -24], [-15, 0.2, -43], [0, 0.2, -52], [0, 0.2, -63], [0, 0.2, -71]]);
   linkRoute([[56, 0, -12], [35, 0, -18], [18, 0, -24], [15, 0.2, -43], [0, 0.2, -52]]);
   linkRoute([[-66, 0, 30], [-52, 0, 18], [-52, 0, 28], [-52, 0, 40], [-52, 0, 54], [-60, 0, 58]]);
-  linkRoute([[-76, 0, 37], [-52, 7.5, 37], [-52, 7.5, 43], [-28, 0, 37]]);
+  linkRoute([[-52, 7.5, 37], [-52, 7.5, 43], [-28, 0, 37]]);
   linkRoute([[-50, 0, -63], [-24, 10, -63], [0, 10, -63], [24, 10, -63], [50, 0, -63]]);
   linkRoute([[-72, 0, -25], [-61, 6.4, -49], [-50, 0, -63]]);
   linkRoute([[72, 0, -25], [60, 6.4, -49], [50, 0, -63]]);
