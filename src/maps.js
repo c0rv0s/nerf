@@ -865,8 +865,188 @@ function addAsteroid(
   return m;
 }
 
+function softMeadowPatchGeometry(palette) {
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  for (let blade = 0; blade < 16; blade++) {
+    const angle = blade * 2.39996 + Math.sin(blade * 4.7) * 0.42;
+    const centerX = (blade % 4 - 1.5) * 0.31 + Math.sin(blade * 3.1) * 0.075;
+    const centerZ = (Math.floor(blade / 4) - 1.5) * 0.31 + Math.cos(blade * 2.7) * 0.075;
+    const sideX = Math.cos(angle);
+    const sideZ = -Math.sin(angle);
+    const width = 0.16 + (blade % 3) * 0.027;
+    const midWidth = width * (0.78 + (blade % 2) * 0.07);
+    const topWidth = width * (0.48 + (blade % 2) * 0.08);
+    const height = 0.25 + (blade % 5) * 0.032;
+    const lean = 0.1 + (blade % 3) * 0.035;
+    const midX = centerX + Math.sin(angle) * lean * 0.34;
+    const midZ = centerZ + Math.cos(angle) * lean * 0.34;
+    const topX = centerX + Math.sin(angle) * lean;
+    const topZ = centerZ + Math.cos(angle) * lean;
+    const base = positions.length / 3;
+    positions.push(
+      centerX - sideX * width / 2, 0, centerZ - sideZ * width / 2,
+      centerX + sideX * width / 2, 0, centerZ + sideZ * width / 2,
+      midX - sideX * midWidth / 2, height * 0.52, midZ - sideZ * midWidth / 2,
+      midX + sideX * midWidth / 2, height * 0.52, midZ + sideZ * midWidth / 2,
+      topX - sideX * topWidth / 2, height, topZ - sideZ * topWidth / 2,
+      topX + sideX * topWidth / 2, height, topZ + sideZ * topWidth / 2,
+    );
+    const bladeColor = new THREE.Color(palette[blade % palette.length]);
+    const midColor = bladeColor.clone().offsetHSL(0, 0, 0.008);
+    const tipColor = bladeColor.clone().offsetHSL(0, 0, 0.015);
+    for (const color of [bladeColor, bladeColor, midColor, midColor, tipColor, tipColor]) {
+      colors.push(color.r, color.g, color.b);
+    }
+    indices.push(
+      base, base + 1, base + 2,
+      base + 1, base + 3, base + 2,
+      base + 2, base + 3, base + 4,
+      base + 3, base + 5, base + 4,
+    );
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function softMeadowMaterial(cacheKey, { calmColor = null } = {}) {
+  // One gently lit ground tone plus ambient fill keeps differently oriented
+  // blades dimensional without turning a meadow into a noisy checkerboard.
+  const material = calmColor == null
+    ? new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      roughness: 1,
+      metalness: 0,
+      flatShading: false,
+    })
+    : new THREE.MeshStandardMaterial({
+      color: calmColor,
+      vertexColors: false,
+      side: THREE.DoubleSide,
+      roughness: 1,
+      metalness: 0,
+      flatShading: false,
+      // Lift the darkest faces without erasing the broad ribbon bends.
+      emissive: 0x17351f,
+      emissiveIntensity: 0.42,
+    });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.grassTime = { value: 0 };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float grassTime;')
+      .replace('#include <begin_vertex>', `
+        vec3 transformed = vec3(position);
+        float grassPhase = 0.0;
+        #ifdef USE_INSTANCING
+          grassPhase = instanceMatrix[3].x * 0.19 + instanceMatrix[3].z * 0.13;
+        #endif
+        float bladeTip = smoothstep(0.02, 0.36, position.y);
+        float breeze = sin(grassTime * 1.35 + grassPhase)
+          + sin(grassTime * 0.62 + grassPhase * 1.7) * 0.45;
+        transformed.x += breeze * bladeTip * bladeTip * 0.055;
+        transformed.z += cos(grassTime * 0.9 + grassPhase) * bladeTip * bladeTip * 0.035;
+      `);
+    material.userData.shader = shader;
+  };
+  material.customProgramCacheKey = () => cacheKey;
+  return material;
+}
+
+// Universal renderer for dimensional grass. Maps only supply placement rules
+// and a ground-matching tint; blade shape, restrained lighting, wind, density
+// batching, and shadow behavior stay identical everywhere.
+function addSoftMeadowGrass(scene, world, {
+  count,
+  tint,
+  seed,
+  name,
+  cacheKey = 'soft-meadow-wind-v1',
+  attemptMultiplier = 16,
+  place,
+}) {
+  const geometry = softMeadowPatchGeometry([tint]);
+  const material = softMeadowMaterial(cacheKey, { calmColor: tint });
+  const grass = new THREE.InstancedMesh(geometry, material, count);
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const orientation = new THREE.Quaternion();
+  const up = V(0, 1, 0);
+  const rnd = seededRandom(seed);
+  const placement = { rnd, position, scale, orientation, up };
+  let placed = 0;
+  let attempts = 0;
+  while (placed < count && attempts++ < count * attemptMultiplier) {
+    position.set(0, 0, 0);
+    scale.set(1, 1, 1);
+    orientation.identity();
+    if (!place(placement)) continue;
+    matrix.compose(position, orientation, scale);
+    grass.setMatrixAt(placed++, matrix);
+  }
+  grass.count = placed;
+  grass.instanceMatrix.needsUpdate = true;
+  grass.castShadow = grass.receiveShadow = false;
+  grass.name = name;
+  scene.add(grass);
+  world.anim.push((_dt, t) => {
+    if (material.userData.shader) material.userData.shader.uniforms.grassTime.value = t;
+  });
+  return grass;
+}
+
+function addCanopyMeadowGrass(scene, world, count = 4300) {
+  const flowerBeds = [
+    [-20, 55, 22, 18], [40, -65, 18, 14], [-70, 30, 16, 20],
+  ];
+  const treeCenters = [[0, 0, 8.8], [-45, -45, 6], [45, -45, 6], [-45, 45, 6], [45, 45, 6]];
+  return addSoftMeadowGrass(scene, world, {
+    count,
+    tint: 0x3b6837,
+    seed: 0xca70a55,
+    name: 'canopy-soft-meadow',
+    place: ({ rnd, position, scale, orientation, up }) => {
+      const x = rnd() * 158 - 79;
+      const z = rnd() * 158 - 79;
+      const density = THREE.MathUtils.clamp(
+        0.82 + Math.sin(x * 0.075 + z * 0.031) * 0.1
+        + Math.sin(z * 0.064 - x * 0.027) * 0.08,
+        0.62,
+        0.98,
+      );
+      if (rnd() > density) return false;
+      const inRiver = Math.abs(Math.abs(x) - 54) < 4.4;
+      const onRoad = x > -51 && x < 71 && Math.abs(z + 40) < 4;
+      const inFlowers = flowerBeds.some(([cx, cz, width, depth]) => (
+        Math.abs(x - cx) < width / 2 + 0.5 && Math.abs(z - cz) < depth / 2 + 0.5
+      ));
+      const underTree = treeCenters.some(([cx, cz, radius]) => (
+        Math.hypot(x - cx, z - cz) < radius
+      ));
+      const atRangerHut = x > 11.5 && x < 32 && z > 11.5 && z < 21;
+      const atFallenLog = x > -39 && x < -19 && z > -28 && z < -18;
+      const atTunnelOpening = Math.abs(x) < 4 && z > 39 && z < 69;
+      if (inRiver || onRoad || inFlowers || underTree || atRangerHut
+        || atFallenLog || atTunnelOpening) return false;
+
+      const size = 0.96 + rnd() * 0.34;
+      position.set(x, 0.035, z);
+      orientation.setFromAxisAngle(up, rnd() * Math.PI * 2);
+      scale.set(size * (0.9 + rnd() * 0.2), size, size * (0.9 + rnd() * 0.2));
+      return true;
+    },
+  });
+}
+
 // A wide, layered crown reads as a real treetop instead of one round boulder.
-// The low-poly lobes leave small sky gaps between spreading limbs, while the
+// Broad overlapping leaf fans keep the low-poly silhouette soft, while the
 // foliage stays visual-only so the existing deck routes and collision remain
 // unchanged.
 function addCanopyCrown(scene, x, y, z, radius, seed = 1, autumn = false, branchBaseY = null) {
@@ -881,9 +1061,11 @@ function addCanopyCrown(scene, x, y, z, radius, seed = 1, autumn = false, branch
 
   const colorGeometry = (geometry, color) => {
     const c = new THREE.Color(color);
+    const sourceColors = geometry.getAttribute('color');
     const colors = new Float32Array(geometry.attributes.position.count * 3);
     for (let i = 0; i < geometry.attributes.position.count; i++) {
-      colors.set([c.r, c.g, c.b], i * 3);
+      const shade = sourceColors ? sourceColors.getX(i) : 1;
+      colors.set([c.r * shade, c.g * shade, c.b * shade], i * 3);
     }
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     return geometry;
@@ -907,7 +1089,7 @@ function addCanopyCrown(scene, x, y, z, radius, seed = 1, autumn = false, branch
     [-0.28, 0.45, 0.18, 0.58, 0.44, 0.52, 2],
     [0.3, 0.9, -0.2, 0.54, 0.48, 0.58, 1],
   ]) {
-    const geometry = new THREE.IcosahedronGeometry(1, 1);
+    const geometry = myceliumLeafCrownGeometry().clone();
     geometry.scale(radius * sx, radius * sy, radius * sz);
     geometry.rotateY(rnd() * Math.PI);
     geometry.rotateZ((rnd() - 0.5) * 0.26);
@@ -930,7 +1112,7 @@ function addCanopyCrown(scene, x, y, z, radius, seed = 1, autumn = false, branch
       radius * 0.035,
     ));
 
-    const geometry = new THREE.IcosahedronGeometry(1, 1);
+    const geometry = myceliumLeafCrownGeometry().clone();
     const lobeRadius = radius * (0.34 + rnd() * 0.12);
     geometry.scale(
       lobeRadius * (1.28 + rnd() * 0.35),
@@ -5162,6 +5344,12 @@ function addCanopyTreehouse(scene, world, x, floorY, z, doorSignX, accent = 0xff
   roof.name = 'canopy-village-treehouse-roof';
   roof.castShadow = roof.receiveShadow = true;
   scene.add(roof);
+  // Match the visible four-sided roof exactly so players can land and walk on
+  // its slopes instead of passing through the presentation-only mesh.
+  world.colliders.push(triangleMeshColliderFromMesh(
+    roof,
+    'canopy-village-treehouse-roof',
+  ));
 
   const lantern = new THREE.PointLight(accent, 12, 12);
   lantern.position.set(frontX + facing * 0.45, floorY + 2.6, z);
@@ -5274,6 +5462,9 @@ function buildCanopy(scene) {
   addBox(scene, world, -20, 0.036, 55, 22, 0.07, 18, 0xd8a8c8, { tex: 'flowers', repeat: [4, 3] });
   addBox(scene, world, 40, 0.036, -65, 18, 0.07, 14, 0xd8a8c8, { tex: 'flowers', repeat: [3, 3] });
   addBox(scene, world, -70, 0.036, 30, 16, 0.07, 20, 0xd8a8c8, { tex: 'flowers', repeat: [3, 4] });
+  // Short curved ribbons add a continuous soft meadow layer without filling
+  // the rivers, authored paths, flower beds, or major traversal landmarks.
+  addCanopyMeadowGrass(scene, world, 4300);
   // floating platforms + pads
   addBox(scene, world, 30, 13.7, 55, 10, 0.6, 10, 0x8a6a40, { tex: 'crate' });
   addJumpPad(scene, world, 21, 0, 55, 30, 5, 0, 0xffd23c);
@@ -5364,7 +5555,9 @@ function buildCanopy(scene) {
   // pocket in the SE quadrant (the pulsar sits inside it)
   for (const [hx, hz, hw, hd] of [
     [-15, 60, 50, 2], [15, -60, 50, 2], [60, 15, 2, 50], [-60, -15, 2, 50],
-    [-30, 14, 2, 26], [30, -14, 2, 26],
+    // Stop the mirrored long hedges just short of the broad center ramps at
+    // z = +/-2 instead of letting their ends clip into the ramp surfaces.
+    [-30, 14, 2, 23.4], [30, -14, 2, 23.4],
     [18, -33, 24, 2], [10, -22, 2, 20], [24, -40, 2, 12],
     // tighter ground pockets around the tree room, hut, and log approaches
     [-18, -9, 18, 2], [18, 9, 18, 2],
@@ -5481,27 +5674,19 @@ function buildCanopy(scene) {
     );
     pk(world, 'grapple', tx, villageY + 0.2, tz + sz * 8.6);
 
-    // The two corners without floating-platform launch chains receive a
-    // continuous exterior vine from the lawn to the village deck.
-    if (sx !== sz) {
-      const fullVineX = tx + sx * 13.28;
-      addVine(scene, world, fullVineX, tz, 0.2, villageY + 0.15, 0.95,
-        sx * 0.16, 0, -sx, 0);
-      wp(world, fullVineX, 0.2, tz);
-      wp(world, fullVineX, villageY, tz);
-      world.manualLinks.push([fullVineX, 0.2, tz, fullVineX, villageY, tz, true]);
-    }
-
-    // Existing upper decks remain useful: a living vine continues from y=20
-    // to the village, making the new tier reversible without relying on pads.
-    const vineX = tx + sx * 7.35;
+    // Hang the village vine from the platform's true outer lip. The previous
+    // upper-deck anchor sat six metres underneath the platform, which made the
+    // vine look as though it grew through the ceiling. Keeping it continuous
+    // to the lawn preserves a reachable two-way route after moving it outward.
+    const vineX = tx + sx * 13.28;
     const vineZ = tz;
-    addVine(scene, world, vineX, vineZ, 20.1, villageY + 0.15, 0.9,
+    addVine(scene, world, vineX, vineZ, 0.2, villageY + 0.15, 0.95,
       sx * 0.16, 0, -sx, 0);
-    wp(world, vineX, 20.1, vineZ);
+    wp(world, vineX, 0.2, vineZ);
+    wp(world, vineX, villageY, vineZ);
     world.manualLinks.push(
-      [tx + sx * 5, 20, tz + sz * 5.5, vineX, 20.1, vineZ],
-      [vineX, 20.1, vineZ, ...nearestVillagePoint(cornerRing, vineX, vineZ)],
+      [vineX, 0.2, vineZ, vineX, villageY, vineZ, true],
+      [vineX, villageY, vineZ, ...nearestVillagePoint(cornerRing, vineX, vineZ)],
     );
   }
 
@@ -16131,161 +16316,62 @@ function addMyceliumPatch(scene, world, count = 72) {
 }
 
 function addMyceliumGrassTufts(scene, world, count = 9000) {
-  // Each instance is a broad patch of short overlapping ribbons rather than a
-  // radial tuft. Neighboring patches merge into one meadow instead of reading
-  // as evenly scattered sprouts.
-  const positions = [];
-  const colors = [];
-  const indices = [];
-  // These stay close to the underlying 0x183d2d grass floor in hue and value;
-  // small variations provide depth without producing luminous lime needles.
-  const palette = [0x254936, 0x294d38, 0x2d513b, 0x234532, 0x30533c];
-  for (let blade = 0; blade < 16; blade++) {
-    const angle = blade * 2.39996 + Math.sin(blade * 4.7) * 0.42;
-    const centerX = (blade % 4 - 1.5) * 0.31 + Math.sin(blade * 3.1) * 0.075;
-    const centerZ = (Math.floor(blade / 4) - 1.5) * 0.31 + Math.cos(blade * 2.7) * 0.075;
-    const sideX = Math.cos(angle);
-    const sideZ = -Math.sin(angle);
-    const width = 0.16 + (blade % 3) * 0.027;
-    const midWidth = width * (0.78 + (blade % 2) * 0.07);
-    const topWidth = width * (0.48 + (blade % 2) * 0.08);
-    const height = 0.25 + (blade % 5) * 0.032;
-    const lean = 0.1 + (blade % 3) * 0.035;
-    const midX = centerX + Math.sin(angle) * lean * 0.34;
-    const midZ = centerZ + Math.cos(angle) * lean * 0.34;
-    const topX = centerX + Math.sin(angle) * lean;
-    const topZ = centerZ + Math.cos(angle) * lean;
-    const base = positions.length / 3;
-    positions.push(
-      centerX - sideX * width / 2, 0, centerZ - sideZ * width / 2,
-      centerX + sideX * width / 2, 0, centerZ + sideZ * width / 2,
-      midX - sideX * midWidth / 2, height * 0.52, midZ - sideZ * midWidth / 2,
-      midX + sideX * midWidth / 2, height * 0.52, midZ + sideZ * midWidth / 2,
-      topX - sideX * topWidth / 2, height, topZ - sideZ * topWidth / 2,
-      topX + sideX * topWidth / 2, height, topZ + sideZ * topWidth / 2,
-    );
-    // Store the meadow palette on the blade vertices themselves. This keeps
-    // the custom wind shader entirely independent of instance-color handling.
-    const bladeColor = new THREE.Color(palette[blade % palette.length]);
-    const midColor = bladeColor.clone().offsetHSL(0, 0, 0.008);
-    const tipColor = bladeColor.clone().offsetHSL(0, 0, 0.015);
-    colors.push(
-      bladeColor.r, bladeColor.g, bladeColor.b,
-      bladeColor.r, bladeColor.g, bladeColor.b,
-      midColor.r, midColor.g, midColor.b,
-      midColor.r, midColor.g, midColor.b,
-      tipColor.r, tipColor.g, tipColor.b,
-      tipColor.r, tipColor.g, tipColor.b,
-    );
-    indices.push(
-      base, base + 1, base + 2,
-      base + 1, base + 3, base + 2,
-      base + 2, base + 3, base + 4,
-      base + 3, base + 5, base + 4,
-    );
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    roughness: 1,
-    metalness: 0,
-    flatShading: false,
-  });
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.grassTime = { value: 0 };
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float grassTime;')
-      .replace('#include <begin_vertex>', `
-        vec3 transformed = vec3(position);
-        float grassPhase = 0.0;
-        #ifdef USE_INSTANCING
-          grassPhase = instanceMatrix[3].x * 0.19 + instanceMatrix[3].z * 0.13;
-        #endif
-        float bladeTip = smoothstep(0.02, 0.36, position.y);
-        float breeze = sin(grassTime * 1.35 + grassPhase)
-          + sin(grassTime * 0.62 + grassPhase * 1.7) * 0.45;
-        transformed.x += breeze * bladeTip * bladeTip * 0.055;
-        transformed.z += cos(grassTime * 0.9 + grassPhase) * bladeTip * bladeTip * 0.035;
-      `);
-    material.userData.shader = shader;
-  };
-  material.customProgramCacheKey = () => 'mycelium-meadow-wind-v3';
-  const tufts = new THREE.InstancedMesh(geometry, material, count);
-  const matrix = new THREE.Matrix4();
-  const position = new THREE.Vector3();
-  const scale = new THREE.Vector3();
   const normal = new THREE.Vector3();
-  const orientation = new THREE.Quaternion();
+  const candidateNormal = new THREE.Vector3();
   const yaw = new THREE.Quaternion();
-  const up = V(0, 1, 0);
-  const rnd = seededRandom(0x67726173);
   const terrain = world.colliders.filter(c => c.type === 'triangleMesh'
     && c.debugName === 'faceted-asteroid');
-  let placed = 0;
-  let attempts = 0;
-  while (placed < count && attempts++ < count * 18) {
-    const x = rnd() * 150 - 75;
-    const z = rnd() * 150 - 75;
-    // Broad overlapping noise bands make lush swaths and softer clearings
-    // instead of distributing every tuft at the same visual density.
-    const meadowDensity = THREE.MathUtils.clamp(
-      0.84
-      + Math.sin(x * 0.105 + z * 0.034) * 0.1
-      + Math.sin(z * 0.083 - x * 0.027) * 0.08,
-      0.62,
-      0.99,
-    );
-    if (rnd() > meadowDensity) continue;
-    // Preserve the clean water silhouette and the authored interior routes.
-    const pond = ((x - 2) / 22) ** 2 + ((z + 35.5) / 17) ** 2 < 1;
-    const hollowLogInterior = Math.abs(x) < 27 && Math.abs(z - 31) < 6.3;
-    const scatterTunnelInterior = Math.abs(x + 52) < 7.2 && z > 14 && z < 60;
-    const grottoInterior = Math.abs(x) < 12 && z < -47;
-    if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior) continue;
-    if (world.myceliumTreeRoots?.some(root => (
-      Math.hypot(x - root.x, z - root.z) < Math.max(1.1, root.radius * 0.42)
-    ))) continue;
-    if (world.colliders.some(c => c.debugName === 'mycelium-boulder' && (
-      ((x - c.center.x) / (c.radii.x + 0.55)) ** 2
-      + ((z - c.center.z) / (c.radii.z + 0.55)) ** 2 < 1
-    ))) continue;
+  return addSoftMeadowGrass(scene, world, {
+    count,
+    tint: 0x294d38,
+    seed: 0x67726173,
+    name: 'mycelium-grass-tufts',
+    attemptMultiplier: 18,
+    place: ({ rnd, position, scale, orientation: grassOrientation, up }) => {
+      const x = rnd() * 150 - 75;
+      const z = rnd() * 150 - 75;
+      // Broad overlapping noise bands make lush swaths and softer clearings
+      // instead of distributing every tuft at the same visual density.
+      const meadowDensity = THREE.MathUtils.clamp(
+        0.84
+        + Math.sin(x * 0.105 + z * 0.034) * 0.1
+        + Math.sin(z * 0.083 - x * 0.027) * 0.08,
+        0.62,
+        0.99,
+      );
+      if (rnd() > meadowDensity) return false;
+      // Preserve the clean water silhouette and the authored interior routes.
+      const pond = ((x - 2) / 22) ** 2 + ((z + 35.5) / 17) ** 2 < 1;
+      const hollowLogInterior = Math.abs(x) < 27 && Math.abs(z - 31) < 6.3;
+      const scatterTunnelInterior = Math.abs(x + 52) < 7.2 && z > 14 && z < 60;
+      const grottoInterior = Math.abs(x) < 12 && z < -47;
+      if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior) return false;
+      if (world.myceliumTreeRoots?.some(root => (
+        Math.hypot(x - root.x, z - root.z) < Math.max(1.1, root.radius * 0.42)
+      ))) return false;
+      if (world.colliders.some(c => c.debugName === 'mycelium-boulder' && (
+        ((x - c.center.x) / (c.radii.x + 0.55)) ** 2
+        + ((z - c.center.z) / (c.radii.z + 0.55)) ** 2 < 1
+      ))) return false;
 
-    let y = 0.025;
-    normal.set(0, 1, 0);
-    for (const collider of terrain) {
-      const candidateNormal = new THREE.Vector3();
-      const candidateY = triangleMeshSurfaceY(collider, x, z, candidateNormal);
-      if (candidateY == null || candidateY < 0 || candidateY > 8.5 || candidateY <= y) continue;
-      y = candidateY + 0.025;
-      normal.copy(candidateNormal);
-    }
-    // Skip near-vertical facets; grass belongs on walkable soil, not cliff faces.
-    if (normal.y < 0.72) continue;
-    position.set(x, y, z);
-    orientation.setFromUnitVectors(up, normal);
-    yaw.setFromAxisAngle(up, rnd() * Math.PI * 2);
-    orientation.multiply(yaw);
-    const size = 0.88 + rnd() * 0.38;
-    scale.set(size * (0.9 + rnd() * 0.2), size, size * (0.9 + rnd() * 0.2));
-    matrix.compose(position, orientation, scale);
-    tufts.setMatrixAt(placed, matrix);
-    placed++;
-  }
-  tufts.count = placed;
-  tufts.instanceMatrix.needsUpdate = true;
-  // The ground lighting supplies the final meadow value. Dense per-blade
-  // shadows would make this much heavier layer unnecessarily noisy.
-  tufts.castShadow = tufts.receiveShadow = false;
-  tufts.name = 'mycelium-grass-tufts';
-  scene.add(tufts);
-  world.anim.push((_dt, t) => {
-    if (material.userData.shader) material.userData.shader.uniforms.grassTime.value = t;
+      let y = 0.025;
+      normal.set(0, 1, 0);
+      for (const collider of terrain) {
+        const candidateY = triangleMeshSurfaceY(collider, x, z, candidateNormal);
+        if (candidateY == null || candidateY < 0 || candidateY > 8.5 || candidateY <= y) continue;
+        y = candidateY + 0.025;
+        normal.copy(candidateNormal);
+      }
+      // Skip near-vertical facets; grass belongs on walkable soil, not cliffs.
+      if (normal.y < 0.72) return false;
+      position.set(x, y, z);
+      grassOrientation.setFromUnitVectors(up, normal);
+      yaw.setFromAxisAngle(up, rnd() * Math.PI * 2);
+      grassOrientation.multiply(yaw);
+      const size = 0.88 + rnd() * 0.38;
+      scale.set(size * (0.9 + rnd() * 0.2), size, size * (0.9 + rnd() * 0.2));
+      return true;
+    },
   });
 }
 
@@ -17104,16 +17190,20 @@ function addMyceliumShelfFungi(
   });
   const shelves = [];
   for (let i = 0; i < count; i++) {
+    const horizontalLogShelf = hostSurface?.type === 'cylinderX';
     const radius = scale * (0.9 + ((Math.abs(seed) + i * 5) % 4) * 0.1);
     const thickness = Math.max(0.2, radius * (0.16 + (i % 2) * 0.025));
     // Long climbs sweep clearly across the host surface; shorter tree/rock
     // clusters use a gentler run so their roots still meet curved hosts.
     const stepRun = scale * (count > 4 ? 0.95 : 0.62);
-    // A half-cylinder produces a flat bark-facing edge and a rounded fan that
-    // projects outward, with separate cap and cream underside materials.
+    // Horizontal-log shelves retain a flat bark-facing edge. Tree, wall, and
+    // boulder shelves use a complete circular cap whose center sits on the
+    // host surface, embedding half the fungus for a gap-free attachment.
     const shelf = new THREE.Mesh(
       new THREE.CylinderGeometry(
-        radius * 0.9, radius, thickness, 14, 1, false, -Math.PI / 2, Math.PI,
+        radius * 0.9, radius, thickness, 14, 1, false,
+        horizontalLogShelf ? -Math.PI / 2 : 0,
+        horizontalLogShelf ? Math.PI : Math.PI * 2,
       ),
       [edgeMaterial, capMaterial, undersideMaterial],
     );
@@ -17154,9 +17244,14 @@ function addMyceliumShelfFungi(
     shelf.position.set(
       localX,
       localY,
-      surfaceDepth + radius * 0.08,
+      surfaceDepth - (horizontalLogShelf ? 0.01 : 0),
     );
-    shelf.rotation.y = (i - 0.5) * 0.12 + Math.sin(seed * 1.7 + i) * 0.08;
+    // Shelves on a horizontal log must keep their flat attachment edge
+    // parallel to the log axis. The general staircase twist accumulated with
+    // every step, turning the upper fans noticeably sideways across the bark.
+    shelf.rotation.y = horizontalLogShelf
+      ? Math.sin(seed * 1.7 + i) * 0.025
+      : (i - 0.5) * 0.12 + Math.sin(seed * 1.7 + i) * 0.08;
     shelf.rotation.z = Math.sin(seed * 0.9 + i * 2.1) * 0.07;
     shelf.castShadow = shelf.receiveShadow = true;
     group.add(shelf);
@@ -17597,9 +17692,16 @@ function addMyceliumRockField(scene, world, specs) {
   const palette = [0x35433e, 0x3d4d43, 0x46534a, 0x32433f, 0x4a584c];
   const mossMatrices = Array.from({ length: 4 }, () => []);
   specs.forEach((spec, index) => {
-    const [x, y, z, rx, ry = rx * 0.72, rz = rx * 0.9, collide = true] = spec;
+    const [x, y, z, rx, ry = rx * 0.72, rz = rx * 0.9, collide = true,
+      options = {}] = spec;
     position.set(x, y, z);
-    rotation.setFromEuler(new THREE.Euler(index * 0.37, index * 0.83, index * 0.21));
+    // Broad tunnel stones need to stay upright: freely rotating an elongated
+    // roof ellipsoid can turn its ten-meter horizontal radius vertical and
+    // fill the passage it is meant to frame. The renderer and collider share
+    // this transform, so stabilizing it improves both clearance and fidelity.
+    rotation.setFromEuler(options.upright
+      ? new THREE.Euler(0, options.yaw || 0, 0)
+      : new THREE.Euler(index * 0.37, index * 0.83, index * 0.21));
     scale.set(rx, ry, rz);
     matrix.compose(position, rotation, scale);
     rocks.setMatrixAt(index, matrix);
@@ -18164,22 +18266,22 @@ function buildMyceliumGrove(scene) {
     const angle = Math.PI * i / 9;
     const radius = 1.8 + (i % 3) * 0.4;
     rockSpecs.push([-52 + Math.cos(angle) * 10.6, 3.2 + Math.sin(angle) * 4.6,
-      z, radius, radius * 0.8, radius, true]);
+      z, radius, radius * 0.8, radius, true, { upright: true, yaw: angle * 0.18 }]);
   }
-  // The tunnel collision remains simple and dependable, but these overlapping
-  // stones are its exterior. They hide every rectangular roof/side edge and
-  // make the upper route read as a planted ridge with a hollow beneath it.
+  // Keep an unmistakable sixteen-meter-wide walking channel between the side
+  // stones. Upright, slightly raised roof rocks preserve almost five meters of
+  // headroom while still overlapping the walls into one natural ridge.
   for (const z of [21, 32, 44, 55]) {
-    rockSpecs.push([-65, 3.1, z, 5.8, 4.6, 6.8, true]);
-    rockSpecs.push([-39, 3.0, z + 1.4, 5.6, 4.5, 6.5, true]);
+    rockSpecs.push([-65.5, 3.1, z, 5.5, 4.5, 6.8, true, { upright: true }]);
+    rockSpecs.push([-38.5, 3.0, z + 1.4, 5.4, 4.4, 6.5, true, { upright: true }]);
   }
   for (const [z, offset] of [[22, -1.4], [34, 1.1], [46, -0.6], [54, 1.5]]) {
-    rockSpecs.push([-52 + offset, 7.2, z, 10.2, 3.2, 6.8, true]);
+    rockSpecs.push([-52 + offset, 7.6, z, 10.2, 2.8, 6.8, true, { upright: true }]);
   }
   for (const spec of [
     [-73, 1.4, -8, 3.4, 2.1, 4.1], [-68, 1.2, -17, 2.7, 1.8, 3.2],
     [71, 1.4, 3, 3.5, 2.1, 4], [57, 1.2, 55, 3, 1.8, 3.6],
-    [-28, 1.2, 66, 3.1, 1.7, 3.8], [18, 1.3, 58, 3.4, 1.9, 3.2],
+    [-28, 1.2, 66, 3.1, 1.7, 3.8], [26, 1.3, 61, 3.4, 1.9, 3.2],
   ]) rockSpecs.push([...spec, true]);
   addMyceliumRockField(scene, world, rockSpecs);
   // A few of the larger isolated rocks carry low two-step brackets. Keep them
@@ -18314,9 +18416,9 @@ function buildMyceliumGrove(scene) {
     0.18, 1.25, 0x66e6a0);
   addVine(scene, world, 11.5, 23.21, 0.1, 8.15, 0.9, -0.17, 0.05, 0.966, -0.259,
     0.18, 1.25, 0xa878ef);
-  addVine(scene, world, -15.64, 51, 7.1, 14.15, 0.9, 0.18, 0, -1, 0,
+  addVine(scene, world, -15.64, 51, 0.1, 14.15, 0.9, 0.18, 0, -1, 0,
     0.18, 1.25, 0x67efb2);
-  addVine(scene, world, 15.64, 51, 8.1, 14.65, 0.9, -0.18, 0, 1, 0,
+  addVine(scene, world, 15.64, 51, 0.1, 14.65, 0.9, -0.18, 0, 1, 0,
     0.18, 1.25, 0x9c76ed);
   addVine(scene, world, -7.5, -47.54, 10.1, 20.15, 0.95, 0, 0.18, 0, -1,
     0.18, 1.35, 0x7fe6bd);
@@ -18423,7 +18525,7 @@ function buildMyceliumGrove(scene) {
     [-20, 0, 26, 0, 0, 28], [20, 0, 26, 0, 0, 28],
     [-20.1, 0.1, 23.4, -16, 8, 22, true], [20.1, 0.1, 23.4, 16, 8, 22, true],
     [-16, 8, 22, -4.7, 15, 8, true], [16, 8, 22, 4.7, 15, 8, true],
-    [-23.8, 7.1, 51, -20, 14, 51, true], [23.8, 8.1, 51, 20, 14.5, 51, true],
+    [-15.64, 0.1, 51, -20, 14, 51, true], [15.64, 0.1, 51, 20, 14.5, 51, true],
     [-7.5, 10.1, -56.1, -7.5, 20, -52, true],
   );
 

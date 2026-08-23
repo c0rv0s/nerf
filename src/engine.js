@@ -747,6 +747,14 @@ export function moveCharacter(char, world, dt) {
 function moveCharacterStep(char, world, dt) {
   const gravity = world.gravityAt?.(char.pos, char) ?? world.gravity;
   const previousY = char.pos.y;
+  // Collision response must not squeeze a supported capsule down through its
+  // floor. Tight rock arches can overlap the lower, middle, and upper capsule
+  // samples at once; resolving each sample independently may otherwise add
+  // several downward "nearest exit" corrections in one frame. Preserve the
+  // previous frame's support (or support found earlier in this solve) while
+  // still accepting horizontal push-out. A genuinely airborne character can
+  // still be pushed down by a ceiling.
+  const supportedAtStepStart = char.grounded === true && char.vel.y <= 0.01;
   char._contactPadCooldown = Math.max(0, (char._contactPadCooldown || 0) - dt);
   char.vel.y -= gravity * dt;
   char.pos.addScaledVector(char.vel, dt);
@@ -779,7 +787,9 @@ function moveCharacterStep(char, world, dt) {
       sp.set(char.pos.x, char.pos.y + sy, char.pos.z);
       before.copy(sp);
       resolveSphere(sp, r, nearbyColliders(world, sp, r), out);
-      char.pos.add(sp.sub(before));
+      const delta = sp.sub(before);
+      if ((supportedAtStepStart || out.ny > 0.55) && delta.y < 0) delta.y = 0;
+      char.pos.add(delta);
     }
   }
 
