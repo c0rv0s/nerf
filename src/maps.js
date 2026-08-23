@@ -15596,9 +15596,10 @@ function addMyceliumFairyToads(scene, world) {
 
 function addBouncyMushroom(scene, world, x, baseY, z, stemHeight, radius, vy, color, vx = 0, vz = 0) {
   // The old launch speeds only cleared the first canopy tier by a narrow
-  // margin. Multiplying velocity by sqrt(1.5) makes the ballistic apex about
-  // 50% higher without making the mushrooms feel like teleporters.
-  const launchVy = vy * Math.sqrt(1.5);
+  // margin. Raise the ballistic apex to about 70% over the original tuning;
+  // this is only ~6.5% more velocity than the previous pass, so trajectories
+  // gain useful landing margin without turning into vertical teleporters.
+  const launchVy = vy * Math.sqrt(1.7);
   const stemMaterial = mat(0xdacbd2, { roughness: 0.8, flatShading: true });
   const capMaterial = new THREE.MeshStandardMaterial({
     color,
@@ -15663,6 +15664,10 @@ function addBouncyMushroom(scene, world, x, baseY, z, stemHeight, radius, vy, co
     x, y: topY, z,
     r: radius * 0.82,
     vy: launchVy, vx, vz,
+    // Running into the living rim starts lower than landing on the dome. Give
+    // that contact case a little extra lift so both approaches clear the same
+    // destination edge reliably on the first trigger.
+    contactVy: launchVy * 1.05,
     playersOnly: false,
     disabled: false,
     kind: 'mushroom',
@@ -15777,15 +15782,44 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, opti
     crown.castShadow = crown.receiveShadow = true;
     scene.add(crown);
   }
-  const steps = Math.max(2, Math.ceil(horizontalLength / 2.4));
-  const stepX = delta.x / steps;
-  const stepZ = delta.z / steps;
+  // The visible/supporting limb continues beneath each balcony, but bot route
+  // nodes must stop on the walkable ring. A center-to-center route puts its
+  // endpoint inside the solid trunk, where bots simply face the bark and keep
+  // trying to reach an impossible node.
+  const matchingRouteDeck = point => world.myceliumCanopyDecks?.find(deck => (
+    Math.hypot(point.x - deck.x, point.z - deck.z) < 0.08
+    && Math.abs(point.y - deck.y) < 0.08
+  ));
+  const startRouteDeck = matchingRouteDeck(start);
+  const endRouteDeck = matchingRouteDeck(end);
+  const forwardXZ = horizontalLength > 0.01
+    ? V(delta.x / horizontalLength, 0, delta.z / horizontalLength)
+    : V(1, 0, 0);
+  const navStart = startRouteDeck
+    ? V(
+      startRouteDeck.x + forwardXZ.x * startRouteDeck.navRadius,
+      start.y,
+      startRouteDeck.z + forwardXZ.z * startRouteDeck.navRadius,
+    )
+    : start.clone();
+  const navEnd = endRouteDeck
+    ? V(
+      endRouteDeck.x - forwardXZ.x * endRouteDeck.navRadius,
+      end.y,
+      endRouteDeck.z - forwardXZ.z * endRouteDeck.navRadius,
+    )
+    : end.clone();
+  const navDelta = navEnd.clone().sub(navStart);
+  const navHorizontalLength = Math.hypot(navDelta.x, navDelta.z);
+  const steps = Math.max(2, Math.ceil(navHorizontalLength / 2.4));
+  const stepX = navDelta.x / steps;
+  const stepZ = navDelta.z / steps;
   let previousWaypoint = null;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    const x = start.x + delta.x * t;
-    const y = start.y + delta.y * t;
-    const z = start.z + delta.z * t;
+    const x = navStart.x + navDelta.x * t;
+    const y = navStart.y + navDelta.y * t;
+    const z = navStart.z + navDelta.z * t;
     world.colliders.push({
       type: 'box',
       min: V(x - Math.abs(stepX) * 0.62 - walkRadius * 0.48, y - plankDepth,
@@ -15801,6 +15835,16 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, opti
       previousWaypoint = { x, y, z };
     }
   }
+  const linkEndpointToDeckRing = (point, deck) => {
+    if (!deck?.navPoints?.length) return;
+    const nearest = deck.navPoints.reduce((best, candidate) => (
+      Math.hypot(candidate[0] - point.x, candidate[2] - point.z)
+        < Math.hypot(best[0] - point.x, best[2] - point.z) ? candidate : best
+    ));
+    world.manualLinks.push([point.x, point.y, point.z, ...nearest]);
+  };
+  linkEndpointToDeckRing(navStart, startRouteDeck);
+  linkEndpointToDeckRing(navEnd, endRouteDeck);
 }
 
 function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) {
@@ -15840,9 +15884,20 @@ function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) 
   scene.add(stem, cap, dome);
 
   const stemRadius = radius * 0.26;
+  // Match the broad visible top rather than only supporting its inner 78%.
+  // A small amount of forgiving edge support is intentional: these caps are
+  // landing targets reached at speed from directional bounce trajectories.
+  const capSupportRadius = radius * 0.94;
   world.colliders.push(
     { type: 'box', min: V(x - stemRadius, stemBottomY, z - stemRadius), max: V(x + stemRadius, topY - 0.75, z + stemRadius) },
-    { type: 'box', min: V(x - radius * 0.78, topY - 0.82, z - radius * 0.78), max: V(x + radius * 0.78, topY, z + radius * 0.78) },
+    {
+      type: 'box',
+      min: V(x - capSupportRadius, topY - 0.82, z - capSupportRadius),
+      max: V(x + capSupportRadius, topY, z + capSupportRadius),
+      debugName: 'mycelium-platform-mushroom-cap',
+      visualRadius: radius,
+      supportRadius: capSupportRadius,
+    },
   );
   wp(world, x, topY, z);
   world.anim.push((_dt, t) => {
@@ -15914,13 +15969,28 @@ function addHollowMyceliumLogTunnel(scene, world, x, z, length = 48, radius = 5.
 }
 
 function addMyceliumRingDeck(scene, world, x, y, z, outerRadius, innerRadius, color) {
+  const thickness = 0.7;
+  const ringShape = new THREE.Shape();
+  ringShape.absarc(0, 0, outerRadius, 0, Math.PI * 2, false);
+  const ringHole = new THREE.Path();
+  ringHole.absarc(0, 0, innerRadius, 0, Math.PI * 2, true);
+  ringShape.holes.push(ringHole);
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(innerRadius, outerRadius, 28),
+    new THREE.ExtrudeGeometry(ringShape, {
+      depth: thickness,
+      bevelEnabled: false,
+      curveSegments: 40,
+      steps: 1,
+    }),
     mat(color, { tex: 'canopy-bark', repeat: [3, 3], roughness: 0.98, side: THREE.DoubleSide }),
   );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.set(x, y - 0.03, z);
-  ring.receiveShadow = true;
+  // Extrusion runs along local +Z. Rotating +90 degrees puts the cap at y and
+  // gives the balcony a real outer wall, inner wall, and underside down to the
+  // same depth used by gameplay collision.
+  ring.rotation.x = Math.PI / 2;
+  ring.position.set(x, y, z);
+  ring.name = 'mycelium-hollow-tree-ring-deck';
+  ring.castShadow = ring.receiveShadow = true;
   scene.add(ring);
   const band = outerRadius - innerRadius;
   const mid = (outerRadius + innerRadius) / 2;
@@ -15940,7 +16010,7 @@ function addMyceliumRingDeck(scene, world, x, y, z, outerRadius, innerRadius, co
     const cz = z + sin * mid;
     world.colliders.push({
       type: 'box',
-      min: V(cx - extentX, y - 0.7, cz - extentZ),
+      min: V(cx - extentX, y - thickness, cz - extentZ),
       max: V(cx + extentX, y, cz + extentZ),
     });
   }
@@ -16064,9 +16134,27 @@ function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed, trunkRadius 
   deck.rotation.y = seed * 0.61;
   deck.castShadow = deck.receiveShadow = true;
   scene.add(deck);
-  (world.myceliumCanopyDecks ||= []).push({
+  const navRadius = trunkRadius + 1.45;
+  const navPoints = [];
+  // Eight nodes keep the ring safely outside the trunk while making the
+  // around-tree route shorter (in graph hops) than detouring through an
+  // unrelated mushroom or distant branch.
+  const navSegments = 8;
+  for (let i = 0; i < navSegments; i++) {
+    const angle = i * Math.PI * 2 / navSegments;
+    const point = [x + Math.cos(angle) * navRadius, y, z + Math.sin(angle) * navRadius];
+    navPoints.push(point);
+    wp(world, ...point);
+    world.waypoints[world.waypoints.length - 1].manualLinksOnly = true;
+  }
+  for (let i = 0; i < navSegments; i++) {
+    world.manualLinks.push([...navPoints[i], ...navPoints[(i + 1) % navSegments]]);
+  }
+  const deckRoute = {
     x, y, z, radius: balconyRadius, topRadius: balconyRadius * 0.94,
-  });
+    navRadius, navPoints,
+  };
+  (world.myceliumCanopyDecks ||= []).push(deckRoute);
 
   // Follow the circular balcony instead of filling its bounding square with
   // an invisible floor. Short tangent cells provide full-width support while
@@ -16090,8 +16178,7 @@ function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed, trunkRadius 
       max: V(cx + extentX, y, cz + extentZ),
     });
   }
-  wp(world, x, y, z);
-  return { radius: balconyRadius, thickness };
+  return { ...deckRoute, thickness };
 }
 
 function addMyceliumRockField(scene, world, specs) {
@@ -16264,11 +16351,13 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
     max: V(x + 1.8, baseY + trunkHeight, z + 1.8),
   });
 
+  let previousDeckRoute = null;
   deckHeights.forEach((deckY, index) => {
     const oldDeckRadius = index ? 5.2 : 6.2;
-    const { radius: deckRadius } = addMyceliumCanopyDeck(
+    const deckRoute = addMyceliumCanopyDeck(
       scene, world, x, deckY, z, oldDeckRadius, seed + index, trunkRadius,
     );
+    const deckRadius = deckRoute.radius;
     const dir = (seed + index) % 2 === 0 ? 1 : -1;
     const alongX = index % 2 === 0;
     // Keep the climb volume just beyond the landing collider, with the sheet
@@ -16302,8 +16391,19 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
       -outwardX, -outwardZ,
       0.2, 1.18, index % 2 ? 0x9a74ff : 0x55efba);
     wp(world, vineX, y0, vineZ);
-    if (index > 0) world.manualLinks.push([x, deckHeights[index - 1], z, vineX, y0, vineZ]);
-    world.manualLinks.push([vineX, y0, vineZ, x, deckY, z]);
+    const nearestDeckPoint = (route, px, pz) => route.navPoints.reduce((best, candidate) => (
+      Math.hypot(candidate[0] - px, candidate[2] - pz)
+        < Math.hypot(best[0] - px, best[2] - pz) ? candidate : best
+    ));
+    if (previousDeckRoute) {
+      world.manualLinks.push([
+        ...nearestDeckPoint(previousDeckRoute, vineX, vineZ), vineX, y0, vineZ,
+      ]);
+    }
+    world.manualLinks.push([
+      vineX, y0, vineZ, ...nearestDeckPoint(deckRoute, vineX, vineZ),
+    ]);
+    previousDeckRoute = deckRoute;
     const branchY = deckY - 0.65;
     for (let arm = 0; arm < 4; arm++) {
       const angle = arm * Math.PI / 2 + seed * 0.29 + index * 0.42;
@@ -16779,7 +16879,7 @@ function buildMyceliumGrove(scene) {
     [0, 0.2, -52], [0, 0.2, -63], [0, 0.2, -71],
     [-52, 0, 18], [-52, 0, 28], [-52, 0, 40], [-52, 0, 54], [-52, 7.5, 37],
     [-61, 6.4, -49], [60, 6.4, -49], [66, 6.9, 25], [-28, 5.9, 69], [29, 5.9, 70],
-    [-24, 10, -63], [0, 10, -63], [24, 10, -63],
+    [-24, 10, -63], [0, 10, -58.5], [24, 10, -63],
     [-66, 0, 30], [66, 0, 30], [-72, 0, -25], [72, 0, -25],
     [-10, 0, -8], [10, 0, -8], [-50, 0, -63], [50, 0, -63],
     [-28, 0, 37], [-52, 7.5, 43],
@@ -16798,7 +16898,9 @@ function buildMyceliumGrove(scene) {
   linkRoute([[56, 0, -12], [35, 0, -18], [18, 0, -24], [15, 0.2, -43], [0, 0.2, -52]]);
   linkRoute([[-66, 0, 30], [-52, 0, 18], [-52, 0, 28], [-52, 0, 40], [-52, 0, 54], [-60, 0, 58]]);
   linkRoute([[-52, 7.5, 37], [-52, 7.5, 43], [-28, 0, 37]]);
-  linkRoute([[-50, 0, -63], [-24, 10, -63], [0, 10, -63], [24, 10, -63], [50, 0, -63]]);
+  // Bend the upper shelf route around the rear elder trunk. The former center
+  // node sat inside the bark collider and made bots walk straight into it.
+  linkRoute([[-50, 0, -63], [-24, 10, -63], [0, 10, -58.5], [24, 10, -63], [50, 0, -63]]);
   linkRoute([[-72, 0, -25], [-61, 6.4, -49], [-50, 0, -63]]);
   linkRoute([[72, 0, -25], [60, 6.4, -49], [50, 0, -63]]);
   linkRoute([[70, 0, 5], [66, 6.9, 25], [66, 0, 30]]);
@@ -16809,7 +16911,7 @@ function buildMyceliumGrove(scene) {
   linkRoute([[-31, 7, 44], [-16, 8, 22], [0, 9.5, 21], [16, 8, 22], [29, 8, 43]]);
   world.manualLinks.push(
     [-52, 0, 18, -52, 0, 28], [-52, 0, 40, -52, 0, 54],
-    [-52, 0, 28, -52, 7.5, 37], [0, 0.2, -52, 0, 10, -63],
+    [-52, 0, 28, -52, 7.5, 37], [0, 0.2, -52, 0, 10, -58.5],
     [0, 0.1, 8, 4.2, 15, 8, true],
     [-20, 0, 26, 0, 0, 28], [20, 0, 26, 0, 0, 28],
     [-20.1, 0.1, 23.4, -16, 8, 22, true], [20.1, 0.1, 23.4, 16, 8, 22, true],

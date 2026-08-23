@@ -681,7 +681,10 @@ function moveCharacterStep(char, world, dt) {
         : velocityLength > 0.001 ? -char.vel.x / velocityLength : 1;
       const nz = horizontalLength > 0.001 ? dz / horizontalLength
         : velocityLength > 0.001 ? -char.vel.z / velocityLength : 0;
-      char.vel.y = pad.vy;
+      // Side contact begins below the cap's landing plane, so directional
+      // mushrooms may provide a slightly stronger contact launch to preserve
+      // the same usable arc as a clean feet-first landing.
+      char.vel.y = pad.contactVy ?? pad.vy;
       if (pad.vx) char.vel.x = pad.vx;
       else char.vel.x += nx * (pad.sideImpulse || 3.5);
       if (pad.vz) char.vel.z = pad.vz;
@@ -924,6 +927,10 @@ export function buildWaypointGraph(world) {
   for (let i = 0; i < wps.length; i++) wps[i].links = [];
   for (let i = 0; i < wps.length; i++) {
     for (let j = i + 1; j < wps.length; j++) {
+      // Some authored traversal networks (such as annular tree balconies and
+      // their narrow outgoing branches) must use their explicit links. A
+      // clear straight chord can still cross unsupported air or a solid trunk.
+      if (wps[i].manualLinksOnly || wps[j].manualLinksOnly) continue;
       const a = wps[i].pos, b = wps[j].pos;
       if (a.distanceTo(b) > maxDist) continue;
       if (Math.abs(a.y - b.y) > maxDy) continue;
