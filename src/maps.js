@@ -5693,10 +5693,10 @@ function buildCanopy(scene) {
   addVine(scene, world, 10.28, -3, 0.2, 8.1, 0.85, 0.22, 0, -1, 0);     // lower deck edge opposite pathway
   addVine(scene, world, -10.28, 6.35, 8.1, 16.1, 0.85, -0.16, 0, 1, 0); // center 8 -> 16 west edge
   addVine(scene, world, 10.28, -4.75, 16.1, 24.1, 0.8, 0.16, 0, -1, 0); // center 16 -> 24 east edge
-  addVine(scene, world, -52.28, -45, 0.2, 20.1, 0.95, -0.18, 0, 1, 0);   // SW hollow tree outer edge
+  addVine(scene, world, -45, -52.28, 0.2, 20.1, 0.95, 0, -0.18, 0, 1);   // SW hollow tree north outer edge
   addVine(scene, world, -31.08, 15, 0.2, 4.1, 0.8, -0.14, 0, 1, 0);     // hedge-top shortcut
-  addVine(scene, world, 52.28, -45, 0.2, 19.1, 0.9, 0.18, 0, -1, 0);    // NE trunk side
-  addVine(scene, world, -52.28, 45, 0.2, 19.1, 0.9, -0.18, 0, 1, 0);    // NW trunk side
+  addVine(scene, world, 45, -52.28, 0.2, 19.1, 0.9, 0, -0.18, 0, 1);    // NE tree north outer edge
+  addVine(scene, world, -45, 52.28, 0.2, 19.1, 0.9, 0, 0.18, 0, -1);    // NW tree south outer edge
   addVine(scene, world, 45, 52.28, 0.2, 19.1, 0.9, 0, 0.18, 0, -1);     // SE trunk side
   addVine(scene, world, -4, 10.28, 0.2, 15.1, 0.85, 0, 0.16, 0, -1);    // center tiers south edge
   addVine(scene, world, 31.38, 16, 0.2, 4.2, 0.75, 0.16, 0, -1, 0);     // ranger hut roof east edge
@@ -5926,12 +5926,13 @@ function buildCanopy(scene) {
     [-10.28, 8, 6.35], [-10.28, 16, 6.35],
     [10.28, 16, -4.75], [10.28, 24, -4.75],
     [-4, 0.2, 10.28], [-4, 15, 10.28],
-    [-52.28, 0.2, -45], [-52.28, 20, -45],
+    [-45, 0.2, -52.28], [-45, 20, -52.28],
     [-30, 0.2, -9.28], [-30, 24.9, -9.28], [-30, 24.9, -7],
     [12.28, 24, -6], [12.28, 30, -6],
     // corner decks (offset off the trunk that pierces them)
     [-40, 10, -39.5], [40, 10, -39.5], [-40, 10, 39.5], [40, 10, 39.5],
     [-40, 20, -39.5], [40, 20, -39.5], [-40, 20, 39.5], [40, 20, 39.5],
+    [-40, 20, -50.5],                                    // SW hollow tree north landing
     // bridges (10 N/S, 20 W/E) + tier ramps
     [-19, 10, -45], [0, 10, -45], [19, 10, -45], [-19, 10, 45], [0, 10, 45], [19, 10, 45],
     [-32, 10, -45], [32, 10, -45], [-32, 10, 45], [32, 10, 45],   // bridge↔deck joins
@@ -5959,8 +5960,9 @@ function buildCanopy(scene) {
     [10.28, 24, -4.75, -3, 24, 3],
     [-4, 0.2, 10.28, -4, 15, 10.28, true],
     [-4, 15, 10.28, 0, 16, 4.5],
-    [-52.28, 0.2, -45, -52.28, 20, -45, true],
-    [-52.28, 20, -45, -40, 20, -39.5],
+    [-45, 0.2, -52.28, -45, 20, -52.28, true],
+    [-45, 20, -52.28, -40, 20, -50.5],
+    [-40, 20, -50.5, -40, 20, -39.5],
     [-30, 0.2, -9.28, -30, 24.9, -9.28, true],
     [-30, 24.9, -9.28, -30, 24.9, -7],
     [-30, 24.9, -7, -14, 30, -7],
