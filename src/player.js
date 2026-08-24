@@ -125,8 +125,10 @@ export class Player {
 
     if (this.world.mounted) {
       const horse = new THREE.Group();
+      const coatTexture = aiTex('horse-coat', 1.7, 1.7);
       const coat = new THREE.MeshStandardMaterial({
-        color: 0xffffff, roughness: 0.88, ...aiTex('horse-coat', 1.7, 1.7),
+        color: coatTexture.map ? 0xffffff : 0xa6532b,
+        roughness: 0.88, ...coatTexture,
       });
       const mane = new THREE.MeshStandardMaterial({ color: 0x24170f, roughness: 0.94 });
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.55, 1.05), coat);

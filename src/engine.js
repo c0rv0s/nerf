@@ -881,6 +881,19 @@ function moveCharacterStep(char, world, dt) {
     }
   }
 
+  // Some natural maps render a thin terrain skin over a much deeper solid
+  // mass. A hard-floor zone is the final invariant for tight overlapping rock
+  // formations: collision may move the capsule sideways or upward, but it may
+  // never finish a movement step underneath the visible walking surface.
+  for (const floor of world.hardFloorZones || []) {
+    if (char.pos.x < floor.minX || char.pos.x > floor.maxX ||
+        char.pos.z < floor.minZ || char.pos.z > floor.maxZ ||
+        char.pos.y >= floor.y) continue;
+    char.pos.y = floor.y;
+    if (char.vel.y < 0) char.vel.y = 0;
+    grounded = true;
+  }
+
   // Living mushrooms react to the whole player capsule, not only to feet
   // landing on their top. A short per-character cooldown prevents the four
   // movement substeps from retriggering the same cap while still making a

@@ -129,11 +129,13 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   const guestSlot = guestJoined.slotId;
   let snapshotSeq = 1;
 
+  await new Promise(resolveWait => setTimeout(resolveWait, 80));
   host.send({
     type: 'hostSnapshot',
     authorityEpoch: epoch,
     seq: snapshotSeq,
     snapshot: {
+      worldTime: 1.25,
       players: [{
         id: hostSlot,
         name: 'Host',
@@ -150,6 +152,12 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   });
   const initialSnapshot = await guest.waitFor(message =>
     message.type === 'snapshot' && message.seq === snapshotSeq);
+  const adjustedHostMeta = await host.waitFor(message =>
+    message.type === 'lobbyMeta' && message.phase === 'playing' &&
+    message.phaseEndsAt > playing.phaseEndsAt);
+  assert.ok(adjustedHostMeta.phaseEndsAt >= playing.phaseEndsAt + 50);
+  assert.equal(initialSnapshot.phaseEndsAt, adjustedHostMeta.phaseEndsAt);
+  assert.equal(initialSnapshot.worldTime, 1.25);
   const canonical = initialSnapshot.players.find(player => player.id === guestSlot).pos;
   const shifted = {
     x: canonical.x + (canonical.x === 0 ? 17 : -Math.sign(canonical.x) * 17),
@@ -157,6 +165,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     z: canonical.z,
   };
   const grappleAnchor = { x: shifted.x, y: 30, z: shifted.z };
+  const sampledAt = Date.now() - 75;
 
   snapshotSeq++;
   host.send({
@@ -164,6 +173,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     authorityEpoch: epoch,
     seq: snapshotSeq,
     snapshot: {
+      sampledAt,
       players: [
         {
           id: hostSlot,
@@ -180,6 +190,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
           name: 'Guest',
           human: true,
           pos: shifted,
+          vel: { x: 12, y: -3, z: 4 },
           hp: 100,
           shield: 75,
           alive: true,
@@ -235,6 +246,8 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     message.type === 'snapshot' && message.seq === snapshotSeq);
   const guestState = shiftedSnapshot.players.find(player => player.id === guestSlot);
   assert.equal(guestState.weapon, 'scatter');
+  assert.deepEqual(guestState.vel, { x: 12, y: -3, z: 4 });
+  assert.ok(Math.abs(shiftedSnapshot.sampledAt - sampledAt) < 500);
   assert.deepEqual(guestState.weapons, ['blaster', 'scatter']);
   assert.deepEqual(guestState.ammo, { scatter: 7 });
   assert.equal(guestState.shield, 75);
@@ -265,10 +278,12 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     { id: 'target-poster-0', cooldown: 29.25 },
   ]);
 
+  const inputSampledAt = Date.now() - 40;
   guest.send({
     type: 'input',
     authorityEpoch: epoch,
     seq: 1,
+    sampledAt: inputSampledAt,
     pos: shifted,
     vel: { x: 0, y: 0, z: 0 },
     alive: true,
@@ -280,8 +295,30 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
     message.slotId === guestSlot &&
     message.input.seq === 1);
   assert.deepEqual(accepted.input.pos, shifted);
+  assert.ok(Math.abs(accepted.input.sampledAt - inputSampledAt) < 500);
   assert.equal(accepted.input.weapon, 'scatter');
   assert.deepEqual(accepted.input.grappleAnchor, grappleAnchor);
+
+  await new Promise(resolveWait => setTimeout(resolveWait, 350));
+  const recoveryPos = {
+    ...shifted,
+    x: shifted.x >= 0 ? shifted.x - 45 : shifted.x + 45,
+  };
+  guest.send({
+    type: 'input',
+    authorityEpoch: epoch,
+    seq: 2,
+    sampledAt: Date.now(),
+    pos: recoveryPos,
+    vel: { x: 19.5, y: 0, z: 0 },
+    alive: true,
+    weapon: 'scatter',
+  });
+  const recoveredInput = await host.waitFor(message =>
+    message.type === 'remoteInput' &&
+    message.slotId === guestSlot &&
+    message.input.seq === 2);
+  assert.deepEqual(recoveredInput.input.pos, recoveryPos);
 
   snapshotSeq++;
   host.send({
@@ -355,7 +392,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   guest.send({
     type: 'input',
     authorityEpoch: epoch,
-    seq: 2,
+    seq: 3,
     pos: respawned,
     vel: { x: 0, y: 0, z: 0 },
     alive: true,
@@ -364,7 +401,7 @@ test('guest input follows the host spawn and loadout snapshots include dropped w
   const acceptedRespawn = await host.waitFor(message =>
     message.type === 'remoteInput' &&
     message.slotId === guestSlot &&
-    message.input.seq === 2);
+    message.input.seq === 3);
   assert.deepEqual(acceptedRespawn.input.pos, respawned);
 });
 
@@ -372,7 +409,10 @@ test('stalled clients do not ping-pong host authority and restart the match', {
   skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
 }, async (t) => {
   const port = await freePort();
-  const server = await startServer(port, { HOST_SNAPSHOT_TIMEOUT_MS: '200' });
+  const server = await startServer(port, {
+    HOST_SNAPSHOT_TIMEOUT_MS: '200',
+    HOST_INITIAL_SNAPSHOT_TIMEOUT_MS: '200',
+  });
   const clients = [];
   t.after(async () => {
     for (const client of clients) client.close();
@@ -403,11 +443,49 @@ test('stalled clients do not ping-pong host authority and restart the match', {
   assert.equal(firstChanges[0].authorityEpoch, secondChanges[0].authorityEpoch);
 });
 
+test('initial host loading grace is longer than the runtime snapshot timeout', {
+  skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
+}, async (t) => {
+  const port = await freePort();
+  const server = await startServer(port, {
+    HOST_SNAPSHOT_TIMEOUT_MS: '200',
+    HOST_INITIAL_SNAPSHOT_TIMEOUT_MS: '900',
+  });
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.close();
+    server.kill('SIGTERM');
+    await once(server, 'exit').catch(() => {});
+  });
+
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const host = new TestClient(url, 'Loading Host', 'loading_host_token_12345678');
+  clients.push(host);
+  await host.joined;
+  const guest = new TestClient(url, 'Loading Guest', 'loading_guest_token_123456');
+  clients.push(guest);
+  await guest.joined;
+  await host.waitFor(message =>
+    message.type === 'phaseChanged' && message.phase === 'playing', 4000);
+  host.messages = [];
+  guest.messages = [];
+
+  await new Promise(resolveWait => setTimeout(resolveWait, 450));
+  assert.equal(host.messages.some(message => message.type === 'hostChanged'), false);
+  assert.equal(guest.messages.some(message => message.type === 'hostChanged'), false);
+
+  const changed = await guest.waitFor(message => message.type === 'hostChanged', 2000);
+  assert.equal(changed.isHost, true);
+});
+
 test('host failover carries combat state forward and pauses the match clock', {
   skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
 }, async (t) => {
   const port = await freePort();
-  const server = await startServer(port, { HOST_SNAPSHOT_TIMEOUT_MS: '200' });
+  const server = await startServer(port, {
+    HOST_SNAPSHOT_TIMEOUT_MS: '200',
+    HOST_INITIAL_SNAPSHOT_TIMEOUT_MS: '200',
+  });
   const clients = [];
   t.after(async () => {
     for (const client of clients) client.close();

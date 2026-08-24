@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY } from './engine.js';
+import { advanceNetworkClock } from './network-sync.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SURFACE_LAYER_EPS = 0.04;
@@ -44,7 +45,9 @@ function newWorld(opts) {
     gravity: 25, jumpVel: 9.2, killY: -40, playerSpeed: 10,
     waypointLinkDist: 16, waypointLinkDy: 3.5,
     update(dt, characters = []) {
-      this._t = (this._t || 0) + dt;
+      const clock = advanceNetworkClock(this._t, this.networkTimeTarget, dt);
+      this._t = clock.time;
+      if (clock.target != null) this.networkTimeTarget = clock.target;
       for (const a of this.anim) a(dt, this._t, characters);
     },
   }, opts);
@@ -3698,8 +3701,12 @@ function addFortressPresentation(scene, world) {
 /* ============ MAP 2 — FORTRESS FALLS (150×90: trench, keep, towers) ============ */
 function addOldWestCactus(scene, world, x, z, height = 4.8, rotation = 0) {
   const cactus = new THREE.Group();
-  const green = mat(0xffffff, {
-    tex: 'cactus-skin', repeat: [1.35, 2.6], roughness: 0.94, flatShading: true,
+  const cactusTexture = aiTex('cactus-skin', 1.35, 2.6);
+  cactusTexture.normalScale?.set(0.92, 0.92);
+  const green = new THREE.MeshStandardMaterial({
+    color: cactusTexture.map ? 0xffffff : 0x4f9b55,
+    roughness: 0.94, metalness: 0.07, envMapIntensity: 0.48,
+    flatShading: true, ...cactusTexture,
   });
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.56, height, 9), green);
   trunk.position.y = height / 2;
@@ -18284,6 +18291,21 @@ function buildMyceliumGrove(scene) {
     [-28, 1.2, 66, 3.1, 1.7, 3.8], [26, 1.3, 61, 3.4, 1.9, 3.2],
   ]) rockSpecs.push([...spec, true]);
   addMyceliumRockField(scene, world, rockSpecs);
+  // The rendered understory bed is intentionally thin, but the earth beneath
+  // this tight rock formation must not be. Add the subgrade after the boulder
+  // colliders so even an unusually large final rock push is caught and sent
+  // back to the exact visible y=0 walking surface in the same collision pass.
+  // Its entire volume is below grade, so it cannot create an invisible wall or
+  // alter any of the visible side entrances around the tunnel.
+  world.colliders.push({
+    type: 'box',
+    min: V(-75, world.killY - 80, 10),
+    max: V(-30, 0, 63),
+    debugName: 'mycelium-scatter-tunnel-solid-earth',
+  });
+  (world.hardFloorZones ||= []).push({
+    minX: -75, maxX: -30, minZ: 10, maxZ: 63, y: 0,
+  });
   // A few of the larger isolated rocks carry low two-step brackets. Keep them
   // away from the pond approaches and tunnel mouths so they read as optional
   // perches rather than required route blockers.

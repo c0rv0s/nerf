@@ -40,11 +40,21 @@ const RESPAWN_TIME = 3;
 const STALE_CONNECTION_MS = 3 * 60 * 1000;
 const EMPTY_LOBBY_GRACE_MS = 60 * 1000;
 const HOST_SNAPSHOT_TIMEOUT_MS = Math.max(100, Number(process.env.HOST_SNAPSHOT_TIMEOUT_MS) || 5000);
+const HOST_INITIAL_SNAPSHOT_TIMEOUT_MS = Math.max(
+  HOST_SNAPSHOT_TIMEOUT_MS,
+  Number(process.env.HOST_INITIAL_SNAPSHOT_TIMEOUT_MS) || 20000,
+);
 const RECONNECT_GRACE_MS = 12 * 1000;
 const MAX_INPUTS_PER_SECOND = 75;
 const MAX_SNAPSHOTS_PER_SECOND = 30;
 const MAX_CONTROL_MESSAGES_PER_SECOND = 12;
 const MAX_CHAT_MESSAGES_PER_SECOND = 3;
+const MAX_OUTBOUND_STATE_BUFFER_BYTES = Math.max(
+  16 * 1024,
+  Number(process.env.MAX_OUTBOUND_STATE_BUFFER_BYTES) || 128 * 1024,
+);
+const MAX_PENDING_STATE_EVENTS = 96;
+const DURABLE_WORLD_EVENT_TYPES = new Set(['meteor', 'comet-spawn', 'comet-impact']);
 const CHAT_MAX_LENGTH = 120;
 const INPUT_POSITION_SLOP = 3;
 const INPUT_MAX_METERS_PER_SECOND = 140;
@@ -418,9 +428,21 @@ function frame(data) {
   return Buffer.concat([head, body]);
 }
 
-function send(conn, data) {
-  if (!conn.alive || conn.socket.destroyed) return;
+function send(conn, data, { volatile = false } = {}) {
+  if (!conn.alive || conn.socket.destroyed) return false;
+  // Control and one-shot event messages must arrive, but a realtime state-only
+  // snapshot is obsolete as soon as a newer one exists. Letting those pile up
+  // in one slow TCP connection makes that guest watch increasingly old gameplay
+  // and can look exactly like a freeze. Drop only volatile state until drain.
+  if (volatile && (conn.socket.writableNeedDrain ||
+      conn.socket.writableLength > MAX_OUTBOUND_STATE_BUFFER_BYTES)) {
+    conn.droppedStateMessages = (conn.droppedStateMessages || 0) + 1;
+    return false;
+  }
+  // A false return from socket.write means the bytes were accepted into its
+  // queue and backpressure is now active; it does not mean the message failed.
   conn.socket.write(frame(data));
+  return true;
 }
 
 function close(conn) {
@@ -485,6 +507,7 @@ function handleMessage(conn, msg) {
     const pos = sanitizePos(msg.pos, lobby.map);
     const now = Date.now();
     if (!pos || !plausibleInputPosition(slot, pos, now, lobby.map)) return;
+    const sampledAt = Math.max(now - 2000, Math.min(now + 100, finite(msg.sampledAt, now)));
     const weapon = String(msg.weapon || slot.weapon || 'blaster');
     const input = {
       seq,
@@ -495,6 +518,7 @@ function handleMessage(conn, msg) {
       firing: !!msg.firing,
       weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
       jetpackActive: msg.jetpackActive === true,
+      sampledAt,
       pos,
       vel: sanitizeVel(msg.vel),
       grappleAnchor: sanitizeGrappleAnchor(msg.grappleAnchor, lobby.map, pos),
@@ -519,14 +543,28 @@ function handleMessage(conn, msg) {
     const authorityEpoch = Math.floor(finite(msg.authorityEpoch, -1));
     const snapshotSeq = Math.floor(finite(msg.seq, -1));
     if (authorityEpoch !== lobby.authorityEpoch || snapshotSeq <= lobby.lastHostSnapshotSeq) return;
+    const firstSnapshotForAuthority = lobby.lastHostSnapshotSeq < 0;
+    const hostLoadingMs = firstSnapshotForAuthority
+      ? Math.max(0, Date.now() - lobby.lastHostSnapshotAt)
+      : 0;
     const snap = sanitizeHostSnapshot(msg.snapshot, lobby, snapshotSeq);
     if (snap) {
+      let phaseDeadlineAdjusted = false;
+      if (firstSnapshotForAuthority && hostLoadingMs > 0) {
+        lobby.phaseEndsAt += hostLoadingMs;
+        snap.phaseEndsAt = lobby.phaseEndsAt;
+        phaseDeadlineAdjusted = true;
+      }
       lobby.lastHostSnapshotAt = Date.now();
       lobby.lastHostSnapshotSeq = snapshotSeq;
       lobby.staleHostIds?.delete(conn.id);
       lobby.latestSnapshot = snap;
       mergeHostSnapshot(lobby, snap);
-      broadcastExcept(lobby, { type: 'snapshot', ...snap }, conn.id);
+      // Guests receive the adjusted deadline inside the snapshot, but the host
+      // does not receive its own snapshots. Reuse the existing lobby metadata
+      // message so the authority also keeps the full round clock after loading.
+      if (phaseDeadlineAdjusted) broadcastLobbyMeta(lobby);
+      broadcastSnapshotExcept(lobby, snap, conn.id);
     }
   } else if (msg.type === 'leaveLobby') {
     leaveLobby(conn);
@@ -625,7 +663,15 @@ function plausibleBloomRecursiveJump(from, to, maxDistance) {
 
 function plausibleInputPosition(slot, pos, now, map) {
   if (!slot.lastInputPos || !slot.lastInputAt) return true;
-  const dt = Math.max(1 / 120, Math.min(0.25, (now - slot.lastInputAt) / 1000));
+  // Input snapshots are intentionally shed while a client's WebSocket queue is
+  // congested. Scale the same velocity bound over the actual accepted-input
+  // gap so the first recovery keyframe cannot be rejected forever. The reconnect
+  // window is a finite ceiling; at the configured speed it already spans every
+  // arena, so longer silence does not grant additional movement authority.
+  const dt = Math.max(
+    1 / 120,
+    Math.min(RECONNECT_GRACE_MS / 1000, (now - slot.lastInputAt) / 1000),
+  );
   const maxDistance = INPUT_POSITION_SLOP + INPUT_MAX_METERS_PER_SECOND * dt;
   if (distance3(pos, slot.lastInputPos) <= maxDistance) return true;
   // The host owns spawn/respawn placement. A newly joined guest can therefore
@@ -728,6 +774,7 @@ function makeBotSlot(i, map, previousSpawnIndex = null, mode = DEFAULT_MODE, spa
     team,
     color: colorForSlot(i, team, mode),
     pos: spawn.pos,
+    vel: { x: 0, y: 0, z: 0 },
     lastSpawnIndex: spawn.index,
     spawnCycle: spawn.cycle,
     yaw: Math.random() * Math.PI * 2,
@@ -766,6 +813,7 @@ function resetSlotForHuman(slot, conn, lobby) {
     team,
     color: colorForSlot(idx, team, lobby.mode),
     pos: spawn.pos,
+    vel: { x: 0, y: 0, z: 0 },
     lastSpawnIndex: spawn.index,
     spawnCycle: spawn.cycle,
     yaw: 0,
@@ -994,9 +1042,50 @@ function broadcast(lobby, data) {
   }
 }
 
-function broadcastExcept(lobby, data, exceptConnId) {
+function trimStateEvents(events, limit = MAX_PENDING_STATE_EVENTS) {
+  let retained = [...events];
+  let excess = retained.length - limit;
+  if (excess <= 0) return retained;
+  for (const canDrop of [
+    event => event.type === 'shot',
+    event => !DURABLE_WORLD_EVENT_TYPES.has(event.type),
+    () => true,
+  ]) {
+    if (excess <= 0) break;
+    const next = [];
+    for (const event of retained) {
+      if (excess > 0 && canDrop(event)) {
+        excess--;
+        continue;
+      }
+      next.push(event);
+    }
+    retained = next;
+  }
+  return retained;
+}
+
+function broadcastSnapshotExcept(lobby, snap, exceptConnId) {
   for (const conn of connections.values()) {
-    if (conn.lobbyId === lobby.id && conn.id !== exceptConnId) send(conn, data);
+    if (conn.lobbyId !== lobby.id || conn.id === exceptConnId) continue;
+    const stateKey = `${lobby.id}:${snap.authorityEpoch}`;
+    if (conn.pendingStateKey !== stateKey) {
+      conn.pendingStateKey = stateKey;
+      conn.pendingStateEvents = [];
+    }
+    const pending = conn.pendingStateEvents || [];
+    const events = trimStateEvents([...pending, ...snap.events]);
+    const sent = send(conn, { type: 'snapshot', ...snap, events }, { volatile: true });
+    if (sent) {
+      conn.pendingStateEvents = [];
+      continue;
+    }
+    // The latest state will replace this frame after drain. Preserve bounded
+    // non-tracer feedback, especially otherwise-unsnapshotted world events.
+    conn.pendingStateEvents = trimStateEvents([
+      ...pending,
+      ...snap.events.filter(event => event.type !== 'shot'),
+    ]);
   }
 }
 
@@ -1112,6 +1201,7 @@ function setPhase(lobby, phase) {
       s.team = team;
       s.color = colorForSlot(i, team, lobby.mode);
       s.pos = spawn.pos;
+      s.vel = { x: 0, y: 0, z: 0 };
       s.lastSpawnIndex = spawn.index;
       s.spawnCycle = spawn.cycle;
       s.hp = 100;
@@ -1183,7 +1273,13 @@ function tickLobby(lobby) {
 function promoteHostIfStale(lobby, now = Date.now()) {
   if (lobby.humanCount() <= 1) return;
   const stalledFor = now - (lobby.lastHostSnapshotAt || 0);
-  if (stalledFor <= HOST_SNAPSHOT_TIMEOUT_MS) return;
+  // A newly selected host must synchronously construct the arena before it can
+  // publish seq 0. Heavy/cold maps can legitimately exceed the runtime stall
+  // threshold, so do not bounce authority between clients while they load.
+  const timeout = lobby.lastHostSnapshotSeq < 0
+    ? HOST_INITIAL_SNAPSHOT_TIMEOUT_MS
+    : HOST_SNAPSHOT_TIMEOUT_MS;
+  if (stalledFor <= timeout) return;
   // Nobody has authoritative simulation during this gap. Preserve the match
   // clock instead of charging players for time spent waiting on a new host.
   lobby.phaseEndsAt += stalledFor;
@@ -1220,6 +1316,11 @@ function ranked(lobby) {
 
 function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
   if (!snapshot || typeof snapshot !== 'object') return null;
+  const receivedAt = Date.now();
+  const sampledAt = Math.max(
+    receivedAt - 2000,
+    Math.min(receivedAt + 100, finite(snapshot.sampledAt, receivedAt)),
+  );
   const playerLimit = mapPlayerLimit(lobby.map);
   const players = Array.isArray(snapshot.players) ? snapshot.players.slice(0, playerLimit) : [];
   const humanSlots = new Map(lobby.slots.filter(s => s.human).map(s => [s.id, s]));
@@ -1244,6 +1345,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       team: canonical?.team || String(p.team || id).slice(0, 32),
       color: canonical?.color || (/^#[0-9a-f]{6}$/i.test(String(p.color || '')) ? p.color : COLORS[i % COLORS.length]),
       pos,
+      vel: sanitizeVel(p.vel),
       yaw: finite(p.yaw, 0),
       pitch: Math.max(-1.55, Math.min(1.55, finite(p.pitch, 0))),
       up: sanitizeUnitVec(p.up, { x: 0, y: 1, z: 0 }),
@@ -1273,6 +1375,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     sanitizedPlayers.push({
       id, name: slot.name, human: true, team: slot.team, color: slot.color,
       pos: slot.pos || { x: 0, y: 0, z: 0 }, yaw: slot.yaw || 0, pitch: slot.pitch || 0,
+      vel: slot.vel || { x: 0, y: 0, z: 0 },
       up: slot.up || { x: 0, y: 1, z: 0 }, hp: slot.hp ?? 100, shield: slot.shield || 0,
       alive: slot.alive !== false,
       score: slot.score || 0, kills: slot.kills || 0, deaths: slot.deaths || 0,
@@ -1303,14 +1406,17 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
   const drops = Array.isArray(snapshot.drops) ? snapshot.drops.slice(0, 32).map(d => sanitizeDrop(d, lobby)).filter(Boolean) : [];
   const pickups = sanitizePickupStates(snapshot.pickups);
   const targetCooldowns = sanitizeTargetCooldowns(snapshot.targetCooldowns);
+  const worldTime = Math.max(0, Math.min(MATCH_TIME + 60, finite(snapshot.worldTime, 0)));
   return {
-    tick: Date.now(),
+    tick: receivedAt,
+    sampledAt,
     authorityEpoch: lobby.authorityEpoch,
     seq: snapshotSeq,
     phase: lobby.phase,
     phaseEndsAt: lobby.phaseEndsAt,
     mapId: lobby.map.id,
     mode: lobby.mode,
+    worldTime,
     scores,
     ranked,
     players: sanitizedPlayers,
@@ -1435,6 +1541,7 @@ function mergeHostSnapshot(lobby, snap) {
     const p = byId.get(slot.id);
     if (!p) continue;
     slot.pos = p.pos;
+    slot.vel = p.vel;
     slot.yaw = p.yaw;
     slot.pitch = p.pitch;
     slot.up = p.up;

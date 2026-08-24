@@ -125,7 +125,10 @@ export function buildBotMesh(color, mounted = false) {
     g.add(hat);
 
     horse = new THREE.Group();
-    const coat = skin(0xffffff, { roughness: 0.9, ...aiTex('horse-coat', 1.7, 1.7) });
+    const coatTexture = aiTex('horse-coat', 1.7, 1.7);
+    const coat = skin(coatTexture.map ? 0xffffff : 0xa6532b, {
+      roughness: 0.9, ...coatTexture,
+    });
     const dark = skin(0x24170f, { roughness: 0.95 });
     const tack = skin(0x3a2418, { roughness: 0.82 });
     const horseBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.45, 5, 10), coat);

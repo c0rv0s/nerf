@@ -38,6 +38,9 @@ import { damageMultiplierForPowerup, resolveShieldedDamage } from './combat.js';
 import { MobileControls } from './mobile-controls.js';
 import { isStandaloneApp, setupPwaInstall } from './pwa.js';
 import {
+  advanceNetworkTimer, boundedSnapshotLead, coalesceSnapshotEvents,
+} from './network-sync.js';
+import {
   createGrappleVisual, disposeGrappleVisual, updateGrappleVisual,
 } from './grapple.js';
 
@@ -49,6 +52,9 @@ const REMOTE_SLOT_SNAP_DIST = 20;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
 const REMOTE_HUMAN_MAX_PREDICT = 0.18;
 const REMOTE_HUMAN_SMOOTH = 20;
+const REMOTE_SLOT_SMOOTH = 22;
+const MP_SNAPSHOT_HZ = 20;
+const MP_INPUT_HZ = 30;
 const MP_SNAPSHOT_STALL_MS = 2000;
 const DAMAGE_MARKER_LIFETIME = 1.15;
 const previousCharacterPos = new THREE.Vector3();
@@ -694,6 +700,8 @@ let sharedFxPool = null;
 let selectedMode = 'ffa';
 let openingMultiplayer = false;
 let multiplayerVotingTimer = 0;
+let multiplayerMapLoadRequest = null;
+let multiplayerMapLoadVersion = 0;
 let mobilePauseOpen = false;
 let mobilePauseOpenedAt = 0;
 const lastSpawnByKey = new Map();
@@ -1641,7 +1649,9 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa', freshMu
     mpSendT: 0,
     mpSyncedSelf: false,
     mpSawSelfSnapshot: false,
+    mpWorldTimeSynced: false,
     mpLastSnapshotAt: performance.now(),
+    mpSnapshotStalled: false,
     mpConnectionPaused: false,
   };
   G.podiumAnchor = resolvePodiumAnchor(world);
@@ -1713,6 +1723,23 @@ function startMultiplayerHostMatch(
   syncMultiplayerNameTags();
 }
 
+function syncMultiplayerWorldTime(snap, snapshotAge = 0, hostHandoff = false) {
+  if (!G?.world || !Number.isFinite(snap?.worldTime)) return;
+  const target = Math.max(0, snap.worldTime + Math.max(0, snapshotAge));
+  if (hostHandoff) {
+    G.world._t = target;
+    delete G.world.networkTimeTarget;
+    return;
+  }
+  if (!G.mpWorldTimeSynced) {
+    // The guest may have rendered while the host was still constructing. The
+    // first authoritative sample is allowed to correct that startup lead.
+    G.world._t = target;
+    G.mpWorldTimeSynced = true;
+  }
+  G.world.networkTimeTarget = target;
+}
+
 function applyHostHandoffSnapshot(snap) {
   if (!G?.multiplayerHost || !snap) return;
   G.scores = {
@@ -1723,6 +1750,7 @@ function applyHostHandoffSnapshot(snap) {
     ? snap.phaseEndsAt
     : multiplayer.phaseEndsAt;
   G.timeLeft = Math.max(0, ((phaseEndsAt || Date.now()) - Date.now()) / 1000);
+  syncMultiplayerWorldTime(snap, multiplayer.estimateSnapshotAge(snap), true);
   G.mpDropIds ||= new Set();
   applyScoreTargetCooldowns(snap.targetCooldowns);
   G.pickups?.applyAuthoritativeState?.(snap.pickups || []);
@@ -1735,7 +1763,7 @@ function applyHostHandoffSnapshot(snap) {
     ch.color = state.color || ch.color;
     ch.team = state.team || ch.team;
     ch.pos.set(state.pos.x, state.pos.y, state.pos.z);
-    ch.vel?.set(0, 0, 0);
+    ch.vel?.set(state.vel?.x || 0, state.vel?.y || 0, state.vel?.z || 0);
     ch.yaw = state.yaw || 0;
     ch.pitch = state.pitch || 0;
     if (state.up && ch.up) ch.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
@@ -1871,6 +1899,7 @@ function makeRemoteNet(pos) {
     velocity: new THREE.Vector3(),
     lastInputPos: pos.clone(),
     lastInputAt: performance.now(),
+    sampleAge: REMOTE_HUMAN_PREDICT_LEAD,
     lastSeq: null,
   };
 }
@@ -1900,6 +1929,11 @@ function updateRemoteHumanMotion(ch, input, dt) {
     net.targetPos.copy(rawPos);
     net.lastInputPos.copy(rawPos);
     net.lastInputAt = receivedAt;
+    net.sampleAge = multiplayer.estimateServerSampleAge(
+      input.sampledAt,
+      REMOTE_HUMAN_MAX_PREDICT,
+      REMOTE_HUMAN_PREDICT_LEAD,
+    );
     net.lastSeq = input.seq;
     if (ch.pos.distanceToSquared(rawPos) > REMOTE_HUMAN_SNAP_DIST * REMOTE_HUMAN_SNAP_DIST) {
       ch.pos.copy(rawPos);
@@ -1907,7 +1941,7 @@ function updateRemoteHumanMotion(ch, input, dt) {
   }
 
   const lead = Math.min(REMOTE_HUMAN_MAX_PREDICT,
-    Math.max(0, (now - net.lastInputAt) / 1000) + REMOTE_HUMAN_PREDICT_LEAD);
+    Math.max(0, (now - net.lastInputAt) / 1000) + net.sampleAge);
   net.predictedPos.copy(net.targetPos).addScaledVector(net.velocity, lead);
   if (ch.pos.distanceToSquared(net.predictedPos) > REMOTE_HUMAN_SNAP_DIST * REMOTE_HUMAN_SNAP_DIST) {
     ch.pos.copy(net.targetPos);
@@ -2114,6 +2148,11 @@ function ensureRemoteSlot(state) {
     human: state.human,
     pos: new THREE.Vector3(),
     targetPos: new THREE.Vector3(),
+    snapshotPos: new THREE.Vector3(),
+    snapshotVel: new THREE.Vector3(),
+    snapshotReceivedAt: 0,
+    snapshotAge: 0,
+    hasSnapshot: false,
     up: new THREE.Vector3(0, 1, 0),
     mesh: group,
     jetpackVisual: jetpack,
@@ -2142,6 +2181,7 @@ function ensureRemoteSlot(state) {
     _gun: null,
     _gunId: null,
     yaw: 0,
+    targetYaw: 0,
   };
   syncRemoteSlotGun(remote);
   setNameTag(remote, remote.name, remote.color);
@@ -2156,6 +2196,9 @@ function applyMultiplayerSnapshot(snap) {
   if (snap.scores) G.scores = { blue: snap.scores.blue || 0, red: snap.scores.red || 0 };
   applyScoreTargetCooldowns(snap.targetCooldowns);
   G.timeLeft = Math.max(0, (snap.phaseEndsAt - Date.now()) / 1000);
+  const snapshotReceivedAt = performance.now();
+  const snapshotAge = multiplayer.estimateSnapshotAge(snap);
+  syncMultiplayerWorldTime(snap, snapshotAge);
   const seen = new Set();
   for (const state of snap.players || []) {
     seen.add(state.id);
@@ -2223,6 +2266,7 @@ function applyMultiplayerSnapshot(snap) {
     remote.team = state.team || remote.team;
     remote.human = state.human;
     remote.hp = state.hp;
+    const wasAlive = remote.alive;
     remote.alive = state.alive;
     remote.score = state.score || 0;
     remote.kills = state.kills || 0;
@@ -2239,12 +2283,27 @@ function applyMultiplayerSnapshot(snap) {
     remote.jetpack = state.jetpack ? { active: !!state.jetpackActive } : null;
     remote.grapple = state.grapple === true;
     syncRemoteSlotGun(remote);
-    remote.yaw = state.yaw || 0;
+    remote.targetYaw = state.yaw || 0;
     if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
     setRemoteGrappleState(remote, state.grappleAnchor);
     setNameTag(remote, remote.name, remote.color);
-    remote.targetPos.set(state.pos.x, state.pos.y, state.pos.z);
-    if (remote.pos.lengthSq() === 0) remote.pos.copy(remote.targetPos);
+    remote.snapshotPos.set(state.pos.x, state.pos.y, state.pos.z);
+    remote.snapshotVel.set(
+      state.alive ? (state.vel?.x || 0) : 0,
+      state.alive ? (state.vel?.y || 0) : 0,
+      state.alive ? (state.vel?.z || 0) : 0,
+    );
+    remote.snapshotReceivedAt = snapshotReceivedAt;
+    remote.snapshotAge = snapshotAge;
+    remote.targetPos.copy(remote.snapshotPos).addScaledVector(
+      remote.snapshotVel,
+      boundedSnapshotLead(snapshotAge, 0, remote.alive),
+    );
+    if (!remote.hasSnapshot || remote.alive !== wasAlive) {
+      remote.pos.copy(remote.targetPos);
+      remote.yaw = remote.targetYaw;
+      remote.hasSnapshot = true;
+    }
     remote.warmupProgress = Number.isFinite(state.warmup) ? state.warmup : -1;
     if (remote.alive && remote.warmupProgress >= 0) {
       if (!remote.warmupAudioStop) {
@@ -2465,9 +2524,7 @@ function environmentalEliminationText(sourceId, sourceName = 'The Environment') 
 
 function queueMultiplayerEvent(ev) {
   if (!G?.multiplayerHost) return;
-  G.mpEvents ||= [];
-  G.mpEvents.push(ev);
-  if (G.mpEvents.length > 80) G.mpEvents.splice(0, G.mpEvents.length - 80);
+  G.mpEvents = coalesceSnapshotEvents(G.mpEvents || [], [ev], 80);
 }
 
 function recordMultiplayerShot(owner, origin, dir, weaponId) {
@@ -2486,12 +2543,22 @@ function recordMultiplayerShot(owner, origin, dir, weaponId) {
 
 function updateRemoteSlots(dt) {
   if (!G?.remoteSlots) return;
-  const a = Math.min(1, dt * 14);
+  const now = performance.now();
+  const a = 1 - Math.exp(-REMOTE_SLOT_SMOOTH * dt);
+  const turnA = 1 - Math.exp(-24 * dt);
   for (const remote of G.remoteSlots.values()) {
     const beforeX = remote.pos.x;
     const beforeZ = remote.pos.z;
+    const elapsed = remote.snapshotReceivedAt
+      ? Math.max(0, (now - remote.snapshotReceivedAt) / 1000)
+      : 0;
+    remote.targetPos.copy(remote.snapshotPos).addScaledVector(
+      remote.snapshotVel,
+      boundedSnapshotLead(remote.snapshotAge, elapsed, remote.alive),
+    );
     if (remote.pos.distanceToSquared(remote.targetPos) > REMOTE_SLOT_SNAP_DIST ** 2) remote.pos.copy(remote.targetPos);
     else remote.pos.lerp(remote.targetPos, a);
+    remote.yaw = smoothNetworkAngle(remote.yaw || 0, remote.targetYaw || 0, turnA);
     remote.mesh.position.copy(remote.pos);
     remote.mesh.rotation.y = remote.yaw || 0;
     if (remote.horseVisual) {
@@ -2582,7 +2649,10 @@ function spawnMultiplayerTracer(ev) {
   if (distSq < 0.01) return;
   const weaponId = WEAPONS[ev.weapon] ? ev.weapon : 'blaster';
   const weapon = WEAPONS[weaponId];
-  if (weapon.remoteBounce && ev.shooterId === multiplayer.slotId) return;
+  // Guests already render their own predicted shot immediately. Replaying the
+  // host-confirmed shot on the return trip made every trigger pull appear to
+  // echo a fraction of a second later; damage/hit events remain authoritative.
+  if (ev.shooterId === multiplayer.slotId) return;
   const color = parseInt(String(ev.color || '#ffd23c').replace('#', ''), 16) || 0xffd23c;
   if (weapon.beam) {
     mpTracerDir.subVectors(to, from).normalize();
@@ -4571,7 +4641,14 @@ document.addEventListener('keyup', (e) => {
   if (e.code === 'Tab') G.showBoard = false;
 });
 
-function startCurrentMultiplayerMatch(
+function cancelMultiplayerMapLoad() {
+  if (!multiplayerMapLoadRequest) return;
+  multiplayerMapLoadVersion++;
+  multiplayerMapLoadRequest = null;
+  hideMapLoading();
+}
+
+async function startCurrentMultiplayerMatch(
   mapId,
   force = false,
   mode = multiplayer.mode || 'ffa',
@@ -4586,18 +4663,87 @@ function startCurrentMultiplayerMatch(
   setStyle(hud.els.board, 'display', 'none');
   const map = MAPS.find(m => m.id === mapId) || MAPS[0];
   const endedMultiplayerMatch = !!(G?.over && (G.multiplayer || G.multiplayerHost));
-  if (multiplayer.shouldHost()) {
-    if (force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id || G.mode !== mode) {
-      startMultiplayerHostMatch(map, mode, resumeSnapshot, freshMusic);
-    } else if (resumeSnapshot) {
-      applyHostHandoffSnapshot(resumeSnapshot);
+  const shouldHost = multiplayer.shouldHost();
+  const needsBuild = shouldHost
+    ? force || endedMultiplayerMatch || !G?.multiplayerHost || G.mapDef?.id !== map.id || G.mode !== mode
+    : force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id || G.mode !== mode;
+  if (!needsBuild) {
+    if (resumeSnapshot) {
+      if (shouldHost) applyHostHandoffSnapshot(resumeSnapshot);
+      else applyMultiplayerSnapshot(resumeSnapshot);
     }
-  } else if (force || endedMultiplayerMatch || !G?.multiplayer || G.mapDef?.id !== map.id || G.mode !== mode) {
-    startMultiplayerMatch(map, mode, freshMusic);
-    if (resumeSnapshot) applyMultiplayerSnapshot(resumeSnapshot);
-  } else if (resumeSnapshot) {
-    applyMultiplayerSnapshot(resumeSnapshot);
+    return;
   }
+
+  // Join, phase, host-change, and early snapshot messages can all request the
+  // same arena before a cold client has finished its assets. Keep one build in
+  // flight and retain the newest authoritative snapshot for when it completes.
+  const authorityEpoch = multiplayer.authorityEpoch;
+  const role = shouldHost ? 'host' : 'guest';
+  const loadKey = [authorityEpoch, multiplayer.slotId, role, map.id, mode].join(':');
+  if (multiplayerMapLoadRequest?.key === loadKey) {
+    if (resumeSnapshot) multiplayerMapLoadRequest.resumeSnapshot = resumeSnapshot;
+    multiplayerMapLoadRequest.freshMusic = multiplayerMapLoadRequest.freshMusic && freshMusic;
+    return multiplayerMapLoadRequest.promise;
+  }
+
+  const version = ++multiplayerMapLoadVersion;
+  const loadingToken = showMapLoading(map);
+  const request = {
+    key: loadKey,
+    version,
+    authorityEpoch,
+    resumeSnapshot,
+    freshMusic,
+    promise: null,
+  };
+  multiplayerMapLoadRequest = request;
+  request.promise = (async () => {
+    let unsubscribe = () => {};
+    let built = false;
+    try {
+      prioritizeTextureLoading();
+      await paintLoadingStage();
+      const updateTextureProgress = ({ ready, total }) => {
+        const ratio = total ? ready / total : 1;
+        setMapLoadingProgress(
+          ready >= total ? 20 : Math.floor(ratio * 20),
+          ready < total ? `Preparing multiplayer assets (${ready}/${total})` : 'Multiplayer assets ready',
+          loadingToken,
+        );
+      };
+      unsubscribe = onTextureLoadProgress(updateTextureProgress);
+      // Map/player materials capture whatever is in AI_TEX at construction.
+      // Waiting here prevents permanent white fallbacks and keeps normal-map
+      // generation from spilling into live multiplayer frames.
+      await texturesReady;
+      if (version !== multiplayerMapLoadVersion || multiplayerMapLoadRequest !== request) return;
+      if (!multiplayer.connected || multiplayer.phase !== 'playing' || multiplayer.mapId !== map.id ||
+          (multiplayer.mode || 'ffa') !== mode || multiplayer.shouldHost() !== shouldHost ||
+          multiplayer.authorityEpoch !== authorityEpoch) return;
+
+      updateTextureProgress(getTextureLoadProgress());
+      await paintLoadingStage();
+      if (version !== multiplayerMapLoadVersion || multiplayerMapLoadRequest !== request) return;
+      if (shouldHost) {
+        startMultiplayerHostMatch(map, mode, request.resumeSnapshot, request.freshMusic);
+      } else {
+        startMultiplayerMatch(map, mode, request.freshMusic);
+        if (request.resumeSnapshot) applyMultiplayerSnapshot(request.resumeSnapshot);
+      }
+      built = true;
+    } catch (err) {
+      console.error('Multiplayer arena setup failed:', err);
+      hud.message('MULTIPLAYER ARENA FAILED TO LOAD', '#ff5c5c');
+    } finally {
+      unsubscribe();
+      if (multiplayerMapLoadRequest === request) {
+        multiplayerMapLoadRequest = null;
+        if (!built) hideMapLoading();
+      }
+    }
+  })();
+  return request.promise;
 }
 
 multiplayer.addEventListener('joined', (e) => {
@@ -4622,11 +4768,13 @@ multiplayer.addEventListener('joined', (e) => {
 });
 
 multiplayer.addEventListener('exit', () => {
+  cancelMultiplayerMapLoad();
   popOutOfMultiplayerPortal();
 });
 
 multiplayer.addEventListener('phase', (e) => {
   const { phase, mapId, ranked, scores } = e.detail;
+  if (phase !== 'playing') cancelMultiplayerMapLoad();
   if (phase === 'playing') {
     startCurrentMultiplayerMatch(mapId, false, e.detail.mode || multiplayer.mode || 'ffa');
   } else if (phase === 'podium' && (G?.multiplayer || G?.multiplayerHost)) {
@@ -4652,14 +4800,18 @@ multiplayer.addEventListener('phase', (e) => {
         : (winner ? `Winner: ${winner.name} with ${winner.score} · Next vote starts automatically` : 'Next vote starts automatically'),
     });
   } else if (phase === 'voting') {
+    // The multiplayer panel renders its vote buttons as soon as this phase
+    // arrives. Release the cursor at the same boundary instead of waiting for
+    // the podium hold/Atrium transition, otherwise the visible ballot cannot
+    // be clicked during that delay.
+    document.exitPointerLock?.();
+    if (G && !usesMobileControls()) G.paused = true;
     const startedAt = G?.mpPodiumStartedAt || 0;
     const wait = startedAt ? Math.max(0, MULTIPLAYER_PODIUM_HOLD_MS - (performance.now() - startedAt)) : 0;
     clearTimeout(multiplayerVotingTimer);
     multiplayerVotingTimer = setTimeout(() => {
       setStyle(document.getElementById('endscreen'), 'display', 'none');
       if (!G?.atrium) startAtrium();
-      document.exitPointerLock?.();
-      if (G && !usesMobileControls()) G.paused = true;
     }, wait);
   }
 });
@@ -4667,10 +4819,21 @@ multiplayer.addEventListener('phase', (e) => {
 multiplayer.addEventListener('snapshot', (e) => {
   if (multiplayer.shouldHost()) return;
   if (e.detail.phase === 'playing' && (!G || !G.multiplayer || G.over || G.mapDef?.id !== e.detail.mapId)) {
-    const map = MAPS.find(m => m.id === e.detail.mapId) || MAPS[0];
-    startMultiplayerMatch(map, e.detail.mode || multiplayer.mode || 'ffa');
+    startCurrentMultiplayerMatch(
+      e.detail.mapId,
+      false,
+      e.detail.mode || multiplayer.mode || 'ffa',
+      e.detail,
+    );
+    return;
   }
-  if (G?.multiplayer) G.mpLastSnapshotAt = performance.now();
+  if (G?.multiplayer) {
+    G.mpLastSnapshotAt = performance.now();
+    if (G.mpSnapshotStalled) {
+      G.mpSnapshotStalled = false;
+      hud.message('SYNC RESTORED', '#6dff6d');
+    }
+  }
   applyMultiplayerSnapshot(e.detail);
   finishMultiplayerConnectionPause();
 });
@@ -4683,15 +4846,13 @@ multiplayer.addEventListener('remoteInput', (e) => {
 
 multiplayer.addEventListener('hostChanged', (e) => {
   if (multiplayer.phase !== 'playing') return;
-  const map = MAPS.find(m => m.id === multiplayer.mapId) || MAPS[0];
-  if (multiplayer.shouldHost()) {
-    if (!G?.multiplayerHost) {
-      startMultiplayerHostMatch(map, multiplayer.mode || 'ffa', e.detail.snapshot || null, false);
-    }
-  } else if (G?.multiplayerHost) {
-    startMultiplayerMatch(map, multiplayer.mode || 'ffa', false);
-    if (e.detail.snapshot) applyMultiplayerSnapshot(e.detail.snapshot);
-  }
+  startCurrentMultiplayerMatch(
+    multiplayer.mapId,
+    multiplayer.shouldHost() ? !G?.multiplayerHost : !G?.multiplayer,
+    multiplayer.mode || 'ffa',
+    e.detail.snapshot || null,
+    false,
+  );
 });
 
 function pauseMultiplayerForConnection(message = 'CONNECTION LOST — RECONNECTING...') {
@@ -4746,7 +4907,15 @@ function tick(now) {
   mobileControls.sync();
   if (G.multiplayer && multiplayer.phase === 'playing' && !G.mpConnectionPaused &&
       now - (G.mpLastSnapshotAt || now) > MP_SNAPSHOT_STALL_MS) {
-    pauseMultiplayerForConnection('SYNC INTERRUPTED — RECONNECTING...');
+    // A host frame hitch is not a socket disconnect. Hard-pausing here used to
+    // eject only guests from pointer lock after two seconds and leave a click
+    // overlay behind even once snapshots resumed—the apparent non-host freeze.
+    // Keep local prediction responsive while the server decides whether host
+    // authority actually needs to move.
+    if (!G.mpSnapshotStalled) {
+      G.mpSnapshotStalled = true;
+      hud.message('SYNC DELAY — RECOVERING...', '#ffd23c');
+    }
   }
   const frameMs = Math.max(0, now - G.lastT);
   const dt = Math.min(0.05, frameMs / 1000);
@@ -4829,6 +4998,9 @@ function stepAtrium(dt) {
   if (mp && !openingMultiplayer &&
       Math.hypot(G.player.pos.x - mp.x, G.player.pos.z - mp.z) < 2.8) {
     openingMultiplayer = true;
+    // Use the lobby/voting interval to finish map-specific texture and normal
+    // work before an authoritative multiplayer round begins.
+    prioritizeTextureLoading();
     document.exitPointerLock?.();
     multiplayer.open();
     setStyle(clickcatch, 'display', 'none');
@@ -6034,6 +6206,7 @@ function serializeCharacter(ch, i) {
     team: ch.team || ch.id || `bot-${i}`,
     color: ch.color || '#ffffff',
     pos: { x: ch.pos.x, y: ch.pos.y, z: ch.pos.z },
+    vel: ch.vel ? { x: ch.vel.x, y: ch.vel.y, z: ch.vel.z } : { x: 0, y: 0, z: 0 },
     yaw: ch.yaw ?? ch.aimYaw ?? 0,
     pitch: ch.pitch ?? 0,
     up: ch.up ? { x: ch.up.x, y: ch.up.y, z: ch.up.z } : { x: 0, y: 1, z: 0 },
@@ -6094,19 +6267,22 @@ function applyScoreTargetCooldowns(states) {
 
 function sendHostSnapshot(dt) {
   if (!G?.multiplayerHost || multiplayer.phase !== 'playing') return;
-  G.mpSnapshotT = (G.mpSnapshotT || 0) - dt;
-  if (G.mpSnapshotT > 0) return;
-  G.mpSnapshotT = 1 / 20;
+  const cadence = advanceNetworkTimer(G.mpSnapshotT, dt, MP_SNAPSHOT_HZ);
+  G.mpSnapshotT = cadence.timer;
+  if (!cadence.due) return;
   const players = G.characters.map((ch, i) => serializeCharacter(ch, i));
-  multiplayer.sendHostSnapshot({
+  const events = G.mpEvents?.slice(0, 32) || [];
+  const sent = multiplayer.sendHostSnapshot({
     players,
+    worldTime: G.world?._t || 0,
     scores: G.scores,
     ranked: players.slice().sort((a, b) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths),
-    events: G.mpEvents?.splice(0, 32) || [],
+    events,
     drops: serializeDrops(),
     pickups: G.pickups?.snapshotState?.() || [],
     targetCooldowns: serializeScoreTargetCooldowns(),
   });
+  if (sent && events.length) G.mpEvents.splice(0, events.length);
 }
 
 function stepMultiplayer(dt) {
@@ -6131,10 +6307,12 @@ function stepMultiplayer(dt) {
   updateRemoteSlots(dt);
   syncMultiplayerNameTags();
   updateMultiplayerTracers(dt);
-  G.mpSendT -= dt;
-  if (G.mpSendT <= 0 && G.mpSyncedSelf && G.player.alive) {
-    G.mpSendT = 1 / 30;
-    multiplayer.sendInput(G.player);
+  if (G.mpSyncedSelf && G.player.alive) {
+    const cadence = advanceNetworkTimer(G.mpSendT, dt, MP_INPUT_HZ);
+    G.mpSendT = cadence.timer;
+    if (cadence.due) multiplayer.sendInput(G.player);
+  } else {
+    G.mpSendT = 0;
   }
   hud.update(dt, {
     player: G.player, mode: G.mode, scores: G.scores,
@@ -6154,6 +6332,12 @@ window.__mp = () => ({
   phase: multiplayer.phase,
   snapshotCount: multiplayer.snapshotCount,
   lastSnapshotAgeMs: multiplayer.lastSnapshotAt ? Math.round(performance.now() - multiplayer.lastSnapshotAt) : null,
+  rttMs: Math.round(multiplayer.lastPong || 0),
+  lastPongAgeMs: multiplayer.lastPongAt ? Math.round(performance.now() - multiplayer.lastPongAt) : null,
+  bufferedBytes: multiplayer.ws?.bufferedAmount || 0,
+  droppedInputs: multiplayer.droppedInputs,
+  droppedSnapshots: multiplayer.droppedSnapshots,
+  coalescedSnapshots: multiplayer.coalescedSnapshots,
   slots: multiplayer.slots,
   path: G?.multiplayerHost ? 'host-real-match' : G?.multiplayer ? 'client-renderer' : G?.atrium ? 'atrium' : 'singleplayer',
   characters: G?.characters?.map(c => ({ name: c.name, id: c.id, bot: !c.isPlayer && !c.remoteHuman, human: !!(c.isPlayer || c.remoteHuman) })) || [],

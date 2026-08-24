@@ -2,8 +2,13 @@ import { MAPS } from './maps.js';
 import * as THREE from 'three';
 import { canVoteForMap } from './secret-maps.js';
 import { DEFAULT_MAP_PLAYER_LIMIT, mapPlayerLimit } from './map-rules.js';
+import { coalesceSnapshotEvents } from './network-sync.js';
 
 const WS_PATH = '/ws';
+const MAX_BUFFERED_STATE_BYTES = 64 * 1024;
+const PING_INTERVAL_MS = 5000;
+const PONG_TIMEOUT_MS = 15000;
+const PING_TIMER_STALL_GRACE_MS = 2000;
 
 class MultiplayerClient extends EventTarget {
   constructor() {
@@ -30,7 +35,19 @@ class MultiplayerClient extends EventTarget {
     this.lastSnapshot = null;
     this.snapshotCount = 0;
     this.lastSnapshotAt = 0;
+    this.pendingSnapshot = null;
+    this.pendingSnapshotEvents = [];
+    this.snapshotFlushScheduled = false;
+    this.coalescedSnapshots = 0;
     this.lastPong = 0;
+    this.lastPongAt = 0;
+    this.serverClockOffsetMs = 0;
+    this.hasServerClockOffset = false;
+    this.pingTimer = null;
+    this.nextPingDueAt = 0;
+    this.oldestUnansweredPingAt = 0;
+    this.droppedInputs = 0;
+    this.droppedSnapshots = 0;
     this.intentionalClose = false;
     this.reconnecting = false;
     this.reconnectAttempts = 0;
@@ -60,14 +77,17 @@ class MultiplayerClient extends EventTarget {
     this.intentionalClose = false;
     this.ws.addEventListener('open', () => {
       this.connected = true;
+      this.lastPongAt = 0;
       this.status.textContent = this.reconnecting ? 'Rejoining lobby...' : 'Finding lobby...';
       const hello = { type: 'hello', name: this.name, resumeToken: this.resumeToken };
       if (this.reconnecting && this.reconnectLobbyId) hello.lobbyId = this.reconnectLobbyId;
       this.send(hello);
-      this._ping();
+      this._startPingLoop();
     });
     this.ws.addEventListener('message', (e) => this._message(JSON.parse(e.data)));
     this.ws.addEventListener('close', () => {
+      this._stopPingLoop();
+      this._clearPendingSnapshot();
       this.connected = false;
       this.ws = null;
       if (this.intentionalClose) {
@@ -91,8 +111,9 @@ class MultiplayerClient extends EventTarget {
   }
 
   send(msg) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
     this.ws.send(JSON.stringify(msg));
+    return true;
   }
 
   _loadResumeToken() {
@@ -108,11 +129,15 @@ class MultiplayerClient extends EventTarget {
   }
 
   sendInput(player) {
-    if (!player || !this.connected || !this.slotId) return;
+    if (!player || !this.connected || !this.slotId) return false;
+    if ((this.ws?.bufferedAmount || 0) > MAX_BUFFERED_STATE_BYTES) {
+      this.droppedInputs++;
+      return false;
+    }
     const aim = new THREE.Vector3(0, 0, -1);
     player.camera?.getWorldDirection?.(aim);
     this.seq++;
-    this.send({
+    return this.send({
       type: 'input',
       authorityEpoch: this.authorityEpoch,
       seq: this.seq,
@@ -126,6 +151,7 @@ class MultiplayerClient extends EventTarget {
       grappleAnchor: player.world?.grappleEnabled && player.grapple && player.grappleAttached && player.grappleAnchor
         ? { x: player.grappleAnchor.x, y: player.grappleAnchor.y, z: player.grappleAnchor.z }
         : null,
+      sampledAt: this.serverNow(),
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
       vel: player.vel ? { x: player.vel.x, y: player.vel.y, z: player.vel.z } : { x: 0, y: 0, z: 0 },
       alive: player.alive !== false,
@@ -156,6 +182,7 @@ class MultiplayerClient extends EventTarget {
     this.lastSnapshotSeq = -1;
     this.slots = [];
     this.lastSnapshot = null;
+    this._clearPendingSnapshot();
     this._clearChat();
   }
 
@@ -192,6 +219,7 @@ class MultiplayerClient extends EventTarget {
 
   _closeForPageHide() {
     if (!this.ws) return;
+    this._stopPingLoop();
     this.intentionalClose = true;
     this.send({ type: 'leaveLobby' });
     try {
@@ -243,6 +271,7 @@ class MultiplayerClient extends EventTarget {
       this._renderPhase(msg.votes, msg.modeVotes);
       this.dispatchEvent(new CustomEvent('meta', { detail: msg }));
     } else if (msg.type === 'phaseChanged') {
+      if (msg.phase !== 'playing') this._flushPendingSnapshot();
       this._acceptAuthority(msg);
       this.phase = msg.phase;
       this.mapId = msg.mapId;
@@ -261,28 +290,89 @@ class MultiplayerClient extends EventTarget {
       this.lastSnapshot = msg;
       this.snapshotCount++;
       this.lastSnapshotAt = performance.now();
-      this.phase = msg.phase;
-      this.mapId = msg.mapId;
-      this.mode = msg.mode || this.mode || 'ffa';
-      this.phaseEndsAt = msg.phaseEndsAt;
-      this.dispatchEvent(new CustomEvent('snapshot', { detail: msg }));
+      this._queueSnapshot(msg);
     } else if (msg.type === 'chat') {
       this._addChatMessage(msg.name, msg.text);
     } else if (msg.type === 'pong') {
-      this.lastPong = performance.now() - msg.t;
+      const receivedAt = performance.now();
+      const rtt = Math.max(0, receivedAt - msg.t);
+      this.lastPong = rtt;
+      this.lastPongAt = receivedAt;
+      this.oldestUnansweredPingAt = 0;
+      if (Number.isFinite(msg.serverTime)) {
+        const sample = msg.serverTime - (Date.now() - rtt * 0.5);
+        this.serverClockOffsetMs = this.hasServerClockOffset
+          ? this.serverClockOffsetMs * 0.8 + sample * 0.2
+          : sample;
+        this.hasServerClockOffset = true;
+      }
     } else if (msg.type === 'error') {
       this.status.textContent = msg.message;
     }
   }
 
   sendHostSnapshot(snapshot) {
+    if (!this.connected || (this.ws?.bufferedAmount || 0) > MAX_BUFFERED_STATE_BYTES) {
+      this.droppedSnapshots++;
+      return false;
+    }
     this.hostSnapshotSeq++;
-    this.send({
+    return this.send({
       type: 'hostSnapshot',
       authorityEpoch: this.authorityEpoch,
       seq: this.hostSnapshotSeq,
-      snapshot,
+      snapshot: { ...snapshot, sampledAt: this.serverNow() },
     });
+  }
+
+  serverNow() {
+    return Date.now() + (this.hasServerClockOffset ? this.serverClockOffsetMs : 0);
+  }
+
+  estimateSnapshotAge(snapshot, maxSeconds = 0.18) {
+    const fallback = this.lastPong > 0 ? this.lastPong / 1000 + 1 / 40 : 0.06;
+    return this.estimateServerSampleAge(snapshot?.sampledAt, maxSeconds, fallback);
+  }
+
+  estimateServerSampleAge(sampledAt, maxSeconds = 0.18, fallbackSeconds = 0.055) {
+    const age = this.hasServerClockOffset && Number.isFinite(sampledAt)
+      ? (this.serverNow() - sampledAt) / 1000
+      : fallbackSeconds;
+    return Math.min(maxSeconds, Math.max(0, age));
+  }
+
+  _queueSnapshot(msg) {
+    if (this.pendingSnapshot) this.coalescedSnapshots++;
+    this.pendingSnapshotEvents = coalesceSnapshotEvents(
+      this.pendingSnapshotEvents,
+      Array.isArray(msg.events) ? msg.events : [],
+    );
+    this.pendingSnapshot = { ...msg, events: [] };
+    if (this.snapshotFlushScheduled) return;
+    this.snapshotFlushScheduled = true;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : callback => setTimeout(callback, 0);
+    schedule(() => this._flushPendingSnapshot());
+  }
+
+  _flushPendingSnapshot() {
+    this.snapshotFlushScheduled = false;
+    const pending = this.pendingSnapshot;
+    if (!pending) return;
+    const msg = { ...pending, events: this.pendingSnapshotEvents };
+    this.pendingSnapshot = null;
+    this.pendingSnapshotEvents = [];
+    this.phase = msg.phase;
+    this.mapId = msg.mapId;
+    this.mode = msg.mode || this.mode || 'ffa';
+    this.phaseEndsAt = msg.phaseEndsAt;
+    this.dispatchEvent(new CustomEvent('snapshot', { detail: msg }));
+  }
+
+  _clearPendingSnapshot() {
+    this.pendingSnapshot = null;
+    this.pendingSnapshotEvents = [];
   }
 
   _acceptAuthority(msg) {
@@ -292,6 +382,7 @@ class MultiplayerClient extends EventTarget {
     this.hostSnapshotSeq = 0;
     this.lastSnapshotSeq = -1;
     this.lastSnapshot = null;
+    this._clearPendingSnapshot();
   }
 
   _acceptSnapshot(msg) {
@@ -426,10 +517,36 @@ class MultiplayerClient extends EventTarget {
     this.countdownTimer = setInterval(tick, 250);
   }
 
+  _startPingLoop() {
+    this._stopPingLoop();
+    this._ping();
+  }
+
+  _stopPingLoop() {
+    clearTimeout(this.pingTimer);
+    this.pingTimer = null;
+    this.nextPingDueAt = 0;
+    this.oldestUnansweredPingAt = 0;
+  }
+
   _ping() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.send({ type: 'ping', t: performance.now() });
-    setTimeout(() => this._ping(), 5000);
+    const now = performance.now();
+    // A cold synchronous arena build delays timers and WebSocket callbacks
+    // together. If this callback itself is late, it cannot prove the network
+    // missed a pong; start a fresh probe instead of closing a healthy socket.
+    if (this.nextPingDueAt && now - this.nextPingDueAt > PING_TIMER_STALL_GRACE_MS) {
+      this.oldestUnansweredPingAt = 0;
+    }
+    if (this.oldestUnansweredPingAt &&
+        now - this.oldestUnansweredPingAt > PONG_TIMEOUT_MS) {
+      this.ws.close(4000, 'pong timeout');
+      return;
+    }
+    if (!this.oldestUnansweredPingAt) this.oldestUnansweredPingAt = now;
+    this.send({ type: 'ping', t: now });
+    this.nextPingDueAt = now + PING_INTERVAL_MS;
+    this.pingTimer = setTimeout(() => this._ping(), PING_INTERVAL_MS);
   }
 
   _buildUI() {

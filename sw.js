@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'nerf-arena-v7';
+const CACHE_VERSION = 'nerf-arena-v8';
 const CORE_CACHE = `${CACHE_VERSION}-core`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CORE_ASSETS = [
@@ -22,6 +22,7 @@ const CORE_ASSETS = [
   './src/maps.js',
   './src/mobile-controls.js',
   './src/multiplayer.js',
+  './src/network-sync.js',
   './src/pickups.js',
   './src/player.js',
   './src/pwa.js',
