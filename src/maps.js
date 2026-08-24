@@ -1223,6 +1223,10 @@ function addWater(scene, world, x, y, z, w, d, depth = 4, opts = {}) {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(x, y, z);
+  // Water is presentation and an environment zone, never a ray target. Keep
+  // hooks (and any other scene ray queries) travelling through the surface to
+  // the first real solid beyond it.
+  mesh.raycast = () => {};
   scene.add(mesh);
   if (n) world.anim.push((dt, t) => n.offset.set(t * 0.018, t * 0.03));
 }
@@ -5284,39 +5288,6 @@ function addCanopyVillageBridge(scene, world, start, end, width = 4.2) {
     }
   }
 
-  // Rope rails make the long diagonal crossings read as village suspension
-  // bridges rather than floating boards. Their slim segmented colliders trace
-  // the ropes closely, preventing falls without filling diagonal bridge lanes
-  // with one oversized axis-aligned blocker.
-  const forward = delta.clone().setY(0).normalize();
-  const side = V(forward.z, 0, -forward.x);
-  const ropeMaterial = mat(0x5b3d25, { roughness: 1 });
-  for (const sign of [-1, 1]) {
-    const ropeStart = start.clone().addScaledVector(side, sign * width * 0.47).add(V(0, 1.05, 0));
-    const ropeEnd = end.clone().addScaledVector(side, sign * width * 0.47).add(V(0, 1.05, 0));
-    const ropeDelta = ropeEnd.clone().sub(ropeStart);
-    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, ropeDelta.length(), 6), ropeMaterial);
-    rope.quaternion.setFromUnitVectors(V(0, 1, 0), ropeDelta.clone().normalize());
-    rope.position.copy(ropeStart).add(ropeEnd).multiplyScalar(0.5);
-    rope.castShadow = true;
-    scene.add(rope);
-
-    const railSteps = Math.max(4, Math.ceil(length / 1.4));
-    const railStepX = (ropeEnd.x - ropeStart.x) / railSteps;
-    const railStepZ = (ropeEnd.z - ropeStart.z) / railSteps;
-    for (let i = 0; i <= railSteps; i++) {
-      const t = i / railSteps;
-      const x = ropeStart.x + (ropeEnd.x - ropeStart.x) * t;
-      const z = ropeStart.z + (ropeEnd.z - ropeStart.z) * t;
-      world.colliders.push({
-        type: 'box',
-        min: V(x - Math.abs(railStepX) * 0.53 - 0.1, start.y,
-          z - Math.abs(railStepZ) * 0.53 - 0.1),
-        max: V(x + Math.abs(railStepX) * 0.53 + 0.1, start.y + 1.35,
-          z + Math.abs(railStepZ) * 0.53 + 0.1),
-      });
-    }
-  }
 }
 
 function addCanopyTreehouse(scene, world, x, floorY, z, doorSignX, accent = 0xffc45c) {
@@ -5667,7 +5638,7 @@ function buildCanopy(scene) {
 
     const bridgeStart = V(tx - sx * 10.5, villageY, tz - sz * 10.5);
     const bridgeEnd = V(sx * 8, villageY, sz * 8);
-    addCanopyVillageBridge(scene, world, bridgeStart, bridgeEnd, 4.4);
+    addCanopyVillageBridge(scene, world, bridgeStart, bridgeEnd, 4.4 * 1.3);
     world.manualLinks.push(
       [bridgeStart.x, bridgeStart.y, bridgeStart.z, ...nearestVillagePoint(cornerRing, bridgeStart.x, bridgeStart.z)],
       [bridgeEnd.x, bridgeEnd.y, bridgeEnd.z, ...nearestVillagePoint(centerVillageRing, bridgeEnd.x, bridgeEnd.z)],
@@ -5697,21 +5668,20 @@ function buildCanopy(scene) {
     );
   }
 
-  // A small council canopy and lanterns make the center platform read as the
-  // village square while leaving the trunk and gold pickup approachable.
+  // Lanterns mark the council square without posts blocking the four bridge
+  // landings on the center platform.
   for (const [px, pz] of [[-7.8, -7.8], [7.8, -7.8], [-7.8, 7.8], [7.8, 7.8]]) {
-    addBox(scene, world, px, 32.5, pz, 0.45, 5, 0.45, 0x704b2e, { tex: 'crate' });
     const lantern = new THREE.PointLight(0xffce72, 8, 10);
-    lantern.position.set(px, 34.2, pz);
+    lantern.position.set(px, 31.3, pz);
     scene.add(lantern);
   }
 
   // Edge bridges butt exactly into the deck edges at the same height. Their
   // runs stop at z/x ±38, leaving no 2cm lip and no coplanar overlap.
-  addBox(scene, world, -45, 19.5, 0, 3, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
-  addBox(scene, world, 45, 19.5, 0, 3, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
-  addBox(scene, world, 0, 9.5, -45, 76, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
-  addBox(scene, world, 0, 9.5, 45, 76, 1, 3, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
+  addBox(scene, world, -45, 19.5, 0, 3.45, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
+  addBox(scene, world, 45, 19.5, 0, 3.45, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
+  addBox(scene, world, 0, 9.5, -45, 76, 1, 3.45, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
+  addBox(scene, world, 0, 9.5, 45, 76, 1, 3.45, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
   addVine(scene, world, -46.72, -18, 0.2, 19.1, 1.05, -0.18, 0, 1, 0);  // hanging from west bridge
   addVine(scene, world, 46.72, 16, 0.2, 19.1, 1.05, 0.18, 0, -1, 0);    // hanging from east bridge
   addVine(scene, world, -46.72, 30, 0.2, 19.1, 1.0, -0.18, 0, 1, 0);    // west bridge south drop
@@ -5720,20 +5690,24 @@ function buildCanopy(scene) {
   addVine(scene, world, 20, 46.72, 0.2, 9.1, 0.95, 0, 0.18, 0, -1);     // south catwalk drop
   addVine(scene, world, 34, -46.72, 0.2, 9.1, 0.9, 0, -0.18, 0, 1);     // north catwalk east drop
   addVine(scene, world, -34, 46.72, 0.2, 9.1, 0.9, 0, 0.18, 0, -1);     // south catwalk west drop
-  addVine(scene, world, 10.28, 3, 0.2, 8.1, 0.85, 0.22, 0, -1, 0);      // center-tree wall growth
-  addVine(scene, world, 7.28, 6.35, 8.1, 16.1, 0.85, 0.16, 0, -1, 0);   // center 8 -> 16
-  addVine(scene, world, 2.28, -4.75, 16.1, 24.1, 0.8, 0.16, 0, -1, 0);  // center 16 -> 24
-  addVine(scene, world, -37.72, -45, 0.2, 20.1, 0.95, 0.18, 0, -1, 0);  // SW hollow tree exterior
+  addVine(scene, world, 10.28, -3, 0.2, 8.1, 0.85, 0.22, 0, -1, 0);     // lower deck edge opposite pathway
+  addVine(scene, world, -10.28, 6.35, 8.1, 16.1, 0.85, -0.16, 0, 1, 0); // center 8 -> 16 west edge
+  addVine(scene, world, 10.28, -4.75, 16.1, 24.1, 0.8, 0.16, 0, -1, 0); // center 16 -> 24 east edge
+  addVine(scene, world, -52.28, -45, 0.2, 20.1, 0.95, -0.18, 0, 1, 0);   // SW hollow tree outer edge
   addVine(scene, world, -31.08, 15, 0.2, 4.1, 0.8, -0.14, 0, 1, 0);     // hedge-top shortcut
   addVine(scene, world, 52.28, -45, 0.2, 19.1, 0.9, 0.18, 0, -1, 0);    // NE trunk side
   addVine(scene, world, -52.28, 45, 0.2, 19.1, 0.9, -0.18, 0, 1, 0);    // NW trunk side
   addVine(scene, world, 45, 52.28, 0.2, 19.1, 0.9, 0, 0.18, 0, -1);     // SE trunk side
-  addVine(scene, world, -2.8, -7.28, 0.2, 15.1, 0.85, 0, -0.16, 0, 1);  // center tiers north face
+  addVine(scene, world, -4, 10.28, 0.2, 15.1, 0.85, 0, 0.16, 0, -1);    // center tiers south edge
   addVine(scene, world, 31.38, 16, 0.2, 4.2, 0.75, 0.16, 0, -1, 0);     // ranger hut roof east edge
   addVine(scene, world, -11, 61.18, 0.2, 3.8, 0.8, 0, 0.16, 0, -1);     // north hedge lane
   addVine(scene, world, 61.18, -3, 0.2, 3.8, 0.8, 0.16, 0, -1, 0);      // east hedge lane
-  addVine(scene, world, 12.28, -6, 16.1, 30.1, 0.9, 0.16, 0, -1, 0);    // council deck east drop
-  addVine(scene, world, -12.28, 6, 8.1, 30.1, 0.9, -0.16, 0, 1, 0);     // council deck west drop
+  // Keep the upper vines outside the decks they serve. The west vine hangs
+  // from the exposed outer edge of the diagonal council ramp, well away from
+  // the stacked center platforms; the east vine begins on level 24 instead of
+  // passing through that floor.
+  addVine(scene, world, 12.28, -6, 24.1, 30.1, 0.9, 0.16, 0, -1, 0);     // center 24 -> council edge
+  addVine(scene, world, -30, -9.28, 0.2, 25, 0.9, 0, -0.16, 0, 1);      // ground -> diagonal ramp edge
 
   // Ramps: ground ↔ center deck 8; bridges ↔ center 16 / center 8
   addRamp(scene, world, { axis: 'x', minX: 10, maxX: 42, minZ: -2, maxZ: 2, h0: 8, h1: 0, color: 0x8a6a40 });
@@ -5741,10 +5715,13 @@ function buildCanopy(scene) {
   addRamp(scene, world, { axis: 'x', minX: -43.5, maxX: -7, minZ: -2, maxZ: 2, h0: 20, h1: 16, color: 0x8a6a40 });
   // The east middle-tier catwalk doubles as the launch runway for the
   // level-16 pad. Keep it broad enough to circulate past the pad safely.
-  addRamp(scene, world, { axis: 'x', minX: 7, maxX: 43.5, minZ: -4, maxZ: 4,
+  // Both center jump-pad runways are 20% wider than their original authored
+  // widths: 8 -> 9.6 here and 4 -> 4.8 on the south approach.
+  addRamp(scene, world, { axis: 'x', minX: 7, maxX: 43.5, minZ: -4.8, maxZ: 4.8,
     h0: 16, h1: 20, color: 0x8a6a40 });
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -43.5, maxZ: -10, h0: 10, h1: 8, color: 0x8a6a40 });
-  addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 10, maxZ: 43.5, h0: 8, h1: 10, color: 0x8a6a40 });
+  addRamp(scene, world, { axis: 'z', minX: -2.4, maxX: 2.4, minZ: 10, maxZ: 43.5,
+    h0: 8, h1: 10, color: 0x8a6a40 });
 
   // Continuous center-tree ascent. Every flight now runs fully outside the
   // destination deck footprint. Short level landings meet the deck edges, so
@@ -5790,15 +5767,12 @@ function buildCanopy(scene) {
   addJumpPad(scene, world, 30, 0, -30, 24, 11.5, -11.5, 0x9dff70);
   addJumpPad(scene, world, -30, 0, 30, 24, -11.5, 11.5, 0x9dff70);
   addJumpPad(scene, world, 30, 0, 30, 24, 11.5, 11.5, 0x9dff70);
-  // Move the lower center pad out onto the south catwalk. Its northward arc
-  // stays beyond the level-16 deck until it is already above the underside,
-  // then settles near the crown gold instead of firing into a ceiling.
-  addJumpPad(scene, world, -1.3, 8.4, 16, 38.5, 3.3, -7, 0xffd23c); // 8 → crown
-  // Start out on the south side of the widened east catwalk. The westward
-  // diagonal remains beyond the upper deck edge until it has climbed above
-  // the underside, then settles onto level 24 instead of bonking the ceiling.
-  addJumpPad(scene, world, 15, 17, 2.5, 22, -8, -1.2, 0xffd23c); // 16 → 24
-  addJumpPad(scene, world, -6, 24, 0, 20, 8.3, 0, 0xffd23c);  // 24 → crown (offset east)
+  // Center the lower pad on the 20%-wider south runway and move it two metres
+  // toward the outer wall. Its northward arc still clears the level-16 deck.
+  addJumpPad(scene, world, 0, 8.52, 18, 38.5, 3.3, -7, 0xffd23c); // 8 → crown
+  // Center the entire pad on the widened runway and move it two metres toward
+  // the corner tree, leaving clear walking space on both sides.
+  addJumpPad(scene, world, 17, 17.2, 0, 22, -8, -1.2, 0xffd23c); // 16 → 24
 
   // Broad, layered treetops now rise well above the village roofs. Their
   // foliage zones
@@ -5868,7 +5842,6 @@ function buildCanopy(scene) {
   pk(world, 'speed', 20, 0.2, 42);                       // NE lawn
   pk(world, 'djump', 55, 0.2, -20);                      // on the dirt road
   pk(world, 'gold', 4, 30.2, 0);                          // the crown
-  pk(world, 'grapple', -4, 30.2, 0);                      // opposite the crown gold
   pk(world, 'silver', 0, 0.2, 0);                         // hidden in the tree-base room
   pk(world, 'health', 0, 16.2, 4);
   pk(world, 'weapon', 40, 20.2, 39, { weapon: 'whomper' });
@@ -5944,10 +5917,18 @@ function buildCanopy(scene) {
     // SW hollow tree: door, shaft, ledge, attic, top exit
     [-45, 0, -38], [-45, 0, -45], [-45, 10, -47.4], [-45, 20, -44.5], [-45, 20, -40],
     // center tiers (+ pad spots)
-    [0, 8, -7], [0, 8, 7], [-7, 8, 0], [-1.3, 8.4, 16],
-    [0, 16, 4.5], [15, 17, 2.5], [-5, 16, -4], [-5, 16, 4],
-    [-3, 24, 3], [-6, 24, 0],
+    [0, 8, -7], [0, 8, 7], [-7, 8, 0], [0, 8.52, 18],
+    [0, 16, 4.5], [17, 17.2, 0], [-5, 16, -4], [-5, 16, 4],
+    [-3, 24, 3],
     [4, 30, 0],
+    // relocated usable vine endpoints
+    [10.28, 0.2, -3], [10.28, 8, -3],
+    [-10.28, 8, 6.35], [-10.28, 16, 6.35],
+    [10.28, 16, -4.75], [10.28, 24, -4.75],
+    [-4, 0.2, 10.28], [-4, 15, 10.28],
+    [-52.28, 0.2, -45], [-52.28, 20, -45],
+    [-30, 0.2, -9.28], [-30, 24.9, -9.28], [-30, 24.9, -7],
+    [12.28, 24, -6], [12.28, 30, -6],
     // corner decks (offset off the trunk that pierces them)
     [-40, 10, -39.5], [40, 10, -39.5], [-40, 10, 39.5], [40, 10, 39.5],
     [-40, 20, -39.5], [40, 20, -39.5], [-40, 20, 39.5], [40, 20, 39.5],
@@ -5966,9 +5947,26 @@ function buildCanopy(scene) {
     [-45, 0, -45, -45, 10, -47.4, true],  // SW tree shaft pads
     [-45, 10, -47.4, -45, 20, -44.5, true],
     [0, -2.6, 64, 0, -3.5, 55], [0, -3.5, 55, 0, 0, 39], // connector branch and exit
-    [-1.3, 8.4, 16, 4, 30, 0, true],   // direct pad to the crown gold
-    [15, 17, 2.5, -3, 24, 3, true],
-    [-6, 24, 0, 4, 30, 0, true],
+    [0, 8.52, 18, 4, 30, 0, true],     // direct pad to the crown gold
+    [17, 17.2, 0, -3, 24, 3, true],
+    [10.28, 0.2, -3, 10.28, 8, -3, true],
+    [10.28, 8, -3, 0, 8, -7],
+    [-10.28, 8, 6.35, -10.28, 16, 6.35, true],
+    [-10.28, 8, 6.35, 0, 8, 7],
+    [-10.28, 16, 6.35, 0, 16, 4.5],
+    [10.28, 16, -4.75, 10.28, 24, -4.75, true],
+    [10.28, 16, -4.75, -5, 16, -4],
+    [10.28, 24, -4.75, -3, 24, 3],
+    [-4, 0.2, 10.28, -4, 15, 10.28, true],
+    [-4, 15, 10.28, 0, 16, 4.5],
+    [-52.28, 0.2, -45, -52.28, 20, -45, true],
+    [-52.28, 20, -45, -40, 20, -39.5],
+    [-30, 0.2, -9.28, -30, 24.9, -9.28, true],
+    [-30, 24.9, -9.28, -30, 24.9, -7],
+    [-30, 24.9, -7, -14, 30, -7],
+    [12.28, 24, -6, 12.28, 30, -6, true],
+    [12.28, 24, -6, -3, 24, 3],
+    [12.28, 30, -6, 4, 30, 0],
     [4, 30, 0, 0, 8, 7, true],        // step off the crown to descend
     [-45, 20, -45, -45, 10, -45, true], [45, 20, -45, 45, 10, -45, true],
     [-45, 20, 45, -45, 10, 45, true], [45, 20, 45, 45, 10, 45, true],
