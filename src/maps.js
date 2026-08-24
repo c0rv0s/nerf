@@ -338,7 +338,7 @@ const TEXTURE_NAMES = Object.freeze([
   'checker', 'crate', 'rock', 'arcade', 'fortress-royal', 'crocodile-scales',
   'canopy-wall', 'grass', 'dirt', 'door', 'lava', 'poster2', 'poster3', 'poster4',
   'poster5', 'poster6', 'poster7', 'hazard', 'tidebreaker-orange-steel',
-  'mycelium-mossy-slab',
+  'mycelium-mossy-slab', 'mycelium-mossy-rock',
   'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
   'infinite-bloom-faces', 'infinite-bloom-sky-eyeless',
   'infinite-bloom-eye-atlas',
@@ -360,7 +360,7 @@ const COLOR_ONLY_TEXTURES = new Set([
 // These sources are authored to tile directly. Mirroring them would reflect
 // recognizable rock landmarks into the symmetrical face-like patterns that
 // direct repeat is meant to avoid.
-const DIRECT_REPEAT_TEXTURES = new Set(['mycelium-mossy-slab']);
+const DIRECT_REPEAT_TEXTURES = new Set(['mycelium-mossy-slab', 'mycelium-mossy-rock']);
 const textureLoader = new THREE.TextureLoader();
 const textureProgressListeners = new Set();
 const textureFinalizeQueue = [];
@@ -855,7 +855,14 @@ function addAsteroid(
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, mat(color, { tex: 'rock', repeat: [3, 3], roughness: 0.95, flatShading: true }));
+  const m = new THREE.Mesh(geo, mat(shape?.materialColor ?? color, {
+    tex: shape?.tex ?? 'rock',
+    repeat: shape?.repeat ?? [3, 3],
+    roughness: shape?.roughness ?? 0.95,
+    emissive: shape?.emissive,
+    emissiveIntensity: shape?.emissiveIntensity,
+    flatShading: true,
+  }));
   m.position.set(x, y, z);
   m.scale.set(shape?.scaleX ?? 1, shape?.scaleY ?? 1, shape?.scaleZ ?? 1);
   if (shape?.lockRotation) m.rotation.set(0, 0, 0);
@@ -1231,7 +1238,9 @@ function addWater(scene, world, x, y, z, w, d, depth = 4, opts = {}) {
   if (n) world.anim.push((dt, t) => n.offset.set(t * 0.018, t * 0.03));
 }
 
-function addMyceliumPondBasin(scene, world, points, centerX, centerZ, bottomY = -4.4) {
+function addMyceliumPondBasin(
+  scene, world, points, centerX, centerZ, bottomY = -4.4, options = {},
+) {
   const innerScale = 0.5;
   const outer = points.map(([x, z]) => V(x, 0.02, z));
   const inner = points.map(([x, z]) => V(
@@ -1314,6 +1323,11 @@ function addMyceliumPondBasin(scene, world, points, centerX, centerZ, bottomY = 
   const maxZ = Math.max(...apronPoints.map(point => point[1]));
   for (let x = minX + cellSize / 2; x < maxX; x += cellSize) {
     for (let z = minZ + cellSize / 2; z < maxZ; z += cellSize) {
+      const supportBlocked = options.supportClearZones?.some(zone => (
+        x + cellHalf >= zone.minX && x - cellHalf <= zone.maxX
+        && z + cellHalf >= zone.minZ && z - cellHalf <= zone.maxZ
+      ));
+      if (supportBlocked) continue;
       const intersectsShore = [
         [0, 0], [-cellHalf, -cellHalf], [cellHalf, -cellHalf],
         [-cellHalf, cellHalf], [cellHalf, cellHalf],
@@ -16352,7 +16366,8 @@ function addMyceliumGrassTufts(scene, world, count = 9000) {
       const hollowLogInterior = Math.abs(x) < 27 && Math.abs(z - 31) < 6.3;
       const scatterTunnelInterior = Math.abs(x + 52) < 7.2 && z > 14 && z < 60;
       const grottoInterior = Math.abs(x) < 12 && z < -47;
-      if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior) return false;
+      const podiumClearing = Math.abs(x) < 8 && z > -21.2 && z < -10.8;
+      if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior || podiumClearing) return false;
       if (world.myceliumTreeRoots?.some(root => (
         Math.hypot(x - root.x, z - root.z) < Math.max(1.1, root.radius * 0.42)
       ))) return false;
@@ -16448,7 +16463,8 @@ function addMyceliumLeafLitter(scene, world, count = 1100) {
     const hollowLogInterior = Math.abs(x) < 27 && Math.abs(z - 31) < 6.3;
     const scatterTunnelInterior = Math.abs(x + 52) < 7.2 && z > 14 && z < 60;
     const grottoInterior = Math.abs(x) < 12 && z < -47;
-    if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior) continue;
+    const podiumClearing = Math.abs(x) < 8 && z > -21.2 && z < -10.8;
+    if (pond || hollowLogInterior || scatterTunnelInterior || grottoInterior || podiumClearing) continue;
     if (world.colliders.some(c => c.debugName === 'mycelium-boulder' && (
       ((x - c.center.x) / (c.radii.x + 0.25)) ** 2
       + ((z - c.center.z) / (c.radii.z + 0.25)) ** 2 < 1
@@ -17796,6 +17812,91 @@ function addMyceliumRockField(scene, world, specs) {
   if (source !== geometry) source.dispose();
 }
 
+function addMyceliumGrottoRoof(scene, world, centerZ = -64) {
+  const topY = 9.7;
+  const ceilingY = 7.8;
+  // triangleMeshColliderFromMesh orients generated faces away from the mesh
+  // origin, so keep that origin inside the roof slab—not down in the cave.
+  const centerY = (topY + ceilingY) / 2;
+  // Two related, deliberately uneven outlines form one continuous terrain
+  // bridge. The inner outline is the flat fighting surface; the outer one
+  // drops into the two flanking hills and buries most of its rear edge in the
+  // north wall. Its lifted west-rear seam forms one deliberate back entrance
+  // while the center and opposite rear corner remain sealed.
+  const top = [
+    [-10.5, 16], [0, 16.7], [10.5, 16], [14.5, 12.5],
+    [15.5, 5], [14.5, -6], [13, -14], [8, -16.5],
+    [-1, -17], [-10, -16], [-14, -11], [-15.5, -2],
+    [-15, 8], [-13, 13],
+  ].map(([x, z]) => V(x, topY, z));
+  const outer = [
+    [-15, 17, 7.8], [0, 18, 8], [15, 17, 7.8], [21, 14, 3.6],
+    [23, 6, 6.6], [22, -7, 5.5], [21, -15.5, 1.2], [12, -17.8, 0.2],
+    [-1, -18, 0.1], [-12.5, -17.2, 5.4], [-21.5, -14.2, 5.8], [-22, -4, 5.4],
+    [-22, 8, 6.3], [-19, 14.5, 3.2],
+  ].map(([x, z, y]) => V(x, y, z));
+  const underside = top.map(point => V(point.x, ceilingY, point.z));
+  const topCenter = top.reduce((sum, point) => sum.add(point), V()).multiplyScalar(1 / top.length);
+  const undersideCenter = V(topCenter.x, ceilingY, topCenter.z);
+  const positions = [];
+  const uvs = [];
+  const addTriangle = (a, b, c) => {
+    for (const point of [a, b, c]) {
+      positions.push(point.x, point.y - centerY, point.z);
+      uvs.push(point.x / 7, point.z / 7);
+    }
+  };
+
+  // Flat crown. The outline is convex enough for a center fan, and its broad
+  // top preserves the existing upper combat route and elder-tree footing.
+  for (let i = 0; i < top.length; i++) {
+    addTriangle(topCenter, top[i], top[(i + 1) % top.length]);
+  }
+  const topVertexCount = positions.length / 3;
+
+  // Faceted shoulders taper into the hills. The matching inner underside
+  // slopes downward toward the same outer seam. The raised west-rear span
+  // keeps over five meters of clearance above the new back route while the
+  // remaining rear seam still closes against the perimeter wall.
+  for (let i = 0; i < top.length; i++) {
+    const next = (i + 1) % top.length;
+    addTriangle(top[i], outer[next], top[next]);
+    addTriangle(top[i], outer[i], outer[next]);
+    addTriangle(underside[i], underside[next], outer[next]);
+    addTriangle(underside[i], outer[next], outer[i]);
+  }
+  for (let i = 0; i < underside.length; i++) {
+    addTriangle(undersideCenter, underside[(i + 1) % underside.length], underside[i]);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.computeVertexNormals();
+  geometry.addGroup(0, topVertexCount, 0);
+  geometry.addGroup(topVertexCount, positions.length / 3 - topVertexCount, 1);
+  const caveRockMaterial = mat(0xffffff, {
+    tex: 'mycelium-mossy-rock', repeat: [1.35, 1.35], roughness: 0.99,
+    emissive: 0x77907c, emissiveIntensity: 0.85,
+    flatShading: true, side: THREE.DoubleSide,
+  });
+  // The grotto is intentionally dim, but its ceiling still needs to read as
+  // mossy stone instead of a black polygon. Reusing the albedo as a restrained
+  // emissive map preserves the rock detail wherever the cave lights fall off.
+  caveRockMaterial.emissiveMap = caveRockMaterial.map;
+  caveRockMaterial.needsUpdate = true;
+  const roof = new THREE.Mesh(geometry, [
+    mat(0x315141, { tex: 'grass', repeat: [1.15, 1.15], roughness: 0.98 }),
+    caveRockMaterial,
+  ]);
+  roof.position.set(0, centerY, centerZ);
+  roof.castShadow = roof.receiveShadow = true;
+  roof.name = 'mycelium-natural-grotto-roof';
+  scene.add(roof);
+  world.colliders.push(triangleMeshColliderFromMesh(roof, 'mycelium-natural-grotto-roof'));
+  return roof;
+}
+
 function myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius) {
   // Hills in this map are huge buried meshes. Their curved surface often
   // sits a little below a tree's authored base height on the downhill side,
@@ -17926,11 +18027,12 @@ function addMyceliumLog(scene, world, x, z, width, depth) {
   });
 }
 
-function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1) {
+function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1, options = {}) {
   const topDeck = Math.max(...deckHeights);
   const trunkHeight = topDeck - baseY + 8;
   const trunkRadius = 2.35;
-  const burialDepth = myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius);
+  const burialDepth = options.burialDepth
+    ?? myceliumTreeBurialDepth(world, x, baseY, z, trunkRadius);
   const renderedTrunkHeight = trunkHeight + burialDepth;
   const visualBaseY = baseY - burialDepth;
   (world.myceliumTreeRoots ||= []).push({
@@ -18077,7 +18179,9 @@ function buildMyceliumGrove(scene) {
     waypointLinkDist: 19,
     waypointLinkDy: 5.8,
     waypointLinkClearance: 0.3,
-    podiumSpot: V(-28, 0, 62),
+    // The center meadow gives the winners a clean stage and frames the
+    // waterfall directly behind them from the fixed south-facing camera.
+    podiumSpot: V(0, 0, -16),
   });
   scene.background = new THREE.Color(0x06141c);
   scene.fog = new THREE.Fog(0x12332e, 58, 205);
@@ -18135,8 +18239,16 @@ function buildMyceliumGrove(scene) {
   // Very large meshes buried almost completely below grade leave broad,
   // gentle caps above the floor. The old smaller hills reached similar
   // heights over much tighter footprints, producing slopes too steep to walk.
+  // On the waterfall's west side, widen the low outer cap into the taller
+  // grotto hill. Their overlapping silhouettes form the same gradual uphill
+  // route that already works on the east side, without restoring a ramp. Pull
+  // its north edge away from the perimeter wall just enough to turn the small
+  // rear slit into a readable one-player exterior approach.
+  addAsteroid(scene, world, -61, 6.5 - 46, -45.5, 46, 0x31583f, true, {
+    scaleX: 1.35, scaleZ: 1.2, lockRotation: true,
+  });
   for (const [x, z, radius, height] of [
-    [-61, -49, 46, 6.5], [60, -49, 48, 6.5],
+    [60, -49, 48, 6.5],
     [66, 25, 48, 7], [-28, 69, 44, 6], [29, 70, 44, 6],
     [-21, 14, 19, 2.8], [23, 18, 20, 2.8],
     [-12, 38, 18, 2.5], [14, 43, 19, 2.6],
@@ -18172,7 +18284,12 @@ function buildMyceliumGrove(scene) {
     [18.8, -42.7], [11.8, -48.1], [2.5, -50], [-6.8, -48.4],
     [-14.7, -43.4], [-17.4, -36], [-15.2, -28.7], [-7, -23],
   ];
-  addMyceliumPondBasin(scene, world, myceliumPondPoints, 2, -35.5, -4.4);
+  addMyceliumPondBasin(scene, world, myceliumPondPoints, 2, -35.5, -4.4, {
+    // The pond's real north ramp and the cave bed already meet beneath the
+    // waterfall. Shore-apron support cells here overlapped that ramp into an
+    // invisible step that stopped swimmers before they reached the cave.
+    supportClearZones: [{ minX: -7, maxX: 7, minZ: -54.5, maxZ: -47 }],
+  });
   addWater(scene, world, 2, 0.2, -35.4, 40, 29.2, 4.6, { points: myceliumPondPoints });
   // The same reactive minnow school used in Canopy patrols the broad center of
   // the pond, safely inside its irregular shore even while fleeing swimmers.
@@ -18180,54 +18297,36 @@ function buildMyceliumGrove(scene) {
   // A second school patrols the eastern half on its own shorter route, keeping
   // the two groups visually distinct while both remain clear of the shore.
   addMinnowSchool(scene, world, 10.5, -35.4, 7, 4.2, 0.2);
-  addAsteroid(scene, world, -25, -7, -62, 18, 0x2f4d3d, true);
+  // Carry the roof's exposed mossy-rock finish onto both flanking grotto hills
+  // so the cave reads as one continuous formation instead of a textured roof
+  // wedged between two plain dark-green masses.
+  const grottoHillFinish = {
+    materialColor: 0xffffff,
+    tex: 'mycelium-mossy-rock',
+    repeat: [3, 3],
+    roughness: 0.99,
+    emissive: 0x526858,
+    emissiveIntensity: 0.2,
+  };
+  addAsteroid(scene, world, -25, -7, -62, 18, 0x2f4d3d, true, grottoHillFinish);
   // Broaden the eastern waterfall hill toward the large outer hillside while
   // preserving its crown height and pond-facing depth. Its exact mesh remains
   // the collider, so the new overlapping terrain replaces the former ramp.
   addAsteroid(scene, world, 25, -7, -62, 18, 0x2f4d3d, true, {
+    ...grottoHillFinish,
     scaleX: 1.55, scaleZ: 1.08, lockRotation: true,
   });
-  // Only the interior collision shell is box-shaped. The visible exterior is
-  // the pair of rounded cliff masses plus the broken boulder arch below.
+  // Only the buried rear seal is box-shaped. The visible exterior is the pair
+  // of rounded cliff masses plus the natural terrain bridge below.
   world.colliders.push(
     { type: 'box', min: V(-9, 0, -77.3), max: V(9, 7.4, -75.5) },
   );
-  const grottoShelf = new THREE.Mesh(
-    new THREE.CylinderGeometry(11.5, 14.5, 1.4, 12, 2),
-    mat(0x315141, { tex: 'grass', repeat: [5, 5], roughness: 0.98 }),
-  );
-  grottoShelf.position.set(0, 9, -63);
-  grottoShelf.scale.z = 1.22;
-  grottoShelf.rotation.y = 0.16;
-  grottoShelf.castShadow = grottoShelf.receiveShadow = true;
-  scene.add(grottoShelf);
-  // Match the shelf's visible elliptical top instead of supporting only a
-  // narrow rectangle through its center. Thin cells preserve the open cave
-  // beneath while making the complete green surface reliably walkable.
-  const shelfRadiusX = 11.5;
-  const shelfRadiusZ = 11.5 * 1.22;
-  const shelfRowDepth = 3.4;
-  for (let row = -4; row <= 4; row++) {
-    const offsetZ = row * 3.15;
-    const halfWidth = shelfRadiusX * Math.sqrt(Math.max(0,
-      1 - (offsetZ * offsetZ) / (shelfRadiusZ * shelfRadiusZ)));
-    world.colliders.push({
-      type: 'box',
-      min: V(-halfWidth, 8.85, -63 + offsetZ - shelfRowDepth / 2),
-      max: V(halfWidth, 9.7, -63 + offsetZ + shelfRowDepth / 2),
-    });
-  }
-  // Begin the cave floor where the pond's north ramp reaches ground height;
-  // starting it a meter earlier created a submerged step that blocked players.
-  // Let the irregular boulder formation define both sides of the opening;
-  // rectangular visual skirts here read as thin artificial barriers.
-  addBox(scene, world, 0, 0.05, -63.5, 17.5, 0.1, 27, 0x284b3d, { tex: 'rock', repeat: [4, 6] });
+  addMyceliumGrottoRoof(scene, world);
+  // The north understory bed already provides an exact y=0 cave floor. Keep
+  // that continuous meadow surface exposed instead of laying a slightly
+  // raised rectangular slab over the walking route.
   addWaterfall(scene, world, 0, -48, 13, 9.5, 0.2, 9.7, 0.8, {
     skipLip: true, passThrough: true, lipColor: 0x315141,
-  });
-  addRamp(scene, world, {
-    axis: 'x', minX: -50, maxX: -10.5, minZ: -72, maxZ: -55,
-    h0: 0, h1: 9.7, color: 0x315a42, tex: 'grass',
   });
   const caveLight = new THREE.PointLight(0x9b6cff, 48, 33);
   caveLight.position.set(0, 3.8, -66);
@@ -18321,10 +18420,13 @@ function buildMyceliumGrove(scene) {
     [-37, 0, -5, [7, 14], 1], [37, 0, -4, [7, 14], 3],
     [-31, 0, 44, [7, 13], 4], [29, 0, 43, [8, 15], 5],
     [-23, 0, -34, [7, 14], 6], [24, 0, -34, [7, 14], 7],
-    [0, 10, -63, [16, 23], 8],
+    // The rear elder stands on the grotto roof rather than a rounded hill.
+    // Embed it only a few centimeters so its trunk cannot poke through the
+    // cave ceiling below.
+    [0, 10, -63, [16, 23], 8, { burialDepth: 0.35 }],
   ];
-  for (const [x, baseY, z, decks, seed] of elderTrees) {
-    addMyceliumTree(scene, world, x, baseY, z, decks, seed);
+  for (const [x, baseY, z, decks, seed, options] of elderTrees) {
+    addMyceliumTree(scene, world, x, baseY, z, decks, seed, options);
   }
   addHollowMyceliumTree(scene, world, 0, 0, 8);
   for (const [a, b, radius, options] of [
@@ -18370,8 +18472,11 @@ function buildMyceliumGrove(scene) {
   // The grassy shelf above the waterfall sits beneath the rear elder tree's
   // first balcony. Launch inward from beyond the balcony rim so players rise
   // past its outer edge and land on top instead of striking its underside.
+  // The widened mossy hill now reaches y≈10.07 at this spot; keep the launcher
+  // rooted on that visible surface instead of leaving its cap buried beneath
+  // the terrain with only the decorative white spots showing.
   const waterfallShelfLauncher = addBouncyMushroom(
-    scene, world, 15, 8.6, -62, 0.5, 1.8, 16.5, 0x72f2da, -6.2, 0,
+    scene, world, 15, 10.1, -62, 0.5, 1.8, 16.5, 0x72f2da, -6.2, 0,
   );
   wp(world, 15, waterfallShelfLauncher.topY, -62);
   world.manualLinks.push([15, waterfallShelfLauncher.topY, -62, 0, 16, -63, true]);
@@ -18514,6 +18619,10 @@ function buildMyceliumGrove(scene) {
     [-66, 0, 30], [66, 0, 30], [-72, 0, -25], [72, 0, -25],
     [-10, 0, -8], [10, 0, -8], [-50, 0, -63], [50, 0, -63],
     [-28, 0, 37], [-52, 7.5, 43],
+    // West-rear grotto entrance: follow the open strip beside the north wall,
+    // then angle inward beneath the raised rock arch.
+    [-50, 0, -77], [-34, 0, -76.5], [-27, 0, -78.2],
+    [-19, 0, -77.7], [-10, 0, -76.5], [-3, 0, -73.8],
   ]) wp(world, x, y, z);
   const linkRoute = points => {
     for (let i = 1; i < points.length; i++) {
@@ -18532,6 +18641,11 @@ function buildMyceliumGrove(scene) {
   // Bend the upper shelf route around the rear elder trunk. The former center
   // node sat inside the bark collider and made bots walk straight into it.
   linkRoute([[-50, 0, -63], [-24, 10, -63], [0, 10, -58.5], [24, 10, -63], [50, 0, -63]]);
+  // Keep the new back entrance in the authored navigation graph. The slight
+  // bend toward the wall follows the exact clear ground between the broad hill
+  // and perimeter, then rejoins the existing cave route at its rear pickup.
+  linkRoute([[-50, 0, -77], [-34, 0, -76.5], [-27, 0, -78.2],
+    [-19, 0, -77.7], [-10, 0, -76.5], [-3, 0, -73.8], [0, 0.2, -71]]);
   linkRoute([[-72, 0, -25], [-61, 6.4, -49], [-50, 0, -63]]);
   linkRoute([[72, 0, -25], [60, 6.4, -49], [50, 0, -63]]);
   linkRoute([[70, 0, 5], [66, 6.9, 25], [66, 0, 30]]);

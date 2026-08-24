@@ -113,6 +113,10 @@ const _meshClosest = new THREE.Vector3();
 const _meshDelta = new THREE.Vector3();
 const _meshRayPoint = new THREE.Vector3();
 const _meshRay = new THREE.Ray();
+const _meshInsidePoint = new THREE.Vector3();
+const _meshInsideDirection = new THREE.Vector3(0.917, 0.281, 0.284).normalize();
+const _meshInsideRay = new THREE.Ray();
+const _meshInsideHits = [];
 let collisionQueryStamp = 0;
 let triangleQueryStamp = 0;
 
@@ -155,14 +159,44 @@ function closestTriangleMeshPoint(pos, collider, target = _meshClosest, radius =
   return { distanceSq: bestDistanceSq, triangle: bestTriangle };
 }
 
+// A nearest-face normal is not a valid inside/outside test for a closed mesh.
+// Near a broad sloped roof, for example, a player several meters below the
+// surface can still sit behind that face's plane and be misclassified as
+// inside, causing the solver to eject them all the way onto the roof. Count
+// unique intersections along an oblique ray instead; odd parity means the
+// point is genuinely enclosed by the volume.
+function pointInsideTriangleMesh(pos, collider) {
+  _meshInsideRay.set(pos, _meshInsideDirection);
+  _meshInsideHits.length = 0;
+  for (const entry of collider.triangles) {
+    const hit = _meshInsideRay.intersectTriangle(
+      entry.triangle.a, entry.triangle.b, entry.triangle.c, false, _meshInsidePoint,
+    );
+    if (!hit) continue;
+    const distance = _meshDelta.copy(hit).sub(pos).dot(_meshInsideDirection);
+    if (distance > 1e-5) _meshInsideHits.push(distance);
+  }
+  _meshInsideHits.sort((a, b) => a - b);
+  let uniqueHits = 0;
+  let previous = -Infinity;
+  for (const distance of _meshInsideHits) {
+    if (distance - previous <= 1e-5) continue;
+    uniqueHits++;
+    previous = distance;
+  }
+  return uniqueHits % 2 === 1;
+}
+
 export function sphereHitsTriangleMesh(pos, radius, collider) {
   if (pos.x < collider.min.x - radius || pos.x > collider.max.x + radius ||
       pos.y < collider.min.y - radius || pos.y > collider.max.y + radius ||
       pos.z < collider.min.z - radius || pos.z > collider.max.z + radius) return false;
   const closest = closestTriangleMeshPoint(pos, collider, _meshClosest, radius);
   if (!closest.triangle) return false;
-  const inside = _meshDelta.copy(pos).sub(_meshClosest).dot(closest.triangle.normal) < 0;
-  return inside || closest.distanceSq < radius * radius;
+  if (closest.distanceSq < radius * radius) return true;
+  const behindClosestFace = _meshDelta.copy(pos).sub(_meshClosest)
+    .dot(closest.triangle.normal) < 0;
+  return behindClosestFace && pointInsideTriangleMesh(pos, collider);
 }
 
 export function rayHitsTriangleMesh(origin, direction, collider, maxDist = Infinity) {
@@ -188,7 +222,9 @@ function resolveSphereTriangleMesh(pos, radius, collider, out) {
       pos.z < collider.min.z - radius || pos.z > collider.max.z + radius) return;
   const closest = closestTriangleMeshPoint(pos, collider, _meshClosest, radius);
   if (!closest.triangle) return;
-  const inside = _meshDelta.copy(pos).sub(_meshClosest).dot(closest.triangle.normal) < 0;
+  const behindClosestFace = _meshDelta.copy(pos).sub(_meshClosest)
+    .dot(closest.triangle.normal) < 0;
+  const inside = behindClosestFace && pointInsideTriangleMesh(pos, collider);
   if (!inside && closest.distanceSq >= radius * radius) return;
   const distance = Math.sqrt(Math.max(closest.distanceSq, 0));
   if (inside) _meshDelta.copy(_meshClosest).sub(pos);
