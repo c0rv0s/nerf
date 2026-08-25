@@ -76,19 +76,12 @@
       linear-gradient(84deg, transparent 0 11%, rgba(70,170,48,.30) 11.4% 12%, transparent 12.6% 100%),
       linear-gradient(77deg, transparent 0 91%, rgba(32,112,35,.44) 91.4% 92.2%, transparent 92.8% 100%),
       linear-gradient(96deg, transparent 0 96%, rgba(86,190,55,.30) 96.2% 96.8%, transparent 97.4% 100%); }
-  #hallucinationFx { position:fixed; left:50%; top:50%; width:145vmax; height:145vmax;
-    border-radius:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:2; opacity:0;
-    overflow:hidden; contain:strict; isolation:isolate;
-    background:
-      repeating-radial-gradient(circle at 50% 50%, transparent 0 6%,
-        rgba(126,255,214,.18) 8%, rgba(237,91,255,.16) 10%, transparent 13% 18%),
-      conic-gradient(from 20deg at 45% 52%, rgba(255,48,220,.22), rgba(70,255,188,.18),
-        rgba(92,96,255,.24), rgba(255,210,70,.16), rgba(255,48,220,.22)),
-      radial-gradient(circle at 50% 50%, transparent 18%, rgba(203,78,255,.18) 44%,
-        rgba(40,255,194,.18) 68%, rgba(22,10,58,.22));
-    background-blend-mode:screen,screen;
-    animation:toadAuraSpin 2.8s linear infinite paused; will-change:opacity,transform; }
-  body.toad-hallucinating #hallucinationFx { animation-play-state:running; }
+  #hallucinationFx { position:fixed; inset:0; pointer-events:none; z-index:2; opacity:0;
+    overflow:hidden; contain:strict; isolation:isolate; will-change:opacity; }
+  #hallucinationSpiral { position:absolute; left:50%; top:50%; width:145vmax; height:145vmax;
+    border-radius:50%; transform:translate(-50%,-50%); opacity:.9;
+    animation:toadAuraSpin 2.8s linear infinite paused; will-change:transform; }
+  body.toad-hallucinating #hallucinationSpiral { animation-play-state:running; }
   body.toad-hallucinating canvas#game { transform-origin:50% 50%;
     will-change:transform; }
   @keyframes toadAuraSpin {
@@ -561,7 +554,7 @@
 <div id="cinematicFx"></div>
 <div id="underwaterFx"></div>
 <div id="foliageFx"></div>
-<div id="hallucinationFx"></div>
+<div id="hallucinationFx"><canvas id="hallucinationSpiral" width="768" height="768"></canvas></div>
 
 <div id="hud">
   <div id="vignette"></div>

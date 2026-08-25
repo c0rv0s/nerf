@@ -16722,6 +16722,7 @@ function addMyceliumFairyToads(scene, world) {
   const wallNormal = new THREE.Vector3();
   const orientation = new THREE.Matrix4();
   const toadTouchPosition = new THREE.Vector3();
+  const toadTouchTargets = [];
   const trunkSurfaceRadius = (route, y) => THREE.MathUtils.lerp(
     route.baseRadius,
     route.maxRadius,
@@ -16808,6 +16809,13 @@ function addMyceliumFairyToads(scene, world) {
   };
 
   const updateToads = (_dt, t, characters = []) => {
+    // Reuse one human-only list so 18 toads do not each scan the full bot roster.
+    toadTouchTargets.length = 0;
+    for (const character of characters) {
+      if (character?.pos && (character.isPlayer || character.remoteHuman)) {
+        toadTouchTargets.push(character);
+      }
+    }
     for (const toad of toads) {
       const cycleProgress = t / toad.hopPeriod + toad.phase;
       const cycleIndex = Math.floor(cycleProgress);
@@ -16884,17 +16892,14 @@ function addMyceliumFairyToads(scene, world) {
       for (const eye of toad.eyes) eye.scale.y = 0.24 * blinkScale;
       for (const pupil of toad.pupils) pupil.scale.y = 0.11 * blinkScale;
 
+      if (!toadTouchTargets.length) continue;
       // Derive the moving model's center directly from its authored root. This
       // avoids forcing a scene-graph world-matrix update for every toad.
       toadTouchPosition.copy(toad.model.position)
         .multiply(toad.root.scale)
         .applyQuaternion(toad.root.quaternion)
         .add(toad.root.position);
-      for (const character of characters) {
-        // Toad effects only apply to human players. Bots used to perform the
-        // same capsule math and WeakSet churn even though the callback ignored
-        // them, multiplying this work by the full roster every frame.
-        if (!character?.pos || (!character.isPlayer && !character.remoteHuman)) continue;
+      for (const character of toadTouchTargets) {
         if (!character.alive) {
           toad.touching.delete(character);
           continue;

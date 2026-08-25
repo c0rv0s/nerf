@@ -701,6 +701,7 @@ const hud = new HUD();
 const underwaterFx = document.getElementById('underwaterFx');
 const foliageFx = document.getElementById('foliageFx');
 const hallucinationFx = document.getElementById('hallucinationFx');
+const hallucinationSpiral = document.getElementById('hallucinationSpiral');
 let G = null; // current match state (or the lobby)
 let rafId = 0;
 let mapLoadInProgress = false;
@@ -1048,6 +1049,60 @@ function cameraInFoliage() {
   });
 }
 
+function paintHallucinationSpiral() {
+  const ctx = hallucinationSpiral?.getContext('2d');
+  if (!ctx) return;
+  const size = hallucinationSpiral.width;
+  const center = size / 2;
+  ctx.clearRect(0, 0, size, size);
+
+  const aura = typeof ctx.createConicGradient === 'function'
+    ? ctx.createConicGradient(Math.PI / 9, center, center)
+    : ctx.createLinearGradient(0, 0, size, size);
+  aura.addColorStop(0, 'rgba(255,48,220,.58)');
+  aura.addColorStop(0.25, 'rgba(70,255,188,.46)');
+  aura.addColorStop(0.5, 'rgba(92,96,255,.56)');
+  aura.addColorStop(0.75, 'rgba(255,210,70,.42)');
+  aura.addColorStop(1, 'rgba(255,48,220,.58)');
+  ctx.fillStyle = aura;
+  ctx.beginPath();
+  ctx.arc(center, center, center, 0, Math.PI * 2);
+  ctx.fill();
+
+  const veil = ctx.createRadialGradient(center, center, size * 0.08, center, center, center);
+  veil.addColorStop(0, 'rgba(20,5,42,.05)');
+  veil.addColorStop(0.48, 'rgba(50,15,82,.08)');
+  veil.addColorStop(1, 'rgba(8,3,28,.42)');
+  ctx.fillStyle = veil;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.globalCompositeOperation = 'screen';
+  ctx.lineCap = 'round';
+  const spiralColors = [
+    'rgba(126,255,214,.34)',
+    'rgba(237,91,255,.31)',
+    'rgba(105,117,255,.28)',
+  ];
+  for (let arm = 0; arm < spiralColors.length; arm++) {
+    ctx.beginPath();
+    for (let step = 0; step <= 180; step++) {
+      const progress = step / 180;
+      const angle = arm * Math.PI * 2 / spiralColors.length + progress * Math.PI * 5.5;
+      const radius = size * (0.03 + progress * 0.54);
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius;
+      if (step === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = spiralColors[arm];
+    ctx.lineWidth = size * 0.026;
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+paintHallucinationSpiral();
+
 function updateFoliageFx(dt, forceClear = false) {
   if (!G) return;
   const target = !forceClear && cameraInFoliage() ? 1 : 0;
@@ -1072,10 +1127,11 @@ function updateHallucinationFx(dt, forceClear = false) {
     const phase = G.hallucinationPhase;
     const waveX = Math.sin(phase * 8.4);
     const waveY = Math.sin(phase * 6.9 + 1.7);
-    const scaleX = 1 + strength * (0.034 + waveX * 0.012);
-    const scaleY = 1 + strength * (0.032 + waveY * 0.014);
-    const rotation = strength * waveX * 0.2;
-    const skew = strength * waveY * 0.42;
+    const wobbleBoost = 1.5;
+    const scaleX = 1 + strength * (0.034 + waveX * 0.012 * wobbleBoost);
+    const scaleY = 1 + strength * (0.032 + waveY * 0.014 * wobbleBoost);
+    const rotation = strength * waveX * 0.2 * wobbleBoost;
+    const skew = strength * waveY * 0.42 * wobbleBoost;
     setStyle(renderer.domElement, 'transform',
       `scale(${scaleX.toFixed(4)},${scaleY.toFixed(4)}) rotate(${rotation.toFixed(3)}deg) skewX(${skew.toFixed(3)}deg)`);
     setStyle(renderer.domElement, 'filter', '');
