@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { waterSpeedMultiplier, waterVerticalInput } from '../src/water-movement.js';
+import {
+  clearDrowningState, waterSpeedMultiplier, waterVerticalInput,
+} from '../src/water-movement.js';
 
 const characterAt = (y) => ({
   pos: { y },
@@ -45,4 +47,18 @@ test('an equipped Canopy grapple reserves Shift, but an unequipped one does not'
   const canopy = { grappleEnabled: true };
   assert.equal(waterVerticalInput({ ShiftLeft: true }, canopy, true), 'neutral');
   assert.equal(waterVerticalInput({ ShiftLeft: true }, canopy, false), 'down');
+});
+
+test('clearing drowning state resets breath, damage, and active flags', () => {
+  const character = {
+    _drownT: 47,
+    _drownDamageT: 0.8,
+    _drowning: true,
+  };
+  clearDrowningState(character);
+  assert.deepEqual(character, {
+    _drownT: 0,
+    _drownDamageT: 0,
+    _drowning: false,
+  });
 });

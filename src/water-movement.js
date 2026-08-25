@@ -19,3 +19,10 @@ export function waterVerticalInput(keys, world, hasGrapple = false) {
   if (world?.grappleEnabled && hasGrapple) return 'neutral';
   return 'down';
 }
+
+export function clearDrowningState(character) {
+  if (!character) return;
+  character._drownT = 0;
+  character._drownDamageT = 0;
+  character._drowning = false;
+}

@@ -5,7 +5,9 @@ import { moveCharacter, moveCharacterUp, cardinal, clamp, pointInZoneXZ } from '
 import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, updateWeaponWarmupVisual, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx, startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
-import { waterSpeedMultiplier, waterVerticalInput } from './water-movement.js';
+import {
+  clearDrowningState, waterSpeedMultiplier, waterVerticalInput,
+} from './water-movement.js';
 import {
   applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
 } from './grapple.js';
@@ -293,6 +295,7 @@ export class Player {
     this.equipT = 0;
     this.stepDistance = 0;
     this._cameraRideY = null;
+    clearDrowningState(this);
     if (this.world.escher) {
       // spawn oriented to whatever surface you land on (floor, wall or ceiling)
       const nf = this._nearestSurfaceUpAt(this.pos);

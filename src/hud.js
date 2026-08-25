@@ -96,7 +96,11 @@ export class HUD {
       setStyle(e.power, 'display', 'none');
     }
 
-    if (world?.mounted) {
+    if (player.alive && player._drowning) {
+      setStyle(e.jetpack, 'display', 'block');
+      setClass(e.jetpack, 'panel drowning');
+      setText(e.jetpack, "YOU'RE DROWNING · RETURN TO THE SURFACE");
+    } else if (world?.mounted) {
       const stamina = Math.max(0, player.gallopStamina || 0);
       setStyle(e.jetpack, 'display', 'block');
       setClass(e.jetpack, 'panel' + (player.galloping ? ' active' : stamina <= 0.01 ? ' cooling' : ''));

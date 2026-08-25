@@ -13,7 +13,7 @@ import { HORSE_HEIGHT_DELTA, HORSE_LEG_HEIGHT } from './mount.js';
 import { startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
 import { chooseCombatIntent, combatTargetScore, pickupUtility } from './bot-strategy.js';
-import { waterSpeedMultiplier } from './water-movement.js';
+import { clearDrowningState, waterSpeedMultiplier } from './water-movement.js';
 import { weaponShotCooldown } from './weapon-cadence.js';
 import {
   applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
@@ -387,8 +387,7 @@ export class Bot {
     this._pursuitTarget = null;
     this._lastSeenTargetPos.copy(pos);
     this._targetMemoryT = 0;
-    this._drownT = 0;
-    this._drownDamageT = 0;
+    clearDrowningState(this);
     this.up.set(0, 1, 0);
     this.horseHeading = Math.atan2(-pos.x, -pos.z);
     // PRISM RUN: orient to whatever surface we spawned on

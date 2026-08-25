@@ -46,6 +46,7 @@ import {
 import {
   TOAD_EFFECT_LOCKOUT, queueToadEffect, updateToadEffects,
 } from './toad-effects.js';
+import { clearDrowningState } from './water-movement.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -912,9 +913,14 @@ document.getElementById('againbtn').addEventListener('click', () => {
 });
 
 /* ---------------- match setup ---------------- */
+function clearMatchDrowningState(game = G) {
+  for (const ch of game?.characters || []) clearDrowningState(ch);
+}
+
 function teardown() {
   clearVictoryPresentationUI();
   if (!G) return;
+  clearMatchDrowningState(G);
   mobilePauseOpen = false;
   mobileControls.reset();
   setJetpackThrust(false);
@@ -3154,6 +3160,7 @@ function respawnCharacter(ch, initial = false) {
     if (G.world.escher) lastSpawnFaceByKey.set(spawnPoolKey('all'), spawnSurfaceKey(p));
   }
   ch.spawn(p);
+  clearDrowningState(ch);
   if (ch._toadEffects) ch._toadEffects.length = 0;
   ch._toadEffectCooldown = 0;
   if (ch.isPlayer) {
@@ -3886,6 +3893,7 @@ function showVictoryPodium(result) {
   }
 
   const game = G;
+  clearMatchDrowningState(game);
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
   game.over = true;
   game.podiumTransitioning = true;
@@ -6293,15 +6301,17 @@ function step(dt) {
       if (underwater) {
         ch._drownT = (ch._drownT || 0) + dt;
         if (ch._drownT > 40) {
+          ch._drowning = true;
           ch._drownDamageT = (ch._drownDamageT || 0) + dt;
           while (ch._drownDamageT >= 1 && ch.alive) {
             ch._drownDamageT -= 1;
             applyDamage(ch, 5, WATER);
           }
+        } else {
+          ch._drowning = false;
         }
       } else {
-        ch._drownT = 0;
-        ch._drownDamageT = 0;
+        clearDrowningState(ch);
       }
     }
   }
