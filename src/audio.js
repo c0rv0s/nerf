@@ -181,6 +181,35 @@ function noiseBurst({ dur = 0.08, vol = 0.1, low = 180, high = 3200, delay = 0 }
   } catch { /* audio blocked — fine */ }
 }
 
+// Short filtered inhale used when a swimmer breaks the surface. Keeping this
+// procedural makes the breath cue universal without adding another cold audio
+// fetch to the first swim of a session.
+function airGasp() {
+  try {
+    const a = ac();
+    const t = a.currentTime;
+    const source = a.createBufferSource();
+    source.buffer = noiseBuffer(a, 0.52);
+    const hp = a.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(330, t);
+    hp.frequency.exponentialRampToValueAtTime(640, t + 0.28);
+    const lp = a.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1250, t);
+    lp.frequency.exponentialRampToValueAtTime(3600, t + 0.25);
+    const gain = a.createGain();
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.exponentialRampToValueAtTime(0.105 * _mult, t + 0.055);
+    gain.gain.exponentialRampToValueAtTime(0.16 * _mult, t + 0.22);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.46);
+    source.connect(hp).connect(lp).connect(gain);
+    connectOutput(a, gain);
+    source.start(t);
+    source.stop(t + 0.49);
+  } catch { /* audio blocked — fine */ }
+}
+
 function sample(group, { vol = 0.12, rate = 1, delay = 0, alternate = false } = {}) {
   try {
     const a = ac();
@@ -240,6 +269,7 @@ const SFX = {
   footstep: () => { noiseBurst({ dur: 0.075, vol: 0.045 + Math.random() * 0.018, low: 80, high: 900 });
                     blip({ freq: 105 + Math.random() * 24, end: 58, dur: 0.09, vol: 0.045, type: 'sine' }); },
   splashstep: () => sample('splashstep', { vol: 0.2, rate: 1, alternate: true }),
+  gasp:     () => airGasp(),
   land:     () => { noiseBurst({ dur: 0.16, vol: 0.1, low: 55, high: 1200 });
                     blip({ freq: 92, end: 38, dur: 0.18, vol: 0.11, type: 'sine' }); },
   equip:    () => { blip({ freq: 720, end: 480, dur: 0.045, vol: 0.045, type: 'square' });

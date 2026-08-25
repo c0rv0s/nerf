@@ -102,13 +102,6 @@ export class Player {
       g.add(m);
       this.vmWeapons[id] = m;
     }
-    // invisible probes so the powerup skins are compiled at match start,
-    // not on first pickup (shader compiles cause a visible hitch)
-    for (const kind of ['gold', 'silver']) {
-      const probe = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), blasterSkin(kind));
-      probe.visible = false;
-      g.add(probe);
-    }
     g.scale.setScalar(0.55);
     g.position.set(0.32, -0.3, -0.55);
     g.rotation.y = 0.06;

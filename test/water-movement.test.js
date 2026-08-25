@@ -55,7 +55,8 @@ test('clearing drowning state resets breath, damage, and active flags', () => {
     _drownDamageT: 0.8,
     _drowning: true,
   };
-  clearDrowningState(character);
+  const submergedSeconds = clearDrowningState(character);
+  assert.equal(submergedSeconds, 47);
   assert.deepEqual(character, {
     _drownT: 0,
     _drownDamageT: 0,

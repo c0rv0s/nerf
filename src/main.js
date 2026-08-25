@@ -19,7 +19,7 @@ import { Player } from './player.js';
 import { Bot, BOT_NAMES, buildBotMesh, syncJetpackVisual } from './bots.js';
 import {
   ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster,
-  updateWeaponWarmupVisual, nextLoadedWeaponAfter, applyProjectileBounce,
+  blasterSkin, updateWeaponWarmupVisual, nextLoadedWeaponAfter, applyProjectileBounce,
 } from './weapons.js';
 import { PickupManager } from './pickups.js';
 import { HUD } from './hud.js';
@@ -5592,6 +5592,16 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
   probes.position.set(0, 0, -2);
   probes.scale.setScalar(0.01);
   const probeGeometries = [];
+  // Compile the two temporary weapon finishes on the same merged
+  // blaster geometry used in play. A tiny material-only box did not exercise
+  // the complete live draw path on every browser, leaving a one-frame hitch on
+  // the first gold or silver pickup.
+  for (const [index, kind] of ['gold', 'silver'].entries()) {
+    const skinProbe = buildBlaster('blaster');
+    if (skinProbe.children[0]) skinProbe.children[0].material = blasterSkin(kind);
+    skinProbe.position.x = index * 1.5;
+    probes.add(skinProbe);
+  }
   const projectileGeo = new THREE.SphereGeometry(1, 8, 6);
   probeGeometries.push(projectileGeo);
   for (const weapon of Object.values(WEAPONS)) {
@@ -5703,6 +5713,13 @@ function collectSceneTextures(scene) {
       for (const uniform of Object.values(material.uniforms || {})) addValue(uniform?.value);
     }
   });
+  // The real gold/silver geometry probes are removed after shader compilation
+  // so they never remain in the gameplay scene. Explicitly retain their maps
+  // in the upload list; otherwise the first pickup still pays the GPU texture
+  // upload even though its shader program was already compiled.
+  for (const kind of ['gold', 'silver']) {
+    for (const value of Object.values(blasterSkin(kind))) addValue(value);
+  }
   return [...textures];
 }
 
@@ -6311,7 +6328,10 @@ function step(dt) {
           ch._drowning = false;
         }
       } else {
-        clearDrowningState(ch);
+        const submergedSeconds = clearDrowningState(ch);
+        // Ignore tiny surface bobbles, but make a real resurfacing unmistakable:
+        // this cue means the local player's breath timer has fully reset.
+        if (ch.isPlayer && submergedSeconds >= 0.75) sfx('gasp');
       }
     }
   }

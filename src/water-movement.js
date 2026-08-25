@@ -21,8 +21,10 @@ export function waterVerticalInput(keys, world, hasGrapple = false) {
 }
 
 export function clearDrowningState(character) {
-  if (!character) return;
+  if (!character) return 0;
+  const submergedSeconds = Number.isFinite(character._drownT) ? character._drownT : 0;
   character._drownT = 0;
   character._drownDamageT = 0;
   character._drowning = false;
+  return submergedSeconds;
 }

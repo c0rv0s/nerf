@@ -9766,7 +9766,7 @@ function addStormCloudDome(scene) {
   return stormSky;
 }
 
-function addCanopyBirdFlocks(scene, world) {
+function createCanopyBirdFlock(scene) {
   const flock = new THREE.Group();
   flock.visible = false;
   scene.add(flock);
@@ -9807,6 +9807,12 @@ function addCanopyBirdFlocks(scene, world) {
       phase: i * 0.83,
     });
   }
+
+  return { flock, birds };
+}
+
+function addCanopyBirdFlocks(scene, world) {
+  const { flock, birds } = createCanopyBirdFlock(scene);
 
   const crowns = [
     { x: -45, y: 38, z: -45 }, { x: 45, y: 38, z: -45 },
@@ -9894,6 +9900,73 @@ function addCanopyBirdFlocks(scene, world) {
         b.side,
         b.height + Math.sin(t * 1.1 + b.phase) * 0.35,
         -b.behind * urgency,
+      );
+      const flap = Math.sin(t * 9.5 + b.phase) * 0.62;
+      b.leftWing.rotation.z = flap;
+      b.rightWing.rotation.z = -flap;
+    }
+  });
+}
+
+function addReefBirdFlocks(scene, world) {
+  // Reuse Canopy's deliberately low-poly V formation. Reef launches it from
+  // beyond one side of the ocean and lets it cross the whole playable view,
+  // keeping the tropical sky alive without leaving permanent visual clutter.
+  const { flock, birds } = createCanopyBirdFlock(scene);
+  flock.name = 'sunken-reef-overhead-bird-flock';
+  flock.scale.setScalar(1.25);
+
+  const direction = new THREE.Vector3();
+  const origin = new THREE.Vector3();
+  let nextLaunch = rand(14, 30);
+  let flightTime = 0;
+  let flightDuration = 0;
+
+  const launch = () => {
+    const angle = rand(0, Math.PI * 2);
+    direction.set(Math.cos(angle), rand(-0.015, 0.035), Math.sin(angle)).normalize();
+    const sideX = -direction.z;
+    const sideZ = direction.x;
+    const lateralOffset = rand(-58, 58);
+    origin.set(
+      -direction.x * 170 + sideX * lateralOffset,
+      rand(48, 60),
+      -direction.z * 170 + sideZ * lateralOffset,
+    );
+    flock.position.copy(origin);
+    flock.rotation.y = Math.atan2(direction.x, direction.z);
+    flock.visible = true;
+    flightTime = 0;
+    flightDuration = rand(20, 24);
+  };
+
+  world.anim.push((dt, t) => {
+    if (!flock.visible) {
+      nextLaunch -= dt;
+      if (nextLaunch <= 0) launch();
+      return;
+    }
+
+    flightTime += dt;
+    if (flightTime >= flightDuration) {
+      flock.visible = false;
+      nextLaunch = rand(55, 105);
+      return;
+    }
+
+    const progress = flightTime / flightDuration;
+    const distance = flightTime * 17;
+    flock.position.set(
+      origin.x + direction.x * distance,
+      origin.y + direction.y * distance + Math.sin(progress * Math.PI) * 4.5,
+      origin.z + direction.z * distance,
+    );
+    const formationSpread = Math.min(1, flightTime * 1.4);
+    for (const b of birds) {
+      b.bird.position.set(
+        b.side,
+        b.height + Math.sin(t * 1.05 + b.phase) * 0.3,
+        -b.behind * formationSpread,
       );
       const flap = Math.sin(t * 9.5 + b.phase) * 0.62;
       b.leftWing.rotation.z = flap;
@@ -19009,6 +19082,16 @@ function reefGroundRangeUnder(x, z, halfWidth, halfDepth) {
   return { low, high };
 }
 
+function reefCoralTexture(color, requested = null) {
+  if (requested) return requested;
+  // Every coral species uses surface art, including the small plates and the
+  // pieces that previously fell back to flat rock. Keep a deterministic color
+  // family so connected structures retain one continuous biological pattern.
+  if (color === 0xd95362) return 'coral-brain-red';
+  if (color === 0x388bc1 || color === 0x2faf8a) return 'coral-cup-blue';
+  return 'coral-plate-pink';
+}
+
 const reefGrowthMaterials = [
   mat(0x2e8f62, { roughness: 0.9, side: THREE.DoubleSide }),
   mat(0x52b16f, { roughness: 0.88, side: THREE.DoubleSide }),
@@ -19078,16 +19161,33 @@ function addReefCoralSegment(scene, world, start, end, radius, color, texture, n
   );
   const tint = new THREE.Color(color);
   if (texture) tint.lerp(new THREE.Color(0xffffff), 0.82);
-  const mesh = new THREE.Mesh(geometry, mat(tint.getHex(), {
-    tex: texture || 'rock', repeat: [Math.max(1, length / 5), 1],
-    roughness: 0.96, flatShading: true,
-  }));
-  mesh.castShadow = mesh.receiveShadow = true;
-  mesh.name = name;
-  scene.add(mesh);
-  mesh.updateMatrixWorld(true);
-  world.colliders.push(triangleMeshColliderFromMesh(mesh, name));
-  return mesh;
+  const colors = new Float32Array(geometry.attributes.position.count * 3);
+  for (let i = 0; i < geometry.attributes.position.count; i++) {
+    colors.set([tint.r, tint.g, tint.b], i * 3);
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const colliderSource = new THREE.Mesh(geometry);
+  world.colliders.push(triangleMeshColliderFromMesh(colliderSource, name));
+  const key = texture || 'rock';
+  (world._reefCoralSegmentGeometries ||= new Map());
+  if (!world._reefCoralSegmentGeometries.has(key)) world._reefCoralSegmentGeometries.set(key, []);
+  world._reefCoralSegmentGeometries.get(key).push(geometry);
+  return colliderSource;
+}
+
+function flushReefCoralSegments(scene, world) {
+  for (const [texture, geometries] of world._reefCoralSegmentGeometries || []) {
+    const merged = mergeGeometries(geometries, false);
+    const mesh = new THREE.Mesh(merged, mat(0xffffff, {
+      tex: texture, repeat: [1.35, 1.35], vertexColors: true,
+      roughness: 0.96, flatShading: true,
+    }));
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.name = `sunken-reef-merged-coral-${texture}`;
+    scene.add(mesh);
+    geometries.forEach(geometry => geometry.dispose());
+  }
+  world._reefCoralSegmentGeometries = new Map();
 }
 
 function addReefCoralCrown(scene, world, x, baseY, z, color, texture, scale, seed, type) {
@@ -19136,6 +19236,7 @@ function addReefCoralCrown(scene, world, x, baseY, z, color, texture, scale, see
 }
 
 function addBlockyReefFormation(scene, world, x, z, color, type = 'bommie', scale = 1, texture = null) {
+  texture = reefCoralTexture(color, texture);
   const baseY = reefSurfaceY(x, z) - 0.35;
   const blocks = [];
   if (type === 'arch') blocks.push(
@@ -19201,6 +19302,7 @@ function addBlockyReefFormation(scene, world, x, z, color, type = 'bommie', scal
 }
 
 function addReefCoralBridge(scene, world, from, to, color, texture, seed) {
+  texture = reefCoralTexture(color, texture);
   const start = V(from[0], reefSurfaceY(from[0], from[1]) + 7.5, from[1]);
   const end = V(to[0], reefSurfaceY(to[0], to[1]) + 8.2, to[1]);
   const center = start.clone().lerp(end, 0.5).add(V(0, 5.5, 0));
@@ -19235,7 +19337,13 @@ function addReefPlateCoral(scene, x, y, z, color, seed, scale = 1) {
   const rnd = seededRandom(seed);
   const root = new THREE.Group();
   root.position.set(x, y, z);
-  const material = mat(color, { roughness: 0.88, emissive: color, emissiveIntensity: 0.035 });
+  const texture = reefCoralTexture(color);
+  const tint = new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.82);
+  const material = mat(tint.getHex(), {
+    tex: texture, repeat: [1.2, 1.2], roughness: 0.9,
+    emissive: color, emissiveIntensity: 0.025,
+  });
+  const geometries = [];
   for (let i = 0; i < 3 + Math.floor(rnd() * 3); i++) {
     const width = scale * (1.1 + rnd() * 1.8);
     let height = scale * (0.45 + rnd() * 0.7);
@@ -19250,85 +19358,128 @@ function addReefPlateCoral(scene, x, y, z, color, seed, scale = 1) {
       height = topY - buriedBottomY;
       py = (topY + buriedBottomY) * 0.5 - y;
     }
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-    plate.position.set(px, py, pz);
-    root.add(plate);
+    const plate = new THREE.BoxGeometry(width, height, depth);
+    plate.translate(px, py, pz);
+    geometries.push(plate);
   }
+  const merged = mergeGeometries(geometries, false);
+  const plates = new THREE.Mesh(merged, material);
+  plates.castShadow = plates.receiveShadow = true;
+  plates.name = 'sunken-reef-textured-plate-coral';
+  root.add(plates);
+  geometries.forEach(geometry => geometry.dispose());
   scene.add(root);
 }
 
-function createReefFish(kind, colors) {
-  const root = new THREE.Group();
-  const bodyMat = mat(colors[0], { roughness: 0.48, flatShading: true });
-  const finMat = mat(colors[1] ?? colors[0], { roughness: 0.55, flatShading: true, side: THREE.DoubleSide });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 7), bodyMat);
+function createReefFishGeometry(kind, colors) {
   const proportions = {
     minnow: [1.45, 0.48, 0.48], tang: [1.05, 0.85, 0.3], butterfly: [0.9, 1.05, 0.28],
     parrot: [1.3, 0.62, 0.48], angel: [0.78, 1.22, 0.25],
   }[kind] || [1.2, 0.65, 0.4];
-  body.scale.set(...proportions);
+  const paint = (geometry, color) => {
+    if (geometry.index) {
+      const nonIndexed = geometry.toNonIndexed();
+      geometry.dispose();
+      geometry = nonIndexed;
+    }
+    geometry.deleteAttribute('uv');
+    const c = new THREE.Color(color);
+    const values = new Float32Array(geometry.attributes.position.count * 3);
+    for (let i = 0; i < geometry.attributes.position.count; i++) {
+      values.set([c.r, c.g, c.b], i * 3);
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
+    return geometry;
+  };
+  const geometries = [];
+  const body = new THREE.SphereGeometry(0.7, 8, 5);
+  body.scale(...proportions);
+  geometries.push(paint(body, colors[0]));
   const tailGeo = new THREE.BufferGeometry();
   tailGeo.setAttribute('position', new THREE.Float32BufferAttribute([
     -0.78, 0, 0, -1.45, 0.7, 0, -1.45, -0.7, 0,
   ], 3));
   tailGeo.computeVertexNormals();
-  const tailPivot = new THREE.Group();
-  tailPivot.position.x = -0.15;
-  tailPivot.add(new THREE.Mesh(tailGeo, finMat));
-  const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.15, 3), finMat);
-  dorsal.position.set(-0.05, 0.75, 0);
-  dorsal.rotation.z = kind === 'angel' ? 0.15 : 0.45;
-  dorsal.scale.z = 0.22;
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x07131a });
+  tailGeo.translate(-0.15, 0, 0);
+  geometries.push(paint(tailGeo, colors[1] ?? colors[0]));
+  const dorsal = new THREE.ConeGeometry(0.5, 1.15, 3);
+  dorsal.scale(1, 1, 0.22);
+  dorsal.rotateZ(kind === 'angel' ? 0.15 : 0.45);
+  dorsal.translate(-0.05, 0.75, 0);
+  geometries.push(paint(dorsal, colors[1] ?? colors[0]));
   for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 4), eyeMat);
-    eye.position.set(0.68, 0.18, side * (proportions[2] * 0.67));
-    root.add(eye);
+    const eye = new THREE.SphereGeometry(0.075, 5, 3);
+    eye.translate(0.68, 0.18, side * (proportions[2] * 0.67));
+    geometries.push(paint(eye, 0x07131a));
   }
-  root.add(body, tailPivot, dorsal);
-  root.userData.tailPivot = tailPivot;
-  return root;
+  const merged = mergeGeometries(geometries, false);
+  merged.computeBoundingSphere();
+  geometries.forEach(geometry => geometry.dispose());
+  return merged;
 }
 
 function addReefFishLife(scene, world) {
-  const fish = [];
+  const schools = [];
   const species = [
     { kind: 'minnow', colors: [0x9fd7c5, 0x69ab9f], count: 18, center: [-42, -8, -5], radius: 15, size: 0.42 },
     { kind: 'minnow', colors: [0xffc95c, 0xff744d], count: 13, center: [38, -18, 31], radius: 12, size: 0.55 },
     { kind: 'tang', colors: [0x247ee5, 0xffdd3f], count: 9, center: [9, -12, -48], radius: 10, size: 0.7 },
     { kind: 'butterfly', colors: [0xffe66b, 0x272329], count: 7, center: [-50, -22, 42], radius: 9, size: 0.78 },
+    { kind: 'parrot', colors: [0x36d9ba, 0xff6ca8], count: 1, center: [-12, -14, 30], radius: 18, size: 1.25, speed: 0.07 },
+    { kind: 'parrot', colors: [0x55cf77, 0x4f6be8], count: 1, center: [55, -9, -21], radius: 15, size: 1.1, speed: 0.07 },
+    { kind: 'angel', colors: [0xf1f3f0, 0x151a23], count: 1, center: [-63, -17, -30], radius: 12, size: 1.15, speed: 0.07 },
+    { kind: 'angel', colors: [0xff8acb, 0x7c4fd6], count: 1, center: [25, -25, 8], radius: 14, size: 1.05, speed: 0.07 },
   ];
   let seed = 0;
   for (const spec of species) {
+    const geometry = createReefFishGeometry(spec.kind, spec.colors);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff, vertexColors: true, roughness: 0.5,
+      metalness: 0.04, flatShading: true, side: THREE.DoubleSide,
+    });
+    const school = new THREE.InstancedMesh(geometry, material, spec.count);
+    school.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    school.frustumCulled = false;
+    school.name = `sunken-reef-${spec.kind}-school`;
+    scene.add(school);
+    const members = [];
     for (let i = 0; i < spec.count; i++) {
-      const model = createReefFish(spec.kind, spec.colors);
       const angle = i / spec.count * Math.PI * 2 + (i % 4) * 0.19;
-      model.scale.setScalar(spec.size * (0.78 + (i % 5) * 0.08));
-      scene.add(model);
-      fish.push({ model, spec, angle, lane: (i % 5 - 2) * 0.8, speed: 0.16 + (i % 4) * 0.018, seed: seed++ });
+      members.push({
+        angle,
+        lane: spec.count === 1 ? 0 : (i % 5 - 2) * 0.8,
+        speed: spec.speed ?? (0.16 + (i % 4) * 0.018),
+        seed: seed++,
+        scale: spec.size * (spec.count === 1 ? 1 : 0.78 + (i % 5) * 0.08),
+      });
     }
+    schools.push({ school, spec, members });
   }
-  for (const [kind, colors, x, y, z, size, radius] of [
-    ['parrot', [0x36d9ba, 0xff6ca8], -12, -14, 30, 1.25, 18],
-    ['parrot', [0x55cf77, 0x4f6be8], 55, -9, -21, 1.1, 15],
-    ['angel', [0xf1f3f0, 0x151a23], -63, -17, -30, 1.15, 12],
-    ['angel', [0xff8acb, 0x7c4fd6], 25, -25, 8, 1.05, 14],
-  ]) {
-    const model = createReefFish(kind, colors);
-    model.scale.setScalar(size);
-    scene.add(model);
-    fish.push({ model, spec: { center: [x, y, z], radius }, angle: radius, lane: 0, speed: 0.07, seed: seed++ });
-  }
-  world.anim.push((_dt, t) => {
-    for (const f of fish) {
-      const a = f.angle + t * f.speed;
-      const [cx, cy, cz] = f.spec.center;
-      f.model.position.set(cx + Math.cos(a) * f.spec.radius, cy + f.lane + Math.sin(t * 0.7 + f.seed) * 0.7,
-        cz + Math.sin(a) * f.spec.radius * 0.65);
-      f.model.rotation.y = -a;
-      f.model.userData.tailPivot.rotation.y = Math.sin(t * 7.5 + f.seed) * 0.32;
+  const dummy = new THREE.Object3D();
+  const updateSchools = (t) => {
+    for (const { school, spec, members } of schools) {
+      const [cx, cy, cz] = spec.center;
+      for (let i = 0; i < members.length; i++) {
+        const member = members[i];
+        const a = member.angle + t * member.speed;
+        dummy.position.set(
+          cx + Math.cos(a) * spec.radius,
+          cy + member.lane + Math.sin(t * 0.7 + member.seed) * 0.7,
+          cz + Math.sin(a) * spec.radius * 0.65,
+        );
+        // A subtle whole-body yaw retains the readable swimming motion while
+        // allowing each full fish to remain one instance rather than five
+        // separately submitted meshes.
+        dummy.rotation.set(0, -a + Math.sin(t * 7.5 + member.seed) * 0.055, 0);
+        dummy.scale.setScalar(member.scale);
+        dummy.updateMatrix();
+        school.setMatrixAt(i, dummy.matrix);
+      }
+      school.instanceMatrix.needsUpdate = true;
     }
-  });
+  };
+  updateSchools(0);
+  world.anim.push((_dt, t) => updateSchools(t));
 }
 
 function movingAnimalCollider(world, halfSize) {
@@ -19612,6 +19763,7 @@ function buildSunkenReef(scene) {
       surfaceRings[i].scale.set(1.8 * pulse, (0.7 + (i % 3) * 0.2) * pulse, 1);
     }
   });
+  addReefBirdFlocks(scene, world);
 
   const seabedY = -44.5;
   // Red Rock Range uses one uninterrupted desert beneath both its playable
@@ -19724,6 +19876,9 @@ function buildSunkenReef(scene) {
         archMaterial,
       );
       leg.position.set(fx, (topY + bottomY) * 0.5, fz);
+      // Keep each column's octagonal faces in phase with the curved crown so
+      // the joint reads as one continuous piece instead of two rotated meshes.
+      leg.rotation.y = yaw;
       leg.castShadow = leg.receiveShadow = true;
       scene.add(leg);
       leg.updateMatrixWorld(true);
@@ -19781,6 +19936,7 @@ function buildSunkenReef(scene) {
   addReefCoralBridge(scene, world, [21, 35], [-7, 15], 0x7357cc, 'coral-plate-pink', 71043);
   addReefCoralBridge(scene, world, [-21, 59], [4, 73], 0x2faf8a, null, 71087);
   addReefCoralBridge(scene, world, [47, 55], [72, 44], 0xd95362, 'coral-brain-red', 71129);
+  flushReefCoralSegments(scene, world);
   const coralRnd = seededRandom(0xc0a1b33f);
   for (let i = 0; i < 42; i++) {
     const angle = coralRnd() * Math.PI * 2;
