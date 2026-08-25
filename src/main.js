@@ -43,6 +43,9 @@ import {
 import {
   createGrappleVisual, disposeGrappleVisual, updateGrappleVisual,
 } from './grapple.js';
+import {
+  TOAD_EFFECT_LOCKOUT, queueToadEffect, updateToadEffects,
+} from './toad-effects.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -89,6 +92,10 @@ const COMET = { name: 'Comet', color: '#bde7ff', isPlayer: false, kills: 0, team
 const GATOR = { name: 'Canal Gator', color: '#8fbd45', isPlayer: false, kills: 0, team: 'gator' };
 const SHARK = { name: 'Shark', color: '#79b7c8', isPlayer: false, kills: 0, team: 'shark' };
 const CACTUS = { name: 'Cactus', color: '#4f9b55', isPlayer: false, kills: 0, team: 'cactus' };
+const POISON_TOAD = {
+  id: 'toad-poison', name: 'Poison Toad', color: '#79ff5b',
+  isPlayer: false, kills: 0, team: 'toad-poison',
+};
 const SOLAR_FLARE = { name: 'Solar Flare', color: '#ff4b24', isPlayer: false, kills: 0, team: 'solar' };
 const EVENT_BLAST_RADIUS = 10;
 const EVENT_BLAST_DAMAGE = 50;
@@ -693,6 +700,7 @@ function syncRenderQuality() {
 const hud = new HUD();
 const underwaterFx = document.getElementById('underwaterFx');
 const foliageFx = document.getElementById('foliageFx');
+const hallucinationFx = document.getElementById('hallucinationFx');
 let G = null; // current match state (or the lobby)
 let rafId = 0;
 let mapLoadInProgress = false;
@@ -912,6 +920,7 @@ function teardown() {
   setPauseScoreboardLayer(false);
   updateUnderwaterFx(1, true);
   updateFoliageFx(1, true);
+  updateHallucinationFx(1, true);
   setRainAmbience(0);
   G.over = true;
   for (const ch of G.characters || []) {
@@ -1045,6 +1054,96 @@ function updateFoliageFx(dt, forceClear = false) {
   G.foliageMix = forceClear ? 0 : THREE.MathUtils.damp(G.foliageMix || 0, target, 18, dt);
   const mix = G.foliageMix;
   setStyle(foliageFx, 'opacity', mix > 0.01 ? String(0.72 * mix) : '0');
+}
+
+function updateHallucinationFx(dt, forceClear = false) {
+  if (!G) return;
+  const mix = !forceClear && G.player?.alive ? (G.hallucinationStrength || 0) : 0;
+  G.hallucinationMix = mix;
+  const strength = mix * mix * (3 - 2 * mix);
+  const active = mix > 0;
+  setStyle(hallucinationFx, 'opacity', active ? String(0.82 * strength) : '0');
+  document.body.classList.toggle('toad-hallucinating', active);
+
+  // Drive the camera warp here so its scale, skew, and color all share the
+  // same one-second ease instead of the CSS animation snapping on and off.
+  if (active) {
+    G.hallucinationPhase = (G.hallucinationPhase || 0) + dt;
+    const phase = G.hallucinationPhase;
+    const waveX = Math.sin(phase * 8.4);
+    const waveY = Math.sin(phase * 6.9 + 1.7);
+    const scaleX = 1 + strength * (0.034 + waveX * 0.012);
+    const scaleY = 1 + strength * (0.032 + waveY * 0.014);
+    const rotation = strength * waveX * 0.2;
+    const skew = strength * waveY * 0.42;
+    setStyle(renderer.domElement, 'transform',
+      `scale(${scaleX.toFixed(4)},${scaleY.toFixed(4)}) rotate(${rotation.toFixed(3)}deg) skewX(${skew.toFixed(3)}deg)`);
+    setStyle(renderer.domElement, 'filter', '');
+  } else {
+    G.hallucinationPhase = 0;
+    setStyle(renderer.domElement, 'transform', '');
+    setStyle(renderer.domElement, 'filter', '');
+  }
+}
+
+function bindMyceliumToadEffects(world) {
+  if (!world?.myceliumToads?.length) return;
+  world.onToadTouch = (character, toad) => {
+    if (!character?.alive || (!character.isPlayer && !character.remoteHuman)) return;
+    // Guests predict only their own touch. The host applies poison to every
+    // human, while each player's browser owns its local hallucination effect.
+    if (G?.multiplayer && !G.multiplayerHost && !character.isPlayer) return;
+    if ((character._toadEffectCooldown || 0) > 0) return;
+    const personality = toad.touchPersonality;
+    if (personality === 'normal') return;
+    if (queueToadEffect(character._toadEffects ||= [], personality)) {
+      character._toadEffectCooldown = TOAD_EFFECT_LOCKOUT;
+    }
+  };
+}
+
+function updateMyceliumToadEffects(dt) {
+  if (!G?.world?.myceliumToads?.length) {
+    if (G) {
+      G.hallucinating = false;
+      G.hallucinationStrength = 0;
+    }
+    return;
+  }
+  let playerHallucinating = false;
+  let playerHallucinationStrength = 0;
+  for (const character of G.characters) {
+    character._toadEffectCooldown = Math.max(0, (character._toadEffectCooldown || 0) - dt);
+    const effects = character._toadEffects;
+    if (!character.alive) {
+      if (effects) effects.length = 0;
+      continue;
+    }
+    if (!effects?.length) continue;
+    const state = updateToadEffects(effects, dt, {
+      onStart: type => {
+        if (!character.isPlayer) return;
+        if (type === 'poison') hud.message('TOAD POISON -5 / SECOND', '#79ff5b');
+        else if (type === 'hallucinogenic') {
+          hud.message('THE GROVE IS BREATHING', '#e18cff');
+          sfx('powerup');
+        }
+      },
+      onPoisonTick: damage => {
+        if (G.multiplayer && !G.multiplayerHost) return;
+        applyDamage(character, damage, POISON_TOAD, { environmental: true });
+      },
+    });
+    if (character.isPlayer && state.hallucinating) {
+      playerHallucinating = true;
+      playerHallucinationStrength = Math.max(
+        playerHallucinationStrength,
+        state.hallucinationStrength,
+      );
+    }
+  }
+  G.hallucinating = playerHallucinating;
+  G.hallucinationStrength = playerHallucinationStrength;
 }
 
 function updateDeathCamera(dt) {
@@ -1360,6 +1459,7 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
 
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  bindMyceliumToadEffects(world);
   world.onLightningStrike = (pos) => sfx('thunder', pos);
   world.onLightningHit = (ch) => {
     if (!ch?.alive) return;
@@ -1543,6 +1643,9 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa', freshMu
   const scene = new THREE.Scene();
   scene.environment = envTexture;
   const world = mapDef.build(scene);
+  if (Number.isFinite(multiplayer.phaseEndsAt)) {
+    world.shuffleMyceliumToads?.(multiplayer.phaseEndsAt);
+  }
   setMapLoadingProgress(48, 'Multiplayer arena geometry built', loadingToken);
   renderer.toneMappingExposure = world.toneMappingExposure ?? 1.02;
   buildCollisionIndex(world);
@@ -1583,6 +1686,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa', freshMu
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  bindMyceliumToadEffects(world);
   world.onGatorChomp = () => sfx('chomp', world.gator?.group?.position);
   world.onGatorBite = (ch) => {
     // The host owns environmental damage and distributes the resulting health
@@ -1695,6 +1799,9 @@ function startMultiplayerHostMatch(
 ) {
   startMatch(mapDef, mode, freshMusic);
   if (!G) return;
+  if (Number.isFinite(multiplayer.phaseEndsAt)) {
+    G.world.shuffleMyceliumToads?.(multiplayer.phaseEndsAt);
+  }
   bindWorldPresentation(G.world, true);
   const playerSlot = multiplayerSlotById();
   const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
@@ -2517,6 +2624,7 @@ function environmentalEliminationText(sourceId, sourceName = 'The Environment') 
     meteor: 'CRUSHED',
     comet: 'OBLITERATED',
     solar: 'INCINERATED',
+    'toad-poison': 'POISONED',
   };
   const verb = verbs[sourceId];
   return verb ? `${String(sourceName).toUpperCase()} ${verb} YOU` : null;
@@ -2983,6 +3091,12 @@ function respawnCharacter(ch, initial = false) {
     if (G.world.escher) lastSpawnFaceByKey.set(spawnPoolKey('all'), spawnSurfaceKey(p));
   }
   ch.spawn(p);
+  if (ch._toadEffects) ch._toadEffects.length = 0;
+  ch._toadEffectCooldown = 0;
+  if (ch.isPlayer) {
+    G.hallucinating = false;
+    G.hallucinationStrength = 0;
+  }
   if (ch.remoteHuman) {
     ch.remoteNet = makeRemoteNet(ch.pos);
     G.remoteInputs?.delete(ch.id);
@@ -4928,6 +5042,7 @@ function tick(now) {
   updateDeathCamera(dt);
   updateUnderwaterFx(dt);
   updateFoliageFx(dt);
+  updateHallucinationFx(dt);
   renderFrame();
   const workMs = performance.now() - workStartedAt;
   if (!G.paused && !G.over) {
@@ -6079,6 +6194,7 @@ function step(dt) {
       if (moveHook) moveHook(ch, previousCharacterPos);
     }
   }
+  updateMyceliumToadEffects(dt);
 
   G.world.updateDoors?.(G.characters, dt); // proximity doors (Labyrinth)
 
@@ -6300,6 +6416,7 @@ function stepMultiplayer(dt) {
   G.player.update(dt, fire);
   if (moveHook) moveHook(G.player, previousCharacterPos);
   setJetpackThrust(!!(G.player.alive && G.player.jetpack?.active));
+  updateMyceliumToadEffects(dt);
   G.projectiles.update(dt, G.characters);
   G.pickups.update(dt, [G.player]);
   G.fxPool.update(dt);
@@ -6405,7 +6522,15 @@ window.__mapDebug = () => ({
     position: G.player.pos.toArray(),
     velocity: G.player.vel.toArray(),
     grounded: G.player.grounded,
+    toadEffectCooldown: G.player._toadEffectCooldown || 0,
+    toadEffects: (G.player._toadEffects || []).map(effect => ({ ...effect })),
+    hallucinating: !!G.hallucinating,
   } : null,
+  toads: (G?.world?.myceliumToads || []).map((toad, index) => ({
+    index,
+    personality: toad.touchPersonality,
+    position: toad.root.position.toArray(),
+  })),
   mushroomPads: (G?.world?.jumpPads || [])
     .filter(pad => pad.kind === 'mushroom')
     .map(pad => ({ x: pad.x, y: pad.y, z: pad.z, vy: pad.vy, vx: pad.vx || 0, vz: pad.vz || 0 })),

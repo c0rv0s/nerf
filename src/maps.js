@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY } from './engine.js';
 import { advanceNetworkClock } from './network-sync.js';
+import { shuffledToadPersonalities } from './toad-effects.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SURFACE_LAYER_EPS = 0.04;
@@ -15767,10 +15768,12 @@ function buildSolarFlare(scene) {
   for (const [x, z, w, d] of [[63.5, 0, 17, 12], [75, 8, 18, 16], [88, 0, 20, 18]])
     addBox(scene, world, x, 7.0, z, w, 0.9, d, hull, { tex: 'solar-hull' }); // top 7.45
   addBox(scene, world, 54.5, 7.0, 0, 5.5, 0.9, 5.5, hull, { tex: 'solar-hull' }); // through curtain
-  // Science-roof curtain: relay deck 7.4 → roof walk ~6.9.
+  // Science-roof curtain: relay deck 7.4 → roof walk 6.9. The relay floor's
+  // west face begins at x=35, so the ramp must reach full height there; letting
+  // it keep climbing inside the floor leaves a vertical lip at the doorway.
   addRamp(scene, world, {
-    axis: 'x', minX: 33.5, maxX: 36.2, minZ: 22.6, maxZ: 27.4,
-    h0: 6.95, h1: 7.4, color: 0xc7c9c3, tex: 'solar-hull',
+    axis: 'x', minX: 32.3, maxX: 35, minZ: 22.6, maxZ: 27.4,
+    h0: 6.9, h1: 7.4, color: 0xc7c9c3, tex: 'solar-hull',
   });
   const sensorDishR = 5.2;
   const sensorDishTube = 0.35;
@@ -16692,8 +16695,25 @@ function addMyceliumFairyToads(scene, world) {
       offset: (index * 0.371) % 1,
       phase: (index * 0.217) % 1,
       lastNormal: V(0, 1, 0),
+      touching: new WeakSet(),
     });
   });
+
+  // Keep the three touch personalities evenly represented while hiding which
+  // individual toad has which effect. A new map build gets a fresh shuffle;
+  // multiplayer can reshuffle with its shared round timestamp so every client
+  // agrees on the same toads.
+  world.shuffleMyceliumToads = seed => {
+    const personalities = shuffledToadPersonalities(toads.length, seed);
+    toads.forEach((toad, index) => {
+      toad.touchPersonality = personalities[index];
+      toad.root.userData.touchPersonality = personalities[index];
+      toad.touching = new WeakSet();
+    });
+    world.myceliumToadShuffleSeed = Number(seed) >>> 0;
+    return personalities;
+  };
+  world.shuffleMyceliumToads(Math.floor(Math.random() * 0x100000000));
 
   const position = new THREE.Vector3();
   const normal = new THREE.Vector3();
@@ -16701,6 +16721,7 @@ function addMyceliumFairyToads(scene, world) {
   const right = new THREE.Vector3();
   const wallNormal = new THREE.Vector3();
   const orientation = new THREE.Matrix4();
+  const toadTouchPosition = new THREE.Vector3();
   const trunkSurfaceRadius = (route, y) => THREE.MathUtils.lerp(
     route.baseRadius,
     route.maxRadius,
@@ -16786,7 +16807,7 @@ function addMyceliumFairyToads(scene, world) {
     tangent.addScaledVector(normal, -tangent.dot(normal)).normalize();
   };
 
-  const updateToads = (_dt, t) => {
+  const updateToads = (_dt, t, characters = []) => {
     for (const toad of toads) {
       const cycleProgress = t / toad.hopPeriod + toad.phase;
       const cycleIndex = Math.floor(cycleProgress);
@@ -16862,6 +16883,42 @@ function addMyceliumFairyToads(scene, world) {
       const blinkScale = blinkCycle > 0.955 ? 0.22 : 1;
       for (const eye of toad.eyes) eye.scale.y = 0.24 * blinkScale;
       for (const pupil of toad.pupils) pupil.scale.y = 0.11 * blinkScale;
+
+      // Derive the moving model's center directly from its authored root. This
+      // avoids forcing a scene-graph world-matrix update for every toad.
+      toadTouchPosition.copy(toad.model.position)
+        .multiply(toad.root.scale)
+        .applyQuaternion(toad.root.quaternion)
+        .add(toad.root.position);
+      for (const character of characters) {
+        // Toad effects only apply to human players. Bots used to perform the
+        // same capsule math and WeakSet churn even though the callback ignored
+        // them, multiplying this work by the full roster every frame.
+        if (!character?.pos || (!character.isPlayer && !character.remoteHuman)) continue;
+        if (!character.alive) {
+          toad.touching.delete(character);
+          continue;
+        }
+        const dx = character.pos.x - toadTouchPosition.x;
+        const dz = character.pos.z - toadTouchPosition.z;
+        const contactRadius = (character.radius ?? 0.45) + toad.root.scale.x * 0.82;
+        const radiusSq = contactRadius * contactRadius;
+        const horizontalSq = dx * dx + dz * dz;
+        let touching = false;
+        if (horizontalSq <= radiusSq) {
+          const minY = character.pos.y - 0.18;
+          const maxY = character.pos.y + (character.height ?? 1.8) + 0.18;
+          const dy = toadTouchPosition.y < minY ? minY - toadTouchPosition.y
+            : toadTouchPosition.y > maxY ? maxY - toadTouchPosition.y : 0;
+          touching = horizontalSq + dy * dy <= radiusSq;
+        }
+        if (touching && !toad.touching.has(character)) {
+          toad.touching.add(character);
+          world.onToadTouch?.(character, toad);
+        } else if (!touching) {
+          toad.touching.delete(character);
+        }
+      }
     }
   };
   updateToads(0, 0);
