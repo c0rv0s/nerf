@@ -7084,6 +7084,9 @@ function buildSanctum(scene) {
   // Deliberately identical. Color-coded wings turned the labyrinth into a
   // compass; matching runes make every threshold feel plausibly familiar.
   const RUNE_COLORS = [0x9a78d8, 0x9a78d8, 0x9a78d8, 0x9a78d8];
+  // Continue ramp support just beneath each destination deck so the player
+  // capsule cannot catch on the deck's vertical edge at a flush crest.
+  const LANDING_SUPPORT = 1.2;
   const runeLights = [];
 
   function addRuneBeacon(x, z, color, height = 4.2) {
@@ -7092,7 +7095,7 @@ function buildSanctum(scene) {
       { collide: false, shadow: false, emissive: color, emissiveIntensity: 1.55 });
     addBox(scene, world, x, height + 0.9, z, 1.15, 0.18, 1.15, color,
       { collide: false, shadow: false, emissive: color, emissiveIntensity: 2.0 });
-    const light = new THREE.PointLight(color, 25, 24);
+    const light = new THREE.PointLight(color, 8, 13);
     light.position.set(x, height * 0.7 + 1, z);
     scene.add(light);
     runeLights.push(light);
@@ -7128,11 +7131,13 @@ function buildSanctum(scene) {
   addBox(scene, world, -40.35, -3.5, 0, 0.7, 5.1, 13.4, STONE, { tex: 'rock' });
   // feet face the crypt CENTER — pointed outward, the slab undersides pinch
   // you against the floor before you can reach the climbable end (a gold trap)
-  addRamp(scene, world, { axis: 'x', minX: 30, maxX: 40, minZ: -2, maxZ: 2, h0: -6, h1: 0, color: STONE });
-  addRamp(scene, world, { axis: 'x', minX: -40, maxX: -30, minZ: -2, maxZ: 2, h0: 0, h1: -6, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: 30, maxX: 40, minZ: -2, maxZ: 2,
+    h0: -6, h1: 0, color: STONE, supportPad1: LANDING_SUPPORT });
+  addRamp(scene, world, { axis: 'x', minX: -40, maxX: -30, minZ: -2, maxZ: 2,
+    h0: 0, h1: -6, color: STONE, supportPad0: LANDING_SUPPORT });
   addBox(scene, world, 0, -1.6, 5.9, 60, 0.3, 0.2, 0x30ffc8, { collide: false, shadow: false, emissive: 0x30ffc8, emissiveIntensity: 1.4 });
   addBox(scene, world, 0, -1.6, -5.9, 60, 0.3, 0.2, 0x30ffc8, { collide: false, shadow: false, emissive: 0x30ffc8, emissiveIntensity: 1.4 });
-  const cryptLight = new THREE.PointLight(0x30ffc8, 30, 40);
+  const cryptLight = new THREE.PointLight(0x30ffc8, 14, 24);
   cryptLight.position.set(0, -3, 0);
   scene.add(cryptLight);
 
@@ -7187,7 +7192,7 @@ function buildSanctum(scene) {
     addBox(scene, world, x, 9.2, z, 0.16, 6.2, 0.16, 0x8a789e,
       { collide: false, shadow: false, metalness: 0.75, roughness: 0.34 });
   }
-  const obLight = new THREE.PointLight(0x8a5fff, 55, 34);
+  const obLight = new THREE.PointLight(0x8a5fff, 18, 20);
   obLight.position.set(0, 7.2, 0);
   scene.add(obLight);
 
@@ -7211,9 +7216,9 @@ function buildSanctum(scene) {
       { shadow: false });
   }
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 15.5, maxZ: 26.5,
-    h0: 5.45, h1: 6.5, color: STONE });
+    h0: 5.45, h1: 6.5, color: STONE, supportPad1: LANDING_SUPPORT });
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: -26.5, maxZ: -15.5,
-    h0: 6.5, h1: 5.45, color: STONE });
+    h0: 6.5, h1: 5.45, color: STONE, supportPad0: LANDING_SUPPORT });
 
   // A one-way arc lift makes the crypt a fast re-entry route instead of a dead end.
   addJumpPad(scene, world, 0, -6, 0, 24, 5.5, 0, 0x8a5fff);
@@ -7239,9 +7244,9 @@ function buildSanctum(scene) {
     ringMat.color.copy(runeColorObjects[phase]);
     ringB.material.color.copy(runeColorObjects[(phase + 1) % 4]);
     obLight.color.copy(runeColorObjects[phase]);
-    obLight.intensity = 42 + pulse * 28;
+    obLight.intensity = 14 + pulse * 10;
     runeLights.forEach((light, i) => {
-      light.intensity = i === phase ? 40 + pulse * 12 : 15;
+      light.intensity = i === phase ? 12 + pulse * 5 : 4;
     });
   });
 
@@ -7266,10 +7271,12 @@ function buildSanctum(scene) {
   }
   // W room balcony (top 5) + its ramp along the south wall
   addBox(scene, world, -39.4, 4.7, 1.5, 8, 0.6, 14.6, STONE, { tex: 'rock' });
-  addRamp(scene, world, { axis: 'x', minX: -43, maxX: -33, minZ: -8.8, maxZ: -5.8, h0: 5, h1: 0, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: -43, maxX: -33, minZ: -8.8, maxZ: -5.8,
+    h0: 5, h1: 0, color: STONE, supportPad0: LANDING_SUPPORT });
   // Mirrored E room balcony and ramp feed the southeast roof loop.
   addBox(scene, world, 39.4, 4.7, -1.5, 8, 0.6, 14.6, STONE, { tex: 'rock' });
-  addRamp(scene, world, { axis: 'x', minX: 33, maxX: 43, minZ: 5.8, maxZ: 8.8, h0: 0, h1: 5, color: STONE });
+  addRamp(scene, world, { axis: 'x', minX: 33, maxX: 43, minZ: 5.8, maxZ: 8.8,
+    h0: 0, h1: 5, color: STONE, supportPad1: LANDING_SUPPORT });
 
   // N/S ROOMS (z ±(26..44), x −14..14) with walkable roofs (pads in the ring)
   for (const s of [1, -1]) {
@@ -7324,7 +7331,7 @@ function buildSanctum(scene) {
   addBox(scene, world, -27, 5.25, 30, 20, 0.5, 4, STONE, { tex: 'rock', repeat: [5, 1] });
   addBox(scene, world, -39, 5.25, 30, 4, 0.5, 4, STONE, { tex: 'rock' });
   addRamp(scene, world, { axis: 'x', minX: -18, maxX: -13, minZ: 28, maxZ: 32,
-    h0: 5.5, h1: 6.5, color: STONE });
+    h0: 5.5, h1: 6.5, color: STONE, supportPad1: LANDING_SUPPORT });
   // Rail endpoints meet two corner posts exactly; no rail volumes overlap.
   for (const [x, z] of [[-40.9, 31.9], [-37.1, 28.1]]) {
     addBox(scene, world, x, 6.2, z, .24, 1.55, .24, RUNE_COLORS[3],
@@ -7348,7 +7355,7 @@ function buildSanctum(scene) {
   addBox(scene, world, 27, 5.25, -30, 20, 0.5, 4, STONE, { tex: 'rock', repeat: [5, 1] });
   addBox(scene, world, 39, 5.25, -30, 4, 0.5, 4, STONE, { tex: 'rock' });
   addRamp(scene, world, { axis: 'x', minX: 13, maxX: 18, minZ: -32, maxZ: -28,
-    h0: 6.5, h1: 5.5, color: STONE });
+    h0: 6.5, h1: 5.5, color: STONE, supportPad0: LANDING_SUPPORT });
   for (const [x, z] of [[40.9, -31.9], [37.1, -28.1]]) {
     addBox(scene, world, x, 6.2, z, .24, 1.55, .24, RUNE_COLORS[0],
       { shadow: false });
@@ -7446,8 +7453,10 @@ function buildSanctum(scene) {
   // and a molten stretch of the crypt, crossed by a narrow plank
   addLava(scene, world, -21, 0, 10, 11.3, -7.1);
   addBox(scene, world, -21, -5.65, 0, 10.5, 0.7, 3, 0x1a1428, { tex: 'rock', repeat: [3, 1] });
-  addRamp(scene, world, { axis: 'x', minX: -28.2, maxX: -26.2, minZ: -1.5, maxZ: 1.5, h0: -6, h1: -5.3, color: 0x1a1428 });
-  addRamp(scene, world, { axis: 'x', minX: -15.8, maxX: -13.8, minZ: -1.5, maxZ: 1.5, h0: -5.3, h1: -6, color: 0x1a1428 });
+  addRamp(scene, world, { axis: 'x', minX: -28.2, maxX: -26.2, minZ: -1.5, maxZ: 1.5,
+    h0: -6, h1: -5.3, color: 0x1a1428, supportPad1: LANDING_SUPPORT });
+  addRamp(scene, world, { axis: 'x', minX: -15.8, maxX: -13.8, minZ: -1.5, maxZ: 1.5,
+    h0: -5.3, h1: -6, color: 0x1a1428, supportPad0: LANDING_SUPPORT });
 
   // ambulatory braziers
   for (const [x, z] of [[47, 47], [-47, 47], [47, -47], [-47, -47]]) {
