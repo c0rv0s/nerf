@@ -942,7 +942,7 @@ export class Bot {
     // keep them swimming in place, so route out immediately instead of waiting
     // for drowning to become dangerous.
     let waterRecoveryGoal = null;
-    if (water && !wading) {
+    if (water && !wading && !water.underwaterArena) {
       waterRecoveryGoal = this._waterRecoveryGoal(water, dt);
       if (waterRecoveryGoal) wpTarget = waterRecoveryGoal;
     }
@@ -1125,7 +1125,7 @@ export class Bot {
     }
     if (vine) this._applyVineMotion(vine, dt, moveX, moveZ, wpTarget);
     else if (water && !wading) {
-      this._applyWaterMotion(water, dt);
+      this._applyWaterMotion(water, dt, wpTarget);
       // Open-ocean recovery: keep a real swim toward the ladder. Default water
       // drag otherwise leaves bots paddling forever far from the rig.
       if (water.openOcean && waterRecoveryGoal) {
@@ -1673,7 +1673,7 @@ export class Bot {
     return { x: ax / len, z: az / len };
   }
 
-  _applyWaterMotion(zone, dt) {
+  _applyWaterMotion(zone, dt, wpTarget = null) {
     if (zone.waterfall) {
       this.vel.y = THREE.MathUtils.damp(this.vel.y, -7 + this.world.gravity * dt, 12, dt);
       const fallDrag = Math.exp(-4.2 * dt);
@@ -1685,8 +1685,17 @@ export class Bot {
 
     const eyeY = this.pos.y + 1.55;
     let targetVy = eyeY < zone.surfaceY - 0.25 ? 1.05 : -0.25;
+    if (zone.underwaterArena) {
+      // Underwater arenas are intentional combat volumes, not hazards to
+      // escape horizontally. Dive toward the current route/loot/opponent, but
+      // spend the last part of the breath window swimming straight for air.
+      const desiredY = (this._drownT || 0) > 28
+        ? zone.surfaceY + 0.2
+        : (wpTarget?.y ?? this.target?.pos?.y ?? zone.surfaceY - 5);
+      targetVy = clamp((desiredY - this.pos.y) * 0.65, -4.2, 5.4);
+    }
     const nearSurface = eyeY > zone.surfaceY - 0.35;
-    if (nearSurface && (this.grounded || (this._waterHopT || 0) <= 0)) {
+    if (!zone.underwaterArena && nearSurface && (this.grounded || (this._waterHopT || 0) <= 0)) {
       targetVy = this.world.jumpVel * 0.72;
       this._waterHopT = 0.8;
     }

@@ -87,6 +87,13 @@ const MAPS = [
   { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },
   { id: 'tidebreaker', name: 'TIDEBREAKER', bounds: 82, spawns: [[-50, 14.2, -8], [-50, 14.2, 8], [-35, 8.2, -34], [-12, 8.2, 34], [18, 8.2, -34], [38, 8.2, 34], [49, 8.2, -18], [49, 8.2, 18]] },
+  // Bounds extend beyond the 120m shark line so authoritative multiplayer
+  // movement reaches the hazard instead of being clamped just before it.
+  { id: 'reef', name: 'SUNKEN REEF', secret: true, bounds: 150, spawns: [
+    [-72, -27.33, -24], [72, -35.86, 24], [-52, -39.88, 43], [50, -36.36, -44],
+    [-20, -34.86, -66], [23, -36.80, 67], [-13, -30.96, 15], [18, -37.67, -16],
+    [-47, -19.31, -19], [39, -22.03, 30], [0, -29.78, 54], [4, -25.57, -54],
+  ] },
   { id: 'prism', name: 'PRISM RUN', secret: true, bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
   { id: 'bloom', name: 'INFINITE BLOOM', secret: true, bounds: 48, spawns: [[-24, 0.1, -24], [24, 0.1, 24], [-24, 0.1, 24], [24, 0.1, -24], [0, 0.1, -27], [0, 0.1, 27], [-27, 0.1, 0], [27, 0.1, 0]] },
   // Mirrors buildSolarFlare FFA spawns. Bounds cover the sunward wing tip (~x97 / z-61).

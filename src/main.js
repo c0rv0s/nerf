@@ -1007,6 +1007,7 @@ function updateUnderwaterFx(dt, forceClear = false) {
       near: scene.fog.near,
       far: scene.fog.far,
     } : null;
+    G.baseBackground = scene.background?.isColor ? scene.background.clone() : null;
     G.baseFogCaptured = true;
   }
 
@@ -1019,6 +1020,9 @@ function updateUnderwaterFx(dt, forceClear = false) {
       } else {
         scene.fog = null;
       }
+      if (G.baseBackground && scene.background?.isColor) {
+        scene.background.copy(G.baseBackground);
+      }
       G.underwaterFogActive = false;
     }
     return;
@@ -1029,6 +1033,9 @@ function updateUnderwaterFx(dt, forceClear = false) {
     scene.fog.color.set(0x0a7aa0);
     scene.fog.near = THREE.MathUtils.lerp(G.baseFog?.near ?? 120, 5, mix);
     scene.fog.far = THREE.MathUtils.lerp(G.baseFog?.far ?? 340, 42, mix);
+    if (G.baseBackground && scene.background?.isColor) {
+      scene.background.copy(G.baseBackground).lerp(new THREE.Color(0x075d78), mix);
+    }
     G.underwaterFogActive = true;
   }
 }

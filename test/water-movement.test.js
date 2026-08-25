@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { waterSpeedMultiplier } from '../src/water-movement.js';
+import { waterSpeedMultiplier, waterVerticalInput } from '../src/water-movement.js';
 
 const characterAt = (y) => ({
   pos: { y },
@@ -24,4 +24,25 @@ test('fully underwater swimming only slows movement by 18%', () => {
 
 test('movement outside water is unchanged', () => {
   assert.equal(waterSpeedMultiplier(characterAt(0), null), 1);
+});
+
+test('Space swims up and Shift dives in ordinary underwater movement', () => {
+  assert.equal(waterVerticalInput({ Space: true }, {}, false), 'up');
+  assert.equal(waterVerticalInput({ ShiftLeft: true }, {}, false), 'down');
+  assert.equal(waterVerticalInput({ ShiftRight: true }, {}, false), 'down');
+  assert.equal(waterVerticalInput({}, {}, false), 'neutral');
+});
+
+test('Space wins when swim-up and dive are pressed together', () => {
+  assert.equal(waterVerticalInput({ Space: true, ShiftLeft: true }, {}, false), 'up');
+});
+
+test('Red Rock gallop reserves Shift instead of diving', () => {
+  assert.equal(waterVerticalInput({ ShiftLeft: true }, { mounted: true }, false), 'neutral');
+});
+
+test('an equipped Canopy grapple reserves Shift, but an unequipped one does not', () => {
+  const canopy = { grappleEnabled: true };
+  assert.equal(waterVerticalInput({ ShiftLeft: true }, canopy, true), 'neutral');
+  assert.equal(waterVerticalInput({ ShiftLeft: true }, canopy, false), 'down');
 });

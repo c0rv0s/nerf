@@ -17,6 +17,9 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY } from './engine.js';
 import { advanceNetworkClock } from './network-sync.js';
 import { shuffledToadPersonalities } from './toad-effects.js';
+import { buildBlueWhale } from './blue-whale.js';
+import { buildTidebreakerShark } from './tidebreaker-shark.js';
+import { addTidebreakerWhaleBehavior } from './tidebreaker-whale-behavior.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SURFACE_LAYER_EPS = 0.04;
@@ -127,6 +130,57 @@ function texRock() {
       const s = 2 + Math.random() * 9;
       g.fillRect(Math.random() * 128, Math.random() * 128, s, s);
     }
+  });
+}
+
+function texTurtleShell() {
+  return canvasTex('turtle-shell', (g) => {
+    // Broad, high-contrast scutes stay readable on the small low-poly turtle
+    // at combat distance. The stepped greens nod to block-built sea turtles
+    // while the irregular shield shapes keep this shell its own design.
+    g.fillStyle = '#24552f';
+    g.fillRect(0, 0, 128, 128);
+    const scute = (x, y, w, h, outer, inner) => {
+      g.fillStyle = outer;
+      g.strokeStyle = '#143c25';
+      g.lineWidth = 5;
+      g.beginPath();
+      g.moveTo(x + w * 0.22, y);
+      g.lineTo(x + w * 0.78, y);
+      g.lineTo(x + w, y + h * 0.28);
+      g.lineTo(x + w * 0.88, y + h * 0.82);
+      g.lineTo(x + w * 0.62, y + h);
+      g.lineTo(x + w * 0.26, y + h * 0.94);
+      g.lineTo(x, y + h * 0.56);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      g.fillStyle = inner;
+      g.beginPath();
+      g.moveTo(x + w * 0.3, y + h * 0.22);
+      g.lineTo(x + w * 0.7, y + h * 0.18);
+      g.lineTo(x + w * 0.79, y + h * 0.48);
+      g.lineTo(x + w * 0.65, y + h * 0.75);
+      g.lineTo(x + w * 0.34, y + h * 0.72);
+      g.lineTo(x + w * 0.2, y + h * 0.45);
+      g.closePath();
+      g.fill();
+    };
+    for (const [x, y, w, h, outer, inner] of [
+      [-8, -7, 45, 42, '#34763c', '#4c984a'],
+      [34, -5, 58, 45, '#3b8343', '#56a652'],
+      [89, -7, 47, 42, '#2f7139', '#438e45'],
+      [-14, 34, 52, 54, '#2f6f38', '#499348'],
+      [34, 37, 60, 55, '#438b45', '#67ac54'],
+      [91, 34, 51, 54, '#32763b', '#4a9849'],
+      [-9, 84, 46, 49, '#2d6b36', '#448b43'],
+      [34, 88, 58, 47, '#397d3f', '#58a04d'],
+      [89, 84, 47, 49, '#2e7038', '#469246'],
+    ]) scute(x, y, w, h, outer, inner);
+    // Small mottled pixels stop the broad panels reading as painted plastic.
+    g.fillStyle = 'rgba(205,239,120,.24)';
+    for (const [x, y, s] of [[18,18,5],[73,21,6],[108,54,4],[18,69,5],
+      [62,66,4],[84,106,6],[111,111,4],[22,109,5]]) g.fillRect(x, y, s, s);
   });
 }
 
@@ -268,6 +322,7 @@ const TEXES = {
   'fortress-floor': texFortressFloor,
   'fortress-deck': texFortressDeck,
   'solar-hull': texSolarHull,
+  'turtle-shell': texTurtleShell,
 };
 
 // ---- Web-optimized AI texture set (textures/*.webp) — canvas fallback if absent ----
@@ -286,6 +341,9 @@ const AI_TEX_SOURCES = {
   'power-gold': './textures/power-gold.webp',
   'power-silver': './textures/power-silver.webp',
   'atrium-gate-frame-atlas': './textures/atrium-gate-frame-atlas.webp',
+  'coral-brain-red': './textures/coral-brain-red.webp',
+  'coral-cup-blue': './textures/coral-cup-blue.webp',
+  'coral-plate-pink': './textures/coral-plate-pink.webp',
 };
 function makeNormalMap(img) {
   const size = 256;
@@ -344,6 +402,10 @@ const TEXTURE_NAMES = Object.freeze([
   'infinite-bloom-faces', 'infinite-bloom-sky-eyeless',
   'infinite-bloom-eye-atlas',
   'horse-coat', 'cactus-skin',
+  // Reef species textures must be in the actual load queue as well as the URL
+  // registry below. Without these entries mat() cannot find AI_TEX and falls
+  // back to texPanel, which is the white riveted material seen in screenshots.
+  'coral-brain-red', 'coral-cup-blue', 'coral-plate-pink',
 ]);
 const SHARED_TEXTURE_NAMES = new Set(TEXTURE_NAMES.slice(0, 24));
 const textureSettledResolvers = new Map();
@@ -1524,6 +1586,173 @@ function addFittedWater(scene, world, {
   );
 }
 
+function addAtriumUnderwaterChamber(scene, world) {
+  const chamberFloorY = -54;
+  const shaftHalfX = 7;
+  const shaftHalfZ = 5;
+  const chamber = new THREE.Group();
+  chamber.name = 'atrium-hidden-underwater-chamber';
+  scene.add(chamber);
+
+  const stone = mat(0x24485b, { tex: 'rock', repeat: [3, 3], roughness: 0.92 });
+  const shell = (x, y, z, w, h, d) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stone);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = mesh.receiveShadow = true;
+    chamber.add(mesh);
+    world.colliders.push({
+      type: 'box', min: V(x - w / 2, y - h / 2, z - d / 2),
+      max: V(x + w / 2, y + h / 2, z + d / 2),
+    });
+    return mesh;
+  };
+
+  // Square stone throat beneath the circular basin. The atrium slab is split
+  // around this opening in buildAtrium, so once its submerged lid retracts the
+  // descent is continuous player-controlled swimming rather than a teleport.
+  // End the throat immediately below the courtyard slab. Its original top
+  // extended into that slab from y=-1 to y=-0.18, putting identical inner
+  // faces on all four pool walls and causing the striped z-fighting revealed
+  // by the open hatch.
+  const throatBottomY = -39.2;
+  const throatTopY = -1.02;
+  const throatHeight = throatTopY - throatBottomY;
+  const throatCenterY = (throatTopY + throatBottomY) / 2;
+  shell(-shaftHalfX - 0.5, throatCenterY, 0, 1, throatHeight, shaftHalfZ * 2 + 2);
+  shell(shaftHalfX + 0.5, throatCenterY, 0, 1, throatHeight, shaftHalfZ * 2 + 2);
+  shell(0, throatCenterY, -shaftHalfZ - 0.5, shaftHalfX * 2, throatHeight, 1);
+  shell(0, throatCenterY, shaftHalfZ + 0.5, shaftHalfX * 2, throatHeight, 1);
+
+  // A broad flooded antechamber gives the descent somewhere physical to end.
+  // Its ceiling meets the shaft, while the southern gate sits comfortably
+  // above the coral-stone floor.
+  shell(0, chamberFloorY - 0.8, 0, 38, 1.6, 34);
+  shell(-19.2, chamberFloorY + 7, 0, 1.6, 15.6, 34);
+  shell(19.2, chamberFloorY + 7, 0, 1.6, 15.6, 34);
+  shell(0, chamberFloorY + 7, 17.2, 38, 15.6, 1.6);
+  // The portal is a proximity trigger, not a passage through this shell. Use
+  // one uninterrupted back wall and mount the gate in front of it, exactly as
+  // the Atrium does, so no wall edge or sky seam can show beside the frame.
+  shell(0, chamberFloorY + 7, -17.2, 38, 15.6, 1.6);
+  shell(-13, chamberFloorY + 14.2, 0, 12, 1.2, 34);
+  shell(13, chamberFloorY + 14.2, 0, 12, 1.2, 34);
+  shell(0, chamberFloorY + 14.2, -11, 14, 1.2, 12);
+  shell(0, chamberFloorY + 14.2, 11, 14, 1.2, 12);
+
+  const gateY = chamberFloorY + 3.7;
+  addAtriumGateBrickFrame(scene, world, 'tidebreaker', 0x49e6d0,
+    0, -16.35, true, chamberFloorY, chamber);
+  addMagicPortal(scene, world, 0, gateY, -16.18, 7.8, 7.8,
+    0x49e6d0, 0, chamber);
+  const marquee = addAtriumMarquee(scene, 'tidebreaker', 'SUNKEN REEF', 0x49e6d0,
+    0, chamberFloorY + 10.45, -16.3, 0, 16.5);
+  chamber.add(marquee);
+  world.portals.push({
+    x: 0, y: chamberFloorY + 1, z: -14.8,
+    radius: 2.8, heightRadius: 5.5, map: 'reef', name: 'SUNKEN REEF',
+  });
+
+  const chamberGlow = new THREE.PointLight(0x43e4d2, 28, 44);
+  chamberGlow.position.set(0, chamberFloorY + 8, -7);
+  chamber.add(chamberGlow);
+  for (const [x, z, color] of [
+    [-13, -7, 0xff6d82], [13, -5, 0xffb44a], [-10, 8, 0x8d65ff], [11, 9, 0x48e0a4],
+  ]) {
+    const coral = new THREE.Group();
+    coral.position.set(x, chamberFloorY, z);
+    for (let i = 0; i < 4; i++) {
+      const branch = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.34, 2.4 + i * 0.45, 6),
+        mat(color, { roughness: 0.82, emissive: color, emissiveIntensity: 0.12 }),
+      );
+      branch.position.set((i - 1.5) * 0.45, 1.2 + i * 0.22, Math.sin(i * 2.2) * 0.35);
+      branch.rotation.z = (i - 1.5) * -0.13;
+      coral.add(branch);
+    }
+    chamber.add(coral);
+  }
+
+  // The shaft owns the only surface-height water zone. The wider chamber uses
+  // a lower virtual surface so players walking across the atrium above it are
+  // never incorrectly treated as swimming.
+  world.waterZones.push({
+    minX: -19, maxX: 19, minZ: -17, maxZ: 17,
+    surfaceY: chamberFloorY + 14, bottomY: chamberFloorY - 1.8,
+  });
+
+  // The entire visible basin floor is one moving lid. Closed, it completely
+  // conceals the full-pool shaft and its stone throat; triggered, it slides
+  // beneath the east courtyard slab for a few seconds before returning.
+  const basinFloorWidth = 14;
+  const basinFloorDepth = 10;
+  const basinFloorY = -0.15;
+  const hatchCollider = {
+    type: 'box', dynamic: true,
+    min: V(-basinFloorWidth / 2, -0.26, -basinFloorDepth / 2),
+    max: V(basinFloorWidth / 2, -0.04, basinFloorDepth / 2),
+  };
+  world.colliders.push(hatchCollider);
+  const hatch = new THREE.Mesh(
+    new THREE.BoxGeometry(basinFloorWidth, 0.22, basinFloorDepth),
+    mat(0x3c5365, { tex: 'panel', repeat: [3, 2], roughness: 0.62, metalness: 0.18 }),
+  );
+  hatch.position.set(0, basinFloorY, 0);
+  hatch.castShadow = hatch.receiveShadow = true;
+  scene.add(hatch);
+
+  // Mirror the south lawn plate on the north side of the fountain.
+  const plateBase = addBox(scene, world, 0, 0.19, -12, 5.4, 0.18, 3.6, 0x33445c, {
+    collide: false, emissive: 0x10263c, emissiveIntensity: 0.35,
+  });
+  const plateGrass = addBox(scene, world, 0, 0.305, -12, 5, 0.08, 3.2, 0x4d8e3f, {
+    tex: 'atrium-grass', repeat: [1, 1], collide: false, shadow: false,
+    emissive: 0x102808, emissiveIntensity: 0.12,
+  });
+  for (const x of [-2.38, 2.38]) for (const z of [-13.52, -10.48]) {
+    addBox(scene, world, x, 0.37, z, 0.22, 0.12, 0.22, 0x49e6d0, {
+      collide: false, shadow: false, emissive: 0x167a70, emissiveIntensity: 1.2,
+    });
+  }
+
+  const mechanism = {
+    phase: 'closed', progress: 0, openTimer: 0, plateArmed: true,
+    plate: { x: 0, z: -12, radius: 2.35 },
+  };
+  world.reefFountainMechanism = mechanism;
+  world.anim.push((dt, _t, characters = []) => {
+    const player = characters.find(ch => ch.isPlayer && ch.alive);
+    const onPlate = !!player && Math.abs(player.pos.y) < 2 &&
+      Math.hypot(player.pos.x, player.pos.z + 12) < mechanism.plate.radius;
+    if (!onPlate && mechanism.phase === 'closed') mechanism.plateArmed = true;
+    if (mechanism.phase === 'closed' && mechanism.plateArmed && onPlate) {
+      mechanism.phase = 'opening';
+      mechanism.plateArmed = false;
+      world.onSecretFountainReveal?.();
+    }
+    if (mechanism.phase === 'opening') {
+      mechanism.progress = Math.min(1, mechanism.progress + dt * 0.9);
+      if (mechanism.progress >= 1) {
+        mechanism.phase = 'open';
+        mechanism.openTimer = 4;
+      }
+    } else if (mechanism.phase === 'open') {
+      mechanism.openTimer -= dt;
+      if (mechanism.openTimer <= 0) mechanism.phase = 'closing';
+    } else if (mechanism.phase === 'closing') {
+      mechanism.progress = Math.max(0, mechanism.progress - dt * 0.72);
+      if (mechanism.progress <= 0) mechanism.phase = 'closed';
+    }
+    const p = mechanism.progress;
+    const eased = p * p * (3 - 2 * p);
+    const floorX = eased * 16.5;
+    hatch.position.x = floorX;
+    hatchCollider.min.x = floorX - basinFloorWidth / 2;
+    hatchCollider.max.x = floorX + basinFloorWidth / 2;
+    plateBase.position.y = 0.19 - eased * 0.1;
+    plateGrass.position.y = 0.305 - eased * 0.1;
+  });
+}
+
 function addAtriumFountain(scene, world, x, z) {
   const root = new THREE.Group();
   root.position.set(x, 0, z);
@@ -1834,7 +2063,10 @@ function addAtriumSecretObservatory(scene, world, fountain) {
 
     const p = mechanism.progress;
     const eased = p * p * (3 - 2 * p);
-    fountain.rotation.z = eased * Math.PI;
+    // Stop just shy of a perfectly flat 180-degree fold. At exactly PI the
+    // fountain's side faces become coplanar with the pool-side geometry and
+    // z-fight; 98% remains visually retracted without sharing that plane.
+    fountain.rotation.z = eased * Math.PI * 0.98;
     fountain.position.y = -0.35 * eased;
     plateBase.position.y = 0.19 - eased * 0.1;
     plateGrass.position.y = 0.305 - eased * 0.1;
@@ -8930,12 +9162,12 @@ function addAtriumControlsSign(scene, world, x, y, z, yaw) {
   const front = paintFace('CONTROLS', [
     'WASD — move',
     'Mouse — aim + shoot',
-    'Space — jump',
+    'Space — jump / swim up',
     '1–9 / wheel — weapons',
     'Tab — scoreboard',
     'F — fullscreen',
     'Esc — pause',
-    '',
+    'Shift — dive / map ability',
     'Walk into a gate to play!',
     "I'm open source — shoot me to view",
   ], true);
@@ -10116,15 +10348,19 @@ function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz, baseY =
 }
 
 export function buildAtrium(scene) {
-  const world = newWorld({ killY: -30, playerSpeed: 12.5 });
+  const world = newWorld({ killY: -75, playerSpeed: 12.5 });
   scene.background = new THREE.Color(0xd99cb0);
   scene.fog = new THREE.Fog(0xd99cb0, 120, 340);
   baseLighting(scene, 0xffe0c8, 0x8a6a90, [-40, 80, 30], 90);
 
   addAtriumSkyDome(scene);
 
-  // courtyard floor + perimeter (inner faces at x ±32, z ±48)
-  addBox(scene, world, 0, -0.5, 0, 64, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [8, 12] });
+  // Courtyard floor, split around the full 14×10 fountain basin. Its one-piece
+  // submerged floor seals this entire footprint until the north plate retracts it.
+  addBox(scene, world, -19.5, -0.5, 0, 25, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [4, 12] });
+  addBox(scene, world, 19.5, -0.5, 0, 25, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [4, 12] });
+  addBox(scene, world, 0, -0.5, -26.5, 14, 1, 43, 0x8a8598, { tex: 'neonfloor', repeat: [2, 6] });
+  addBox(scene, world, 0, -0.5, 26.5, 14, 1, 43, 0x8a8598, { tex: 'neonfloor', repeat: [2, 6] });
   addBox(scene, world, 0, 6, -49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
   addBox(scene, world, 0, 6, 49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
   addBox(scene, world, -33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
@@ -10141,7 +10377,7 @@ export function buildAtrium(scene) {
   addBox(scene, world, -8, 0.45, 0, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
   addBox(scene, world, 8, 0.45, 0, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
   addFittedWater(scene, world, {
-    minX: -7, maxX: 7, minZ: -5, maxZ: 5, y: 0.55,
+    minX: -7, maxX: 7, minZ: -5, maxZ: 5, y: 0.55, depth: 58,
   });
   const fountain = addAtriumFountain(scene, world, 0, 0);
 
@@ -10193,6 +10429,7 @@ export function buildAtrium(scene) {
     else world.portals.push({ ...trigger, map: id, name });
   }
   addAtriumSecretObservatory(scene, world, fountain);
+  addAtriumUnderwaterChamber(scene, world);
 
   // Flower borders flank both halves of the boulevard without running beneath
   // the centered fountain.
@@ -18731,6 +18968,902 @@ function buildMyceliumGrove(scene) {
   return world;
 }
 
+/* ================= SECRET MAP — SUNKEN REEF =================
+   A fully swimmable coral basin with a breathable surface above it. The inner
+   seabed is a real heightfield of ridges, trenches, shelves, and bowls; beyond
+   it the bottom and water continue into fog while boundary sharks intercept
+   anyone trying to reach the unseen physical edge. */
+function reefSurfaceY(x, z) {
+  const r = Math.hypot(x, z);
+  const mound = (cx, cz, height, spread) => {
+    const dx = x - cx, dz = z - cz;
+    return height * Math.exp(-(dx * dx + dz * dz) / spread);
+  };
+  let y = -39;
+  y += mound(-48, -18, 18, 920);
+  y += mound(43, 30, 15, 760);
+  y += mound(8, -55, 13, 620);
+  y += mound(-12, 48, 10, 520);
+  y += mound(0, 0, 8, 1350);
+  y -= mound(27, -12, 8, 360);      // east trench
+  y -= mound(-28, 34, 5.5, 300);    // north bowl
+  y += Math.sin(x * 0.105) * Math.cos(z * 0.087) * 1.7;
+  y += Math.sin((x + z) * 0.052) * 1.25;
+  const edgeFade = THREE.MathUtils.smoothstep(r, 92, 126);
+  return THREE.MathUtils.lerp(THREE.MathUtils.clamp(y, -43.5, -17.5), -44.5, edgeFade);
+}
+
+function reefGroundRangeUnder(x, z, halfWidth, halfDepth) {
+  let low = Infinity;
+  let high = -Infinity;
+  // Match the heightfield's faceted variation more safely than one center
+  // sample. Corners, edges, and interior points catch a hill falling away
+  // beneath one side of a wide coral base.
+  for (const ux of [-1, -0.5, 0, 0.5, 1]) {
+    for (const uz of [-1, -0.5, 0, 0.5, 1]) {
+      const ground = reefSurfaceY(x + ux * halfWidth, z + uz * halfDepth);
+      low = Math.min(low, ground);
+      high = Math.max(high, ground);
+    }
+  }
+  return { low, high };
+}
+
+const reefGrowthMaterials = [
+  mat(0x2e8f62, { roughness: 0.9, side: THREE.DoubleSide }),
+  mat(0x52b16f, { roughness: 0.88, side: THREE.DoubleSide }),
+  mat(0x7a9e42, { roughness: 0.92, side: THREE.DoubleSide }),
+  mat(0x279488, { roughness: 0.86, side: THREE.DoubleSide }),
+];
+
+function addReefFrondCluster(scene, world, x, y, z, seed, scale = 1, tilt = 0) {
+  const rnd = seededRandom(seed);
+  const root = new THREE.Group();
+  root.position.set(x, y, z);
+  root.rotation.z = tilt;
+  const frondCount = 3 + Math.floor(rnd() * 4);
+  const geometries = [];
+  for (let i = 0; i < frondCount; i++) {
+    const height = scale * (1.1 + rnd() * 2.5);
+    const leanX = (rnd() - 0.5) * height * 0.42;
+    const leanZ = (rnd() - 0.5) * height * 0.42;
+    const baseX = (rnd() - 0.5) * scale * 0.75;
+    const baseZ = (rnd() - 0.5) * scale * 0.75;
+    const curve = new THREE.CatmullRomCurve3([
+      V(baseX, 0, baseZ),
+      V(baseX + leanX * 0.18, height * 0.34, baseZ + leanZ * 0.12),
+      V(baseX - leanX * 0.12, height * 0.68, baseZ + leanZ * 0.66),
+      V(baseX + leanX, height, baseZ + leanZ),
+    ]);
+    geometries.push(new THREE.TubeGeometry(
+      curve, 7, scale * (0.055 + rnd() * 0.055), 4, false,
+    ));
+    // A small fork makes each cluster read as leafy reef growth rather than a
+    // bundle of smooth drinking straws.
+    if (i % 2 === 0) {
+      const fork = new THREE.ConeGeometry(scale * 0.12, height * 0.34, 4);
+      fork.rotateZ((rnd() - 0.5) * 0.9);
+      fork.translate(baseX + leanX * 0.25, height * 0.6, baseZ + leanZ * 0.3);
+      geometries.push(fork);
+    }
+  }
+  const merged = mergeGeometries(geometries, false);
+  const growthMesh = new THREE.Mesh(
+    merged,
+    reefGrowthMaterials[Math.floor(Math.abs(seed)) % reefGrowthMaterials.length],
+  );
+  growthMesh.castShadow = true;
+  root.add(growthMesh);
+  geometries.forEach(geometry => geometry.dispose());
+  scene.add(root);
+  (world.reefGrowthClusters ||= []).push({
+    root, baseX: root.rotation.x, baseZ: root.rotation.z,
+    phase: rnd() * Math.PI * 2, sway: 0.018 + rnd() * 0.025,
+  });
+  return root;
+}
+
+function addReefCoralSegment(scene, world, start, end, radius, color, texture, name) {
+  const delta = end.clone().sub(start);
+  const length = delta.length();
+  if (length < 0.1) return null;
+  const geometry = new THREE.CylinderGeometry(radius * 0.78, radius, length, 6, 1, false);
+  geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(
+    V(0, 1, 0), delta.clone().normalize(),
+  ));
+  geometry.translate(
+    (start.x + end.x) * 0.5,
+    (start.y + end.y) * 0.5,
+    (start.z + end.z) * 0.5,
+  );
+  const tint = new THREE.Color(color);
+  if (texture) tint.lerp(new THREE.Color(0xffffff), 0.82);
+  const mesh = new THREE.Mesh(geometry, mat(tint.getHex(), {
+    tex: texture || 'rock', repeat: [Math.max(1, length / 5), 1],
+    roughness: 0.96, flatShading: true,
+  }));
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.name = name;
+  scene.add(mesh);
+  mesh.updateMatrixWorld(true);
+  world.colliders.push(triangleMeshColliderFromMesh(mesh, name));
+  return mesh;
+}
+
+function addReefCoralCrown(scene, world, x, baseY, z, color, texture, scale, seed, type) {
+  const rnd = seededRandom(seed);
+  const angle = rnd() * Math.PI * 2;
+  const dir = V(Math.cos(angle), 0, Math.sin(angle));
+  const side = V(-dir.z, 0, dir.x);
+  const anchorOffset = type === 'arch' ? (rnd() < 0.5 ? -5 : 5) * scale : 0;
+  const anchor = V(x + anchorOffset, baseY + (type === 'shelves' ? 7.2 : 6.5) * scale, z);
+  const elbow = anchor.clone()
+    .addScaledVector(dir, (4.2 + rnd() * 2.2) * scale)
+    .add(V(0, (2.2 + rnd() * 1.8) * scale, 0));
+  addReefCoralSegment(scene, world, anchor, elbow, 1.15 * scale, color, texture,
+    'sunken-reef-coral-primary-branch');
+
+  const tips = [
+    elbow.clone().addScaledVector(dir, (2.8 + rnd() * 2.1) * scale)
+      .addScaledVector(side, (1.8 + rnd() * 1.5) * scale).add(V(0, 2.7 * scale, 0)),
+    elbow.clone().addScaledVector(dir, (2.3 + rnd() * 1.7) * scale)
+      .addScaledVector(side, -(2 + rnd() * 1.4) * scale).add(V(0, 2.1 * scale, 0)),
+    elbow.clone().addScaledVector(dir, (1.2 + rnd() * 1.5) * scale)
+      .add(V(0, 4.3 * scale, 0)),
+  ];
+  for (let i = 0; i < tips.length; i++) {
+    addReefCoralSegment(scene, world, elbow, tips[i], (0.68 - i * 0.08) * scale,
+      color, texture, 'sunken-reef-coral-fork');
+    addReefFrondCluster(scene, world, tips[i].x, tips[i].y, tips[i].z,
+      seed + 110 + i * 19, 0.38 + scale * 0.22);
+  }
+
+  // Larger colonies receive a second, lower fork on the opposite face so the
+  // silhouette branches in more than one plane when approached from below.
+  if (scale >= 1.02) {
+    const lowerAnchor = anchor.clone().addScaledVector(side, -1.5 * scale).add(V(0, -1.4 * scale, 0));
+    const lowerElbow = lowerAnchor.clone().addScaledVector(dir, -4.2 * scale)
+      .addScaledVector(side, 1.5 * scale).add(V(0, 1.4 * scale, 0));
+    const lowerTip = lowerElbow.clone().addScaledVector(dir, -2.5 * scale)
+      .addScaledVector(side, -2.4 * scale).add(V(0, 2.3 * scale, 0));
+    addReefCoralSegment(scene, world, lowerAnchor, lowerElbow, 0.9 * scale,
+      color, texture, 'sunken-reef-coral-secondary-branch');
+    addReefCoralSegment(scene, world, lowerElbow, lowerTip, 0.58 * scale,
+      color, texture, 'sunken-reef-coral-secondary-fork');
+    addReefFrondCluster(scene, world, lowerTip.x, lowerTip.y, lowerTip.z,
+      seed + 207, 0.42 + scale * 0.18);
+  }
+}
+
+function addBlockyReefFormation(scene, world, x, z, color, type = 'bommie', scale = 1, texture = null) {
+  const baseY = reefSurfaceY(x, z) - 0.35;
+  const blocks = [];
+  if (type === 'arch') blocks.push(
+    [-5, 3, 0, 4, 7, 5], [5, 3, 0, 4, 7, 5],
+    [-5, 8.5, 0, 4, 4, 5], [5, 8.5, 0, 4, 4, 5], [0, 11, 0, 7, 4, 5],
+    [-7, 2, 2.5, 3, 4, 3], [7, 2, -2.5, 3, 5, 3],
+  );
+  else if (type === 'shelves') blocks.push(
+    [0, 2, 0, 7, 5, 7], [0, 6, 0, 5, 4, 5], [0, 10, 0, 3, 5, 3],
+    [5, 4, 0, 5, 3, 5], [-5, 7, 0, 5, 3, 5], [0, 8, 5, 5, 3, 5],
+  );
+  else if (type === 'maze') blocks.push(
+    [-5, 2, -4, 4, 5, 4], [0, 3, -4, 6, 7, 4], [5, 5, -4, 4, 11, 4],
+    [-5, 5, 2, 4, 11, 4], [0, 2, 4, 6, 5, 4], [5, 3, 4, 4, 7, 4],
+    [-7, 2, 7, 3, 5, 3], [7, 2, -7, 3, 5, 3],
+  );
+  else blocks.push(
+    [0, 2, 0, 8, 5, 8], [0, 6, 0, 6, 4, 6], [0, 9.5, 0, 4, 4, 4],
+    [-5, 4, 1, 5, 4, 5], [5, 3, -1, 5, 4, 5], [-2, 7, 5, 4, 4, 4],
+  );
+  for (let i = 0; i < blocks.length; i++) {
+    const [dx, dy, dz, w, h, d] = blocks[i];
+    // Generated coral maps carry their own strong species color. Keep vertex
+    // tint close to white so the surface art stays intact, while retaining a
+    // little block-to-block variation across each formation.
+    const tintColor = new THREE.Color(color);
+    if (texture) tintColor.lerp(new THREE.Color(0xffffff), 0.82);
+    const tint = tintColor.offsetHSL(0, 0, (i % 3 - 1) * 0.035).getHex();
+    const blockX = x + dx * scale;
+    const blockZ = z + dz * scale;
+    let blockY = baseY + dy * scale;
+    let blockHeight = h * scale;
+    const localBottom = dy - h * 0.5;
+    if (localBottom <= 0.25) {
+      // Grounded blocks preserve their authored top while growing a buried
+      // root through the complete terrain footprint. This prevents a slope
+      // from exposing a floating square underside on any side of the colony.
+      const topY = blockY + blockHeight * 0.5;
+      const { low } = reefGroundRangeUnder(
+        blockX, blockZ, w * scale * 0.52, d * scale * 0.52,
+      );
+      const buriedBottomY = Math.min(blockY - blockHeight * 0.5, low - Math.max(1.2, scale * 1.5));
+      blockHeight = topY - buriedBottomY;
+      blockY = (topY + buriedBottomY) * 0.5;
+    }
+    addBox(scene, world, blockX, blockY, blockZ,
+      w * scale, blockHeight, d * scale, tint, {
+        tex: texture || 'rock', roughness: 0.96, debugName: `reef-${type}-${x}-${z}-${i}`,
+      });
+    if (i % 2 === 0) {
+      addReefFrondCluster(
+        scene, world,
+        x + (dx + (i % 3 - 1) * w * 0.18) * scale,
+        baseY + (dy + h * 0.5) * scale + 0.04,
+        z + (dz + ((i + 1) % 3 - 1) * d * 0.18) * scale,
+        Math.abs(x * 193 + z * 977 + i * 71),
+        0.42 + scale * 0.28,
+      );
+    }
+  }
+  addReefCoralCrown(scene, world, x, baseY, z, color, texture, scale,
+    Math.abs(x * 271 + z * 619 + Math.round(scale * 100)), type);
+}
+
+function addReefCoralBridge(scene, world, from, to, color, texture, seed) {
+  const start = V(from[0], reefSurfaceY(from[0], from[1]) + 7.5, from[1]);
+  const end = V(to[0], reefSurfaceY(to[0], to[1]) + 8.2, to[1]);
+  const center = start.clone().lerp(end, 0.5).add(V(0, 5.5, 0));
+  const travel = end.clone().sub(start).setY(0).normalize();
+  const side = V(-travel.z, 0, travel.x);
+  const leftKnee = start.clone().lerp(center, 0.72).addScaledVector(side, 1.5);
+  const rightKnee = end.clone().lerp(center, 0.72).addScaledVector(side, -1.5);
+  const radius = 1.05;
+  addReefCoralSegment(scene, world, start, leftKnee, radius, color, texture,
+    'sunken-reef-connected-colony-branch');
+  addReefCoralSegment(scene, world, leftKnee, center, radius * 0.88, color, texture,
+    'sunken-reef-connected-colony-branch');
+  addReefCoralSegment(scene, world, center, rightKnee, radius * 0.88, color, texture,
+    'sunken-reef-connected-colony-branch');
+  addReefCoralSegment(scene, world, rightKnee, end, radius, color, texture,
+    'sunken-reef-connected-colony-branch');
+
+  // A small fork at the bridge crest keeps the connector organic and offers a
+  // recognizable high point without closing the broad swim-through below it.
+  const forkA = center.clone().addScaledVector(side, 4.2).add(V(0, 2.7, 0));
+  const forkB = center.clone().addScaledVector(side, -3.2).addScaledVector(travel, 1.4).add(V(0, 2.1, 0));
+  addReefCoralSegment(scene, world, center, forkA, 0.62, color, texture,
+    'sunken-reef-connected-colony-fork');
+  addReefCoralSegment(scene, world, center, forkB, 0.54, color, texture,
+    'sunken-reef-connected-colony-fork');
+  addReefFrondCluster(scene, world, center.x, center.y + radius * 0.8, center.z,
+    seed, 0.8);
+  addReefFrondCluster(scene, world, forkA.x, forkA.y, forkA.z, seed + 31, 0.62);
+}
+
+function addReefPlateCoral(scene, x, y, z, color, seed, scale = 1) {
+  const rnd = seededRandom(seed);
+  const root = new THREE.Group();
+  root.position.set(x, y, z);
+  const material = mat(color, { roughness: 0.88, emissive: color, emissiveIntensity: 0.035 });
+  for (let i = 0; i < 3 + Math.floor(rnd() * 3); i++) {
+    const width = scale * (1.1 + rnd() * 1.8);
+    let height = scale * (0.45 + rnd() * 0.7);
+    const depth = scale * (1.1 + rnd() * 1.8);
+    const px = (rnd() - 0.5) * scale * 2.2;
+    const pz = (rnd() - 0.5) * scale * 2.2;
+    let py = scale * (0.35 + i * 0.7);
+    if (i === 0) {
+      const topY = y + py + height * 0.5;
+      const { low } = reefGroundRangeUnder(x + px, z + pz, width * 0.52, depth * 0.52);
+      const buriedBottomY = Math.min(y + py - height * 0.5, low - Math.max(0.4, scale * 0.55));
+      height = topY - buriedBottomY;
+      py = (topY + buriedBottomY) * 0.5 - y;
+    }
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+    plate.position.set(px, py, pz);
+    root.add(plate);
+  }
+  scene.add(root);
+}
+
+function createReefFish(kind, colors) {
+  const root = new THREE.Group();
+  const bodyMat = mat(colors[0], { roughness: 0.48, flatShading: true });
+  const finMat = mat(colors[1] ?? colors[0], { roughness: 0.55, flatShading: true, side: THREE.DoubleSide });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 7), bodyMat);
+  const proportions = {
+    minnow: [1.45, 0.48, 0.48], tang: [1.05, 0.85, 0.3], butterfly: [0.9, 1.05, 0.28],
+    parrot: [1.3, 0.62, 0.48], angel: [0.78, 1.22, 0.25],
+  }[kind] || [1.2, 0.65, 0.4];
+  body.scale.set(...proportions);
+  const tailGeo = new THREE.BufferGeometry();
+  tailGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.78, 0, 0, -1.45, 0.7, 0, -1.45, -0.7, 0,
+  ], 3));
+  tailGeo.computeVertexNormals();
+  const tailPivot = new THREE.Group();
+  tailPivot.position.x = -0.15;
+  tailPivot.add(new THREE.Mesh(tailGeo, finMat));
+  const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.15, 3), finMat);
+  dorsal.position.set(-0.05, 0.75, 0);
+  dorsal.rotation.z = kind === 'angel' ? 0.15 : 0.45;
+  dorsal.scale.z = 0.22;
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x07131a });
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 4), eyeMat);
+    eye.position.set(0.68, 0.18, side * (proportions[2] * 0.67));
+    root.add(eye);
+  }
+  root.add(body, tailPivot, dorsal);
+  root.userData.tailPivot = tailPivot;
+  return root;
+}
+
+function addReefFishLife(scene, world) {
+  const fish = [];
+  const species = [
+    { kind: 'minnow', colors: [0x9fd7c5, 0x69ab9f], count: 18, center: [-42, -8, -5], radius: 15, size: 0.42 },
+    { kind: 'minnow', colors: [0xffc95c, 0xff744d], count: 13, center: [38, -18, 31], radius: 12, size: 0.55 },
+    { kind: 'tang', colors: [0x247ee5, 0xffdd3f], count: 9, center: [9, -12, -48], radius: 10, size: 0.7 },
+    { kind: 'butterfly', colors: [0xffe66b, 0x272329], count: 7, center: [-50, -22, 42], radius: 9, size: 0.78 },
+  ];
+  let seed = 0;
+  for (const spec of species) {
+    for (let i = 0; i < spec.count; i++) {
+      const model = createReefFish(spec.kind, spec.colors);
+      const angle = i / spec.count * Math.PI * 2 + (i % 4) * 0.19;
+      model.scale.setScalar(spec.size * (0.78 + (i % 5) * 0.08));
+      scene.add(model);
+      fish.push({ model, spec, angle, lane: (i % 5 - 2) * 0.8, speed: 0.16 + (i % 4) * 0.018, seed: seed++ });
+    }
+  }
+  for (const [kind, colors, x, y, z, size, radius] of [
+    ['parrot', [0x36d9ba, 0xff6ca8], -12, -14, 30, 1.25, 18],
+    ['parrot', [0x55cf77, 0x4f6be8], 55, -9, -21, 1.1, 15],
+    ['angel', [0xf1f3f0, 0x151a23], -63, -17, -30, 1.15, 12],
+    ['angel', [0xff8acb, 0x7c4fd6], 25, -25, 8, 1.05, 14],
+  ]) {
+    const model = createReefFish(kind, colors);
+    model.scale.setScalar(size);
+    scene.add(model);
+    fish.push({ model, spec: { center: [x, y, z], radius }, angle: radius, lane: 0, speed: 0.07, seed: seed++ });
+  }
+  world.anim.push((_dt, t) => {
+    for (const f of fish) {
+      const a = f.angle + t * f.speed;
+      const [cx, cy, cz] = f.spec.center;
+      f.model.position.set(cx + Math.cos(a) * f.spec.radius, cy + f.lane + Math.sin(t * 0.7 + f.seed) * 0.7,
+        cz + Math.sin(a) * f.spec.radius * 0.65);
+      f.model.rotation.y = -a;
+      f.model.userData.tailPivot.rotation.y = Math.sin(t * 7.5 + f.seed) * 0.32;
+    }
+  });
+}
+
+function movingAnimalCollider(world, halfSize) {
+  const collider = { type: 'box', dynamic: true, min: V(), max: V(), debugName: 'reef-sea-life' };
+  world.colliders.push(collider);
+  return (position, active = true) => {
+    if (!active) {
+      collider.min.set(9000, 9000, 9000); collider.max.set(9001, 9001, 9001); return;
+    }
+    collider.min.copy(position).sub(halfSize);
+    collider.max.copy(position).add(halfSize);
+  };
+}
+
+function createSeaTurtle() {
+  const root = new THREE.Group();
+  root.name = 'sunken-reef-sea-turtle';
+  // A dark full shell closes the seam between the two visible halves. The
+  // patterned carapace sits slightly proud of it, while a smaller cream
+  // plastron leaves a green rim around the turtle when viewed from below.
+  const shellRim = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 8),
+    mat(0x244f31, { roughness: 0.9, flatShading: true }),
+  );
+  shellRim.scale.set(2.25, 0.62, 1.55);
+  shellRim.name = 'turtle-shell-rim';
+  const carapace = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.54),
+    mat(0xffffff, { tex: 'turtle-shell', repeat: [1, 2], roughness: 0.86, flatShading: true }),
+  );
+  carapace.scale.set(2.28, 0.65, 1.58);
+  carapace.position.y = 0.015;
+  carapace.name = 'turtle-patterned-carapace';
+  const belly = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 6, 0, Math.PI * 2, Math.PI * 0.47, Math.PI * 0.53),
+    mat(0xfff8e7, {
+      roughness: 0.94, flatShading: true,
+      emissive: 0xc9d8cc, emissiveIntensity: 0.38,
+    }),
+  );
+  belly.scale.set(2.08, 0.66, 1.4);
+  belly.position.y = -0.055;
+  belly.name = 'turtle-white-plastron';
+  const skin = mat(0x789b65, { roughness: 0.88, flatShading: true });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 9, 6), skin);
+  head.scale.set(1.2, 0.7, 0.75); head.position.x = 2.1;
+  const flippers = [];
+  for (const [x, z, yaw] of [[0.9, 1.55, -0.65], [0.9, -1.55, 0.65], [-1, 1.35, -2.35], [-1, -1.35, 2.35]]) {
+    const flipper = new THREE.Mesh(new THREE.ConeGeometry(0.55, 2.1, 4), skin);
+    flipper.rotation.z = -Math.PI / 2; flipper.rotation.y = yaw; flipper.position.set(x, -0.05, z);
+    root.add(flipper); flippers.push(flipper);
+  }
+  root.add(shellRim, carapace, belly, head);
+  root.userData.flippers = flippers;
+  return root;
+}
+
+function addReefLargeSeaLife(scene, world, boundaryRadius = 120) {
+  const turtles = [[-38, -11, 31, 16, 0], [51, -19, -36, 12, 2.1], [8, -8, 58, 14, 4.2]].map((spec, i) => {
+    const model = createSeaTurtle(); model.scale.setScalar(0.9 + i * 0.12); scene.add(model);
+    return { model, spec, updateCollider: movingAnimalCollider(world, V(2.7, 0.95, 2.7)) };
+  });
+  world.anim.push((_dt, t) => {
+    for (let i = 0; i < turtles.length; i++) {
+      const { model, spec, updateCollider } = turtles[i];
+      const [cx, cy, cz, radius, phase] = spec; const a = t * (0.075 + i * 0.012) + phase;
+      model.position.set(cx + Math.cos(a) * radius, cy + Math.sin(t * 0.4 + phase) * 1.2, cz + Math.sin(a) * radius * 0.65);
+      model.rotation.y = -a; model.rotation.z = Math.sin(t * 0.65 + phase) * 0.08;
+      for (let j = 0; j < 4; j++) model.userData.flippers[j].rotation.x = Math.sin(t * 2.1 + phase + j * 0.7) * 0.22;
+      updateCollider(model.position);
+    }
+  });
+
+  // Tidebreaker's exact whale model and cruise/rise/breach/dive state machine.
+  // Three moving volumes keep its head, body, and fluke solid underwater and
+  // during a breach instead of letting players pass through the scenic animal.
+  const whaleParts = buildBlueWhale();
+  const whale = whaleParts.group;
+  whale.name = 'sunken-reef-tidebreaker-whale';
+  const whaleColliders = [
+    { local: V(8, -0.2, 0), update: movingAnimalCollider(world, V(20, 7, 15)) },
+    { local: V(-3.5, -0.3, 0), update: movingAnimalCollider(world, V(19, 7, 14)) },
+    { local: V(-12.5, 0, 0), update: movingAnimalCollider(world, V(11, 4.5, 16)) },
+  ];
+  addTidebreakerWhaleBehavior(scene, world, whaleParts, {
+    surfaceY: 18,
+    boundaryRadius,
+    onUpdate: () => {
+      whale.updateMatrixWorld(true);
+      for (const collider of whaleColliders) {
+        collider.update(whale.localToWorld(collider.local.clone()));
+      }
+    },
+  });
+}
+
+function addReefBoundarySharks(scene, world, boundaryRadius = 120) {
+  const oceanSurfaceY = 18;
+  const oceanBottomY = -44.5;
+  const sharkStates = [0, 1, 2].map(i => {
+    const group = buildTidebreakerShark();
+    const angle = i * Math.PI * 2 / 3 + 0.45;
+    // The patrol is elliptical, so size its short Z axis beyond the trigger as
+    // well; none of the idle sharks cut visibly back into the playable reef.
+    const orbitRadius = boundaryRadius / 0.82 + 12 + i * 12;
+    group.position.set(
+      Math.cos(angle) * orbitRadius,
+      oceanSurfaceY - 8.5 - i * 2.4,
+      Math.sin(angle) * orbitRadius * 0.82,
+    );
+    scene.add(group);
+    return { group, orbitAngle: angle, orbitRadius, biteCooldown: 0, retreatT: 0 };
+  });
+  world.sharks = sharkStates.map(state => state.group);
+  let sharkTarget = null;
+  let sharkHunter = null;
+  let sharkAcquireT = 0;
+  const beyondReefBoundary = ch => ch?.alive &&
+    Math.hypot(ch.pos.x, ch.pos.z) > boundaryRadius &&
+    ch.pos.y < oceanSurfaceY + 0.35 && ch.pos.y > oceanBottomY;
+
+  world.anim.push((dt, t, characters = []) => {
+    const swimmers = characters.filter(beyondReefBoundary);
+    if (!sharkTarget || !beyondReefBoundary(sharkTarget)) {
+      sharkTarget = null;
+      sharkHunter = null;
+      sharkAcquireT = swimmers.length ? Math.max(0, sharkAcquireT || 0.7) : 0;
+    }
+    if (!sharkTarget && swimmers.length) {
+      sharkAcquireT -= dt;
+      if (sharkAcquireT <= 0) {
+        let bestDistance = Infinity;
+        for (const state of sharkStates) for (const swimmer of swimmers) {
+          const distance = state.group.position.distanceToSquared(swimmer.pos);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            sharkHunter = state;
+            sharkTarget = swimmer;
+          }
+        }
+        // Tidebreaker's urgency rule: a patrol on the far side re-enters at a
+        // fair 34-unit distance, but only after the boundary crossing delay.
+        if (sharkHunter && sharkTarget) {
+          const toHunter = sharkHunter.group.position.clone().sub(sharkTarget.pos);
+          toHunter.y = 0;
+          if (toHunter.length() > 38) {
+            if (toHunter.lengthSq() < 0.01) toHunter.set(1, 0, 0);
+            toHunter.normalize();
+            sharkHunter.group.position.set(
+              sharkTarget.pos.x + toHunter.x * 34,
+              THREE.MathUtils.clamp(sharkTarget.pos.y + 0.65, oceanBottomY + 2, oceanSurfaceY - 1.15),
+              sharkTarget.pos.z + toHunter.z * 34,
+            );
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < sharkStates.length; i++) {
+      const state = sharkStates[i];
+      state.biteCooldown = Math.max(0, state.biteCooldown - dt);
+      state.retreatT = Math.max(0, state.retreatT - dt);
+      const current = state.group.position;
+      const parts = state.group.userData.animParts;
+      const hunting = state === sharkHunter && !!sharkTarget;
+      const swimPhase = t * (hunting ? 10.5 : 5.4) + i * 1.9;
+      const tailTarget = Math.sin(swimPhase) * (hunting ? 0.52 : 0.32);
+      const pecStroke = Math.sin(swimPhase * 0.46) * (hunting ? 0.055 : 0.035);
+      parts.tail.rotation.y = THREE.MathUtils.damp(parts.tail.rotation.y, tailTarget, 12, dt);
+      parts.leftPec.rotation.x = THREE.MathUtils.damp(parts.leftPec.rotation.x, -0.045 + pecStroke, 7, dt);
+      parts.rightPec.rotation.x = THREE.MathUtils.damp(parts.rightPec.rotation.x, 0.045 - pecStroke, 7, dt);
+
+      const desired = V(0, 0, 0);
+      let speed = 6.5;
+      if (hunting) {
+        desired.set(
+          sharkTarget.pos.x,
+          THREE.MathUtils.clamp(sharkTarget.pos.y + 0.65, oceanBottomY + 2, oceanSurfaceY - 1.15),
+          sharkTarget.pos.z,
+        );
+        if (state.retreatT > 0) {
+          const away = current.clone().sub(sharkTarget.pos);
+          away.y = 0;
+          if (away.lengthSq() < 0.01) away.set(1, 0, 0);
+          away.normalize();
+          desired.set(current.x + away.x * 12, current.y, current.z + away.z * 12);
+          speed = 18;
+        } else {
+          speed = 21;
+        }
+      } else {
+        const angle = state.orbitAngle + t * (0.16 + i * 0.025);
+        desired.set(
+          Math.cos(angle) * state.orbitRadius,
+          oceanSurfaceY - 8.5 - i * 2.4 + Math.sin(t * 0.7 + i) * 0.45,
+          Math.sin(angle) * state.orbitRadius * 0.82,
+        );
+      }
+      const travel = desired.sub(current);
+      const distance = travel.length();
+      if (distance > 0.001) {
+        travel.multiplyScalar(Math.min(distance, speed * dt) / distance);
+        current.add(travel);
+        const flatSpeed = Math.hypot(travel.x, travel.z);
+        if (flatSpeed > 0.0001) {
+          const yaw = Math.atan2(-travel.z, travel.x);
+          state.group.rotation.y = THREE.MathUtils.lerp(state.group.rotation.y, yaw, 1 - Math.exp(-8 * dt));
+          state.group.rotation.z = THREE.MathUtils.lerp(
+            state.group.rotation.z,
+            THREE.MathUtils.clamp(-travel.y / flatSpeed, -0.28, 0.28),
+            1 - Math.exp(-5 * dt),
+          );
+        }
+      }
+      if (hunting && state.retreatT <= 0 && state.biteCooldown <= 0 &&
+          current.distanceTo(sharkTarget.pos) < 2.75) {
+        state.biteCooldown = 2;
+        state.retreatT = 0.72;
+        world.onSharkBite?.(sharkTarget, current);
+      }
+    }
+  });
+}
+
+function buildSunkenReef(scene) {
+  const world = newWorld({
+    killY: -92,
+    playerSpeed: 12,
+    waypointLinkDist: 26,
+    waypointLinkDy: 13,
+    waypointLinkClearance: 0.5,
+    toneMappingExposure: 1.08,
+  });
+  // Above the water this is a bright tropical day, intentionally far removed
+  // from the deep cyan underwater fog. Crossing the surface now reads at once.
+  scene.background = new THREE.Color(0xa5e4ef);
+  // Surface haze merges the water and sky well before the physical ocean
+  // geometry ends. Underwater fog is still replaced by the denser dive effect.
+  scene.fog = new THREE.Fog(0xa5e4ef, 80, 320);
+  scene.add(new THREE.HemisphereLight(0x8eeaf0, 0x082a32, 2.2));
+  scene.add(new THREE.AmbientLight(0x70c8cf, 0.46));
+  const sun = new THREE.DirectionalLight(0xc8ffff, 3.15);
+  sun.position.set(-80, 120, 45);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  Object.assign(sun.shadow.camera, {
+    left: -135, right: 135, top: 135, bottom: -135, near: 20, far: 310,
+  });
+  sun.shadow.bias = -0.0002;
+  sun.shadow.normalBias = 0.7;
+  scene.add(sun, sun.target);
+
+  // The surface and bottom extend far beyond fog. Players see a continuous
+  // ocean in every direction; the shark ring is the actual gameplay boundary.
+  addWater(scene, world, 0, 18, 0, 1650, 1650, 82, {
+    color: 0x1d8ba0, opacity: 0.66,
+  });
+  world.waterZones[0].underwaterArena = true;
+  // A luminous underside gives divers a clear ceiling to swim toward. The
+  // scattered rings read as wave caustics rather than a second solid roof.
+  const surfaceGlow = new THREE.Mesh(
+    new THREE.PlaneGeometry(1650, 1650),
+    new THREE.MeshBasicMaterial({ color: 0x5ce3ed, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  surfaceGlow.rotation.x = -Math.PI / 2;
+  surfaceGlow.position.y = 17.93;
+  surfaceGlow.name = 'sunken-reef-visible-water-surface-underside';
+  scene.add(surfaceGlow);
+  const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xd2ffff, transparent: true, opacity: 0.23, side: THREE.DoubleSide, depthWrite: false });
+  const surfaceRings = [];
+  for (let i = 0; i < 16; i++) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(5 + (i % 4) * 2.2, 5.45 + (i % 4) * 2.2, 32), ringMaterial);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(((i * 47) % 210) - 105, 17.88, ((i * 83) % 210) - 105);
+    ring.scale.set(1.8, 0.7 + (i % 3) * 0.2, 1);
+    scene.add(ring); surfaceRings.push(ring);
+  }
+  world.anim.push((_dt, t) => {
+    for (let i = 0; i < surfaceRings.length; i++) {
+      const pulse = 0.9 + Math.sin(t * 0.55 + i) * 0.12;
+      surfaceRings[i].scale.set(1.8 * pulse, (0.7 + (i % 3) * 0.2) * pulse, 1);
+    }
+  });
+
+  const seabedY = -44.5;
+  // Red Rock Range uses one uninterrupted desert beneath both its playable
+  // space and distant horizon. Build this seabed the same way: the sculpted
+  // center and four flat horizon extensions are non-overlapping pieces merged
+  // into one mesh with one material, so the shark trigger never coincides with
+  // a visible material, UV, or geometry boundary.
+  world.colliders.push({ type: 'box', min: V(-825, seabedY - 2, -825), max: V(825, seabedY, 825) });
+
+  // Dense inner heightfield: large authored masses create the routes while
+  // layered waves break up every local patch, avoiding a disguised flat bowl.
+  const terrainGeometry = new THREE.PlaneGeometry(260, 260, 42, 42);
+  terrainGeometry.rotateX(-Math.PI / 2);
+  const positions = terrainGeometry.attributes.position;
+  const colors = new Float32Array(positions.count * 3);
+  const deepSand = new THREE.Color(0x78957c);
+  const shelfSand = new THREE.Color(0x91aa82);
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i), z = positions.getZ(i);
+    const y = reefSurfaceY(x, z);
+    positions.setY(i, y);
+    const depth = THREE.MathUtils.clamp((y + 44) / 27, 0, 1);
+    const color = new THREE.Color().lerpColors(deepSand, shelfSand, depth);
+    colors.set([color.r, color.g, color.b], i * 3);
+  }
+  terrainGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  terrainGeometry.computeVertexNormals();
+
+  // Keep the detailed center as the exact walkable collider. The flat outer
+  // collider above already covers the horizon floor; visual geometry is merged
+  // separately below so collision cost does not grow with the 1650-unit floor.
+  const terrainColliderSource = new THREE.Mesh(terrainGeometry);
+  world.colliders.push(triangleMeshColliderFromMesh(terrainColliderSource, 'sunken-reef-heightfield'));
+
+  const addUniformColor = (geometry, color) => {
+    const count = geometry.getAttribute('position').count;
+    const values = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) values.set([color.r, color.g, color.b], i * 3);
+    geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
+    return geometry;
+  };
+  const horizonSpan = (1650 - 260) / 2;
+  const horizonCenter = 130 + horizonSpan / 2;
+  const horizonGeometries = [
+    [1650, horizonSpan, 0, horizonCenter],
+    [1650, horizonSpan, 0, -horizonCenter],
+    [horizonSpan, 260, horizonCenter, 0],
+    [horizonSpan, 260, -horizonCenter, 0],
+  ].map(([width, depth, x, z]) => {
+    const geometry = new THREE.PlaneGeometry(width, depth);
+    geometry.rotateX(-Math.PI / 2);
+    geometry.translate(x, seabedY, z);
+    return addUniformColor(geometry, deepSand);
+  });
+  const seabedGeometry = mergeGeometries([terrainGeometry, ...horizonGeometries], false);
+  const terrain = new THREE.Mesh(seabedGeometry, new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.97, metalness: 0, flatShading: true,
+  }));
+  terrain.castShadow = terrain.receiveShadow = true;
+  terrain.name = 'sunken-reef-continuous-seabed';
+  scene.add(terrain);
+
+  // Swim-through stone arches and towering bommies turn the vertical water
+  // column into combat space instead of leaving all geometry on the floor.
+  for (const [archIndex, [x, z, majorRadius, tubeRadius, yaw]] of [
+    [-48, -19, 10.5, 2.9, 0.18], [34, 33, 8.5, 2.5, -0.5], [5, -57, 7.2, 2.2, 0.72],
+  ].entries()) {
+    const archMaterial = mat(0x315651, {
+      tex: 'rock', repeat: [3, 2], roughness: 0.98, flatShading: true,
+    });
+    const crown = new THREE.Mesh(
+      new THREE.TorusGeometry(majorRadius, tubeRadius, 8, 28, Math.PI),
+      archMaterial,
+    );
+    const dx = Math.cos(yaw) * majorRadius;
+    const dz = -Math.sin(yaw) * majorRadius;
+    const feet = [[x - dx, z - dz], [x + dx, z + dz]];
+    const footprintRange = (fx, fz) => {
+      let low = Infinity;
+      let high = -Infinity;
+      const r = tubeRadius * 0.82;
+      for (const [ox, oz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r],
+        [r * 0.7, r * 0.7], [-r * 0.7, r * 0.7], [r * 0.7, -r * 0.7], [-r * 0.7, -r * 0.7]]) {
+        const ground = reefSurfaceY(fx + ox, fz + oz);
+        low = Math.min(low, ground);
+        high = Math.max(high, ground);
+      }
+      return { low, high };
+    };
+    const ranges = feet.map(([fx, fz]) => footprintRange(fx, fz));
+    // The crown is a separate curved third piece. Its two joints share one
+    // level, while straight legs independently continue through however much
+    // hill lies beneath them. Matching radius, facets, material, and overlap
+    // make the three meshes read as one uninterrupted stone arch.
+    const jointY = Math.max(ranges[0].high, ranges[1].high) + Math.max(4.2, tubeRadius * 1.7);
+    crown.position.set(x, jointY, z);
+    crown.rotation.y = yaw;
+    crown.castShadow = crown.receiveShadow = true;
+    scene.add(crown);
+    crown.updateMatrixWorld(true);
+    world.colliders.push(triangleMeshColliderFromMesh(crown, 'sunken-reef-stone-arch-crown'));
+
+    for (let side = 0; side < feet.length; side++) {
+      const [fx, fz] = feet[side];
+      const bottomY = ranges[side].low - tubeRadius * 1.35;
+      const topY = jointY + tubeRadius * 0.22;
+      const height = topY - bottomY;
+      const leg = new THREE.Mesh(
+        new THREE.CylinderGeometry(tubeRadius, tubeRadius, height, 8, 1, false),
+        archMaterial,
+      );
+      leg.position.set(fx, (topY + bottomY) * 0.5, fz);
+      leg.castShadow = leg.receiveShadow = true;
+      scene.add(leg);
+      leg.updateMatrixWorld(true);
+      world.colliders.push(triangleMeshColliderFromMesh(leg, 'sunken-reef-stone-arch-leg'));
+
+      const outward = side === 0 ? -1 : 1;
+      addReefFrondCluster(scene, world,
+        fx + Math.cos(yaw) * tubeRadius * outward,
+        ranges[side].high + tubeRadius * 0.45,
+        fz - Math.sin(yaw) * tubeRadius * outward,
+        51000 + archIndex * 101 + side * 17, 0.8 + tubeRadius * 0.12,
+        outward * 0.42);
+    }
+    addReefFrondCluster(scene, world, x, jointY + majorRadius + tubeRadius * 0.82, z,
+      52000 + archIndex * 97, 0.9 + tubeRadius * 0.1);
+  }
+  for (const [x, z, radius, sx, sy] of [
+    [58, -36, 10, 0.82, 1.55], [-66, 37, 9, 0.75, 1.7],
+    [13, 66, 8, 0.85, 1.45], [-4, -7, 7, 0.72, 1.35],
+  ]) {
+    const base = reefSurfaceY(x, z);
+    addAsteroid(scene, world, x, base + radius * sy * 0.34, z, radius, 0x315651, true, {
+      scaleX: sx, scaleY: sy, scaleZ: 0.78,
+      materialColor: 0x315651, roughness: 0.98,
+    });
+  }
+
+  // Major block-built reef heads form real cover, tunnels, and vertical lanes.
+  // Smaller plate coral decorates these routes without becoming the only reef.
+  const coralColors = [0xd95362, 0xe3a632, 0x7357cc, 0x2faf8a, 0xcf4b9e, 0x388bc1];
+  const reefFormations = [
+    [-73, 2, 0xd95362, 'arch', 1.18, 'coral-brain-red'],
+    [-30, -28, 0x388bc1, 'maze', 1.08, 'coral-cup-blue'],
+    [21, 35, 0x7357cc, 'shelves', 1.2, 'coral-plate-pink'],
+    [63, 18, 0xe3a632, 'arch', 1.0, null],
+    [55, -54, 0xcf4b9e, 'maze', 1.05, 'coral-plate-pink'],
+    [6, -23, 0x388bc1, 'arch', 0.9, 'coral-cup-blue'],
+    [-21, 59, 0x2faf8a, 'bommie', 1.25], [-64, -52, 0xe3a632, 'shelves', 1.08],
+    [79, -10, 0xd95362, 'bommie', 1.16, 'coral-brain-red'],
+    [4, 73, 0xcf4b9e, 'arch', 0.95, 'coral-plate-pink'],
+    [-7, 15, 0x7357cc, 'maze', 0.86, 'coral-cup-blue'],
+    [36, -4, 0x2faf8a, 'shelves', 0.92],
+    [-43, 22, 0xcf4b9e, 'shelves', 0.82, 'coral-plate-pink'],
+    [47, 55, 0xd95362, 'bommie', 0.88, 'coral-brain-red'],
+    [-84, -24, 0x388bc1, 'shelves', 0.78, 'coral-cup-blue'],
+    [72, 44, 0xe3a632, 'maze', 0.82, null],
+  ];
+  for (const [x, z, color, type, scale, texture] of reefFormations) {
+    addBlockyReefFormation(scene, world, x, z, color, type, scale, texture);
+  }
+  // Several colonies have grown into one another above the seabed. The
+  // elevated forked spans create swim-under cover and make neighboring reef
+  // heads read as a continuous living system rather than isolated props.
+  addReefCoralBridge(scene, world, [-30, -28], [6, -23], 0x388bc1, 'coral-cup-blue', 71001);
+  addReefCoralBridge(scene, world, [21, 35], [-7, 15], 0x7357cc, 'coral-plate-pink', 71043);
+  addReefCoralBridge(scene, world, [-21, 59], [4, 73], 0x2faf8a, null, 71087);
+  addReefCoralBridge(scene, world, [47, 55], [72, 44], 0xd95362, 'coral-brain-red', 71129);
+  const coralRnd = seededRandom(0xc0a1b33f);
+  for (let i = 0; i < 42; i++) {
+    const angle = coralRnd() * Math.PI * 2;
+    const radius = 13 + Math.sqrt(coralRnd()) * 95;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    addReefPlateCoral(scene, x, reefSurfaceY(x, z), z,
+      coralColors[i % coralColors.length], 8000 + i * 37, 0.45 + coralRnd() * 0.75);
+  }
+  // Loose growth fills the negative space between major reef heads. Uneven
+  // densities and sizes make it feel naturally colonized instead of placing a
+  // uniform decorative ring around every landmark.
+  const growthRnd = seededRandom(0x5ea5eed);
+  for (let i = 0; i < 92; i++) {
+    const angle = growthRnd() * Math.PI * 2;
+    const radius = 7 + Math.sqrt(growthRnd()) * 105;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    addReefFrondCluster(scene, world, x, reefSurfaceY(x, z) + 0.05, z,
+      62000 + i * 43, 0.35 + growthRnd() * 0.72);
+  }
+  world.anim.push((_dt, t) => {
+    for (const growth of world.reefGrowthClusters || []) {
+      growth.root.rotation.x = growth.baseX + Math.sin(t * 0.72 + growth.phase) * growth.sway * 0.55;
+      growth.root.rotation.z = growth.baseZ + Math.sin(t * 0.58 + growth.phase * 1.37) * growth.sway;
+    }
+  });
+  addReefFishLife(scene, world);
+  addReefLargeSeaLife(scene, world, 120);
+  addReefBoundarySharks(scene, world, 120);
+
+  const spawnXZ = [
+    [-72, -24], [72, 24], [-52, 43], [50, -44],
+    [-20, -66], [23, 67], [-13, 15], [18, -16],
+    [-47, -19], [39, 30], [0, 54], [4, -54],
+  ];
+  for (const [x, z] of spawnXZ) world.spawns.ffa.push(V(x, reefSurfaceY(x, z) + 0.3, z));
+  world.spawns.blue.push(...world.spawns.ffa.filter((_, i) => i % 2 === 0).map(v => v.clone()));
+  world.spawns.red.push(...world.spawns.ffa.filter((_, i) => i % 2 === 1).map(v => v.clone()));
+
+  const pickupSpecs = [
+    ['weapon', -54, -19, { weapon: 'scatter' }], ['ammo', -49, -14, { weapon: 'scatter' }],
+    ['weapon', 42, 29, { weapon: 'pulsar' }], ['ammo', 47, 34, { weapon: 'pulsar' }],
+    ['weapon', 7, -56, { weapon: 'zooka' }], ['ammo', 13, -51, { weapon: 'zooka' }],
+    ['weapon', -11, 49, { weapon: 'sidewinder' }], ['ammo', -17, 54, { weapon: 'sidewinder' }],
+    ['weapon', 24, -7, { weapon: 'parasite' }], ['ammo', 30, -11, { weapon: 'parasite' }],
+    ['weapon', -29, 29, { weapon: 'whomper' }], ['ammo', -34, 34, { weapon: 'whomper' }],
+    ['weapon', 64, -16, { weapon: 'hyper' }], ['ammo', 69, -11, { weapon: 'hyper' }],
+    ['health', -67, 28, {}], ['health', 67, -28, {}], ['health', -25, -57, {}],
+    ['health', 27, 58, {}], ['health', -6, 5, {}], ['health', 37, 10, {}],
+    ['speed', -41, 5, {}], ['speed', 45, -3, {}],
+    ['shield', 0, 36, {}], ['gold', -47, -19, {}], ['silver', 39, 30, {}],
+    ['star', 9, -60, { hidden: true }], ['star', -78, -42, { hidden: true }],
+    ['star', 73, 47, { hidden: true }], ['star', -4, 77, { hidden: true }],
+  ];
+  for (const [kind, x, z, extra] of pickupSpecs) {
+    // Every item is deliberately anchored to the seabed. Even the powerups
+    // require giving up surface air and swimming down to collect them.
+    pk(world, kind, x, reefSurfaceY(x, z) + 0.28, z, extra);
+  }
+
+  // Ground navigation follows the major terrain shelves. Bots can leave the
+  // graph vertically while swimming, but connected bottom routes keep loot and
+  // respawns reachable once they dive.
+  const waypointRings = [18, 43, 72, 98];
+  for (const radius of waypointRings) {
+    const count = radius < 30 ? 8 : radius < 60 ? 12 : 16;
+    for (let i = 0; i < count; i++) {
+      const a = i / count * Math.PI * 2;
+      const x = Math.cos(a) * radius, z = Math.sin(a) * radius;
+      wp(world, x, reefSurfaceY(x, z) + 0.35, z);
+    }
+  }
+  world.manualLinks.push(
+    [0, reefSurfaceY(0, 18), 18, 0, reefSurfaceY(0, 43), 43],
+    [43, reefSurfaceY(43, 0), 0, 72, reefSurfaceY(72, 0), 0],
+    [-43, reefSurfaceY(-43, 0), 0, -72, reefSurfaceY(-72, 0), 0],
+  );
+
+  mergeStatic(scene, world);
+  return world;
+}
+
 export const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', emoji: '🏟️',
     desc: 'Indoor labyrinth: crate maze, mezzanine, grand atrium with a floating gold platform, sunken basement.',
@@ -18759,6 +19892,9 @@ export const MAPS = [
   { id: 'tidebreaker', name: 'TIDEBREAKER', emoji: '🌊',
     desc: 'A storm-lashed offshore platform: floodable processing deck, evacuation catwalks, operations roof, crane lanes, and a siren-warned breaker that reshapes the fight.',
     thumb: 'linear-gradient(135deg,#071b28,#23788d 58%,#e86e2d)', build: buildTidebreaker },
+  { id: 'reef', name: 'SUNKEN REEF', emoji: '🩸', secret: true,
+    desc: 'An entirely underwater coral basin of trenches, caves, arches, and tall reef bommies. Surface for air, or gamble on seabed health packs while boundary sharks guard the endless ocean.',
+    thumb: 'linear-gradient(135deg,#052f3c,#15939b 48%,#ff7a82)', build: buildSunkenReef },
   { id: 'prism', name: 'PRISM RUN', emoji: '🌈', secret: true,
     desc: 'Inside a neon tesseract in deep space: walk every wall, floor and ceiling. Gravity always pulls to the nearest surface — you never fall out.',
     thumb: 'linear-gradient(135deg,#0b0518,#ff40e0)', build: buildPrism },

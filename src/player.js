@@ -5,7 +5,7 @@ import { moveCharacter, moveCharacterUp, cardinal, clamp, pointInZoneXZ } from '
 import { WEAPONS, WEAPON_FEEL, WEAPON_ORDER, buildBlaster, blasterSkin, updateBlasterSkin, updateWeaponWarmupVisual, nextLoadedWeaponAfter } from './weapons.js';
 import { sfx, startWhomperWarmup } from './audio.js';
 import { stepJetpack } from './jetpack.js';
-import { waterSpeedMultiplier } from './water-movement.js';
+import { waterSpeedMultiplier, waterVerticalInput } from './water-movement.js';
 import {
   applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
 } from './grapple.js';
@@ -697,7 +697,7 @@ export class Player {
       this.wantJump = false;
       this.coyote = 0;
     } else if (water) {
-      this._applyWaterMotion(water, dt);
+      this._applyWaterMotion(water, dt, speed);
       this.jumpBuffer = 0;
       this.wantJump = false;
       this.coyote = 0.04;
@@ -894,11 +894,18 @@ export class Player {
     this._airJumped = false;
   }
 
-  _applyWaterMotion(zone, dt) {
+  _applyWaterMotion(zone, dt, horizontalSwimSpeed) {
     const surface = zone.surfaceY;
     const eyeY = this.pos.y + this.eyeHeight;
     let targetVy = eyeY < surface - 0.25 ? 1.15 : -0.35;
-    if (this.keys['Space']) targetVy = eyeY < surface + 0.15 ? 5.6 : this.world.jumpVel * 0.78;
+    const verticalInput = waterVerticalInput(this.keys, this.world, this.grapple);
+    // Held Space is full swimming movement on the vertical axis. Reuse the
+    // exact horizontal speed already calculated for this frame, including the
+    // underwater multiplier and any active speed pickup.
+    if (verticalInput === 'up') targetVy = eyeY < surface + 0.15
+      ? horizontalSwimSpeed
+      : this.world.jumpVel * 0.78;
+    else if (verticalInput === 'down') targetVy = -5.6;
     else if (this._forwardInput() < -0.25) targetVy = -2.4;
     this.vel.y = THREE.MathUtils.damp(this.vel.y, targetVy + this.world.gravity * dt, 8, dt);
     const waterDrag = Math.exp(-2.8 * dt);
