@@ -4216,7 +4216,9 @@ function applyDamage(target, dmg, attacker, ctx = {}) {
   if (!target.alive || G.over) return;
   const rawDmg = dmg;
   if (attacker.isPlayer && attacker !== target) spawnDmgMarker(target, dmg);
-  const resolved = resolveShieldedDamage(target.hp, target.shield, dmg);
+  const resolved = resolveShieldedDamage(target.hp, target.shield, dmg, {
+    bypassShield: !!ctx.bypassShield,
+  });
   target.shield = resolved.shield;
   target.hp = resolved.hp;
   target.lastAttacker = attacker;  // getting shot reveals the shooter to bots
@@ -6322,7 +6324,7 @@ function step(dt) {
           ch._drownDamageT = (ch._drownDamageT || 0) + dt;
           while (ch._drownDamageT >= 1 && ch.alive) {
             ch._drownDamageT -= 1;
-            applyDamage(ch, 5, WATER);
+            applyDamage(ch, 5, WATER, { environmental: true, bypassShield: true });
           }
         } else {
           ch._drowning = false;

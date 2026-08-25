@@ -21,6 +21,15 @@ test('shield absorbs damage first without changing the displayed raw damage', ()
   });
 });
 
+test('drowning damage bypasses shield and goes straight to health', () => {
+  assert.deepEqual(resolveShieldedDamage(100, 75, 5, { bypassShield: true }), {
+    rawDamage: 5,
+    absorbed: 0,
+    shield: 75,
+    hp: 95,
+  });
+});
+
 test('Silver and Gold produce their authoritative damage multipliers', () => {
   assert.equal(damageMultiplierForPowerup({ kind: 'silver' }), 2);
   assert.equal(damageMultiplierForPowerup({ kind: 'gold' }), 3);
