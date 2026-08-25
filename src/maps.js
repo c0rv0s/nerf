@@ -6820,9 +6820,11 @@ function buildCity(scene) {
 // world on the first update tick — AFTER the waypoint graph is built — so
 // bot paths still link through the openings.
 function addDoor(scene, world, x, y, z, w, h, d, opts = {}) {
-  const gateColor = opts.color ?? 0x8a5fff;
-  const dmat = new THREE.MeshStandardMaterial({ color: opts.bodyColor ?? 0x8a80a8, roughness: 0.55, metalness: 0.35,
-    emissive: gateColor, emissiveIntensity: opts.runePhase == null ? 0.12 : 0.22 });
+  const dmat = new THREE.MeshStandardMaterial({
+    color: opts.bodyColor ?? opts.color ?? 0x8a80a8,
+    roughness: 0.55,
+    metalness: 0.35,
+  });
   const ai = AI_TEX.door;
   if (ai) {
     dmat.map = ai.map.clone();
@@ -6859,10 +6861,6 @@ function addDoor(scene, world, x, y, z, w, h, d, opts = {}) {
         dr.mesh.position.set(dr.x + ox, dr.y + dr.h / 2, dr.z + oz);
         dr.collider.min.set(dr.x - dr.w / 2 + ox, dr.y, dr.z - dr.d / 2 + oz);
         dr.collider.max.set(dr.x + dr.w / 2 + ox, dr.y + dr.h, dr.z + dr.d / 2 + oz);
-        if (dr.runePhase != null) {
-          const active = world.runePhase === dr.runePhase;
-          dr.material.emissiveIntensity = active ? 0.62 : 0.2;
-        }
       }
     };
   }
@@ -7079,7 +7077,9 @@ function buildSanctum(scene) {
   const world = newWorld({ killY: -25, waypointLinkDist: 20, waypointLinkDy: 4.6 });
   scene.background = new THREE.Color(0x0a0714);
   scene.fog = new THREE.Fog(0x0a0714, 70, 220);
-  baseLighting(scene, 0x8a7fb8, 0x1a1428, [40, 90, -30], 110);
+  // This is a sealed cavern: lava, runes, portals, and the engine are the
+  // only light sources. Global fill would make the enclosing rock read like
+  // an outdoor arena instead of letting those local glows reveal the maze.
   const STONE = 0x3e3358, FLOOR = 0x2c2440, DARK = 0x14101f;
   // Deliberately identical. Color-coded wings turned the labyrinth into a
   // compass; matching runes make every threshold feel plausibly familiar.
@@ -7142,8 +7142,8 @@ function buildSanctum(scene) {
     addBox(scene, world, 10, 3, 18 * s, 16, 6, 1.2, STONE, { tex: 'rock' });
     addBox(scene, world, 18 * s, 3, -10, 1.2, 6, 16, STONE, { tex: 'rock' });
     addBox(scene, world, 18 * s, 3, 10, 1.2, 6, 16, STONE, { tex: 'rock' });
-    addBox(scene, world, 0, 4.8, 18.8 * s, 24, 0.35, 0.25, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.4 });
-    addBox(scene, world, 18.8 * s, 4.8, 0, 0.25, 0.35, 24, 0x8a5fff, { collide: false, shadow: false, emissive: 0x8a5fff, emissiveIntensity: 1.4 });
+    addBox(scene, world, 0, 4.8, 18.8 * s, 24, 0.35, 0.25, 0x8a5fff, { collide: false, shadow: false });
+    addBox(scene, world, 18.8 * s, 4.8, 0, 0.25, 0.35, 24, 0x8a5fff, { collide: false, shadow: false });
   }
   // Broken ring dais leaves the lift shaft readable from every entrance.
   addBox(scene, world, 0, 0.3, 3.75, 10, 0.6, 2.5, DARK, { tex: 'panel' });
@@ -7204,11 +7204,11 @@ function buildSanctum(scene) {
   // Rail runs butt against their corner posts instead of intersecting them.
   for (const [x, z, w, d] of [[0, 12.1, 23.96, .14], [0, -12.1, 23.96, .14], [12.1, 0, .14, 23.96], [-12.1, 0, .14, 23.96]]) {
     addBox(scene, world, x, 6.15, z, w, 1.35, d, 0x8a5fff,
-      { shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.58 });
+      { shadow: false });
   }
   for (const [x, z] of [[12.1, 12.1], [-12.1, 12.1], [12.1, -12.1], [-12.1, -12.1]]) {
     addBox(scene, world, x, 6.2, z, 0.24, 1.55, 0.24, 0xc9b4ff,
-      { shadow: false, emissive: 0x8a5fff, emissiveIntensity: 0.7 });
+      { shadow: false });
   }
   addRamp(scene, world, { axis: 'z', minX: -2, maxX: 2, minZ: 15.5, maxZ: 26.5,
     h0: 5.45, h1: 6.5, color: STONE });
@@ -7309,7 +7309,7 @@ function buildSanctum(scene) {
       const p = rotateWing(cx, cz, yaw, lx, lz);
       addBox(scene, world, p.x, h / 2, p.z, 2.2, h, 2.2, STONE, { tex: 'rock' });
       addBox(scene, world, p.x, h + 0.14, p.z, 2.45, 0.16, 2.45, RUNE_COLORS[wing], {
-        collide: false, shadow: false, emissive: RUNE_COLORS[wing], emissiveIntensity: 0.82,
+        collide: false, shadow: false,
       });
     }
     for (const lx of [-3.7, 3.7]) {
@@ -7328,7 +7328,7 @@ function buildSanctum(scene) {
   // Rail endpoints meet two corner posts exactly; no rail volumes overlap.
   for (const [x, z] of [[-40.9, 31.9], [-37.1, 28.1]]) {
     addBox(scene, world, x, 6.2, z, .24, 1.55, .24, RUNE_COLORS[3],
-      { shadow: false, emissive: RUNE_COLORS[3], emissiveIntensity: 0.52 });
+      { shadow: false });
   }
   for (const [x, z, w, d] of [
     [-40.9, 17.89, .12, 27.78],
@@ -7337,7 +7337,7 @@ function buildSanctum(scene) {
     [-28.89, 31.9, 23.78, .12],
   ]) {
     addBox(scene, world, x, 6.15, z, w, 1.35, d, RUNE_COLORS[3],
-      { shadow: false, emissive: RUNE_COLORS[3], emissiveIntensity: 0.52 });
+      { shadow: false });
   }
 
   // Exact rotational counterpart to the NW elevated shortcut: east balcony
@@ -7351,7 +7351,7 @@ function buildSanctum(scene) {
     h0: 6.5, h1: 5.5, color: STONE });
   for (const [x, z] of [[40.9, -31.9], [37.1, -28.1]]) {
     addBox(scene, world, x, 6.2, z, .24, 1.55, .24, RUNE_COLORS[0],
-      { shadow: false, emissive: RUNE_COLORS[0], emissiveIntensity: 0.52 });
+      { shadow: false });
   }
   for (const [x, z, w, d] of [
     [40.9, -17.89, .12, 27.78],
@@ -7360,7 +7360,7 @@ function buildSanctum(scene) {
     [28.89, -31.9, 23.78, .12],
   ]) {
     addBox(scene, world, x, 6.15, z, w, 1.35, d, RUNE_COLORS[0],
-      { shadow: false, emissive: RUNE_COLORS[0], emissiveIntensity: 0.52 });
+      { shadow: false });
   }
 
   // NE and SW used to be empty courts. Matching false-terminal shrines give
@@ -7389,7 +7389,7 @@ function buildSanctum(scene) {
         1.8, 4.2, 1.8, STONE, { tex: 'rock' });
       addBox(scene, world, portal.x + sx * 5.8, 4.32, portal.z - wallSide * 7.2,
         2.05, 0.18, 2.05, portalColor,
-        { collide: false, shadow: false, emissive: portalColor, emissiveIntensity: 0.82 });
+        { collide: false, shadow: false });
     }
     addBox(scene, world, portal.x, 0.75, portal.z - wallSide * 9.6,
       6.8, 1.5, 2.0, STONE, { tex: 'rock' });
@@ -7419,9 +7419,9 @@ function buildSanctum(scene) {
   addBox(scene, world, 0, 12.45, 0, 104, 0.9, 104, 0x241c38,
     { tex: 'rock', repeat: [12, 12], emissive: 0x2a1a4a, emissiveIntensity: 0.35, shadow: false });
 
-  // Matching rune gates occupy every constructed doorway. Their glow follows
-  // the engine's pulse, but all doors remain strictly proximity-driven to
-  // preserve occlusion and stop long-range shots through unattended openings.
+  // Matching rune gates occupy every constructed doorway. They remain dark
+  // architectural surfaces while opening strictly from proximity, preserving
+  // occlusion and stopping long-range shots through unattended openings.
   addDoor(scene, world, 0, 0, 26.6, 4.2, 5.9, 1.4, { color: RUNE_COLORS[0], runePhase: 0 });
   addDoor(scene, world, 26.6, 0, 0, 1.4, 5.9, 4.2, { color: RUNE_COLORS[1], runePhase: 1 });
   addDoor(scene, world, 0, 0, -26.6, 4.2, 5.9, 1.4, { color: RUNE_COLORS[2], runePhase: 2 });
