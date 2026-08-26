@@ -293,6 +293,11 @@ const SFX = {
                     blip({ freq: 900, end: 1200, dur: 0.08, vol: 0.12, type: 'triangle', delay: 0.07 }); },
   star:     () => { for (let i = 0; i < 4; i++) blip({ freq: 700 + i * 200, dur: 0.09, vol: 0.12, type: 'triangle', delay: i * 0.06 }); },
   powerup:  () => { for (let i = 0; i < 5; i++) blip({ freq: 400 + i * 180, dur: 0.12, vol: 0.14, type: 'square', delay: i * 0.08 }); },
+  portal:   () => {
+    noiseBurst({ dur: 0.34, vol: 0.105, low: 240, high: 4200 });
+    blip({ freq: 180, end: 1180, dur: 0.28, vol: 0.15, type: 'sine' });
+    blip({ freq: 1320, end: 210, dur: 0.38, vol: 0.12, type: 'triangle', delay: 0.08 });
+  },
   kill:     () => { blip({ freq: 500, end: 800, dur: 0.1, vol: 0.14 }); blip({ freq: 800, end: 1100, dur: 0.12, vol: 0.14, delay: 0.09 }); },
   death:    () => blip({ freq: 400, end: 60, dur: 0.5, vol: 0.2, type: 'sawtooth' }),
   siren:    () => {

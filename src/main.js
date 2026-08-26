@@ -1528,6 +1528,7 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
 
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  world.onPortalTransit = (ch, source) => sfx('portal', ch.isPlayer ? null : source);
   bindMyceliumToadEffects(world);
   world.onLightningStrike = (pos) => sfx('thunder', pos);
   world.onLightningHit = (ch) => {
@@ -1755,6 +1756,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa', freshMu
   });
   const pickups = new PickupManager(scene, world.pickups, { onPickup });
   world.onPad = (ch) => { if (ch.isPlayer) sfx('boing'); };
+  world.onPortalTransit = (ch, source) => sfx('portal', ch.isPlayer ? null : source);
   bindMyceliumToadEffects(world);
   world.onGatorChomp = () => sfx('chomp', world.gator?.group?.position);
   world.onGatorBite = (ch) => {

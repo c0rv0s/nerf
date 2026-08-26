@@ -7411,6 +7411,7 @@ function buildSanctum(scene) {
         ch.pos.y = 0.1;
         if (ch.vel) ch.vel.set(0, 0, 0);
         portalCooldown.set(ch, t + 1.25);
+        world.onPortalTransit?.(ch, { x: portal.x, y: 3.1, z: portal.triggerZ });
         break;
       }
     }
