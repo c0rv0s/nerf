@@ -396,7 +396,10 @@ const TEXTURE_NAMES = Object.freeze([
   'canopy-grapple',
   'checker', 'crate', 'rock', 'arcade', 'fortress-royal', 'crocodile-scales',
   'canopy-wall', 'grass', 'dirt', 'door', 'lava', 'poster2', 'poster3', 'poster4',
-  'poster5', 'poster6', 'poster7', 'hazard', 'tidebreaker-orange-steel',
+  'poster5', 'poster6', 'poster7',
+  'poster-oldwest', 'poster-bloom', 'poster-tidebreaker', 'poster-solar',
+  'poster-mycelium', 'poster-reef',
+  'hazard', 'tidebreaker-orange-steel',
   'mycelium-mossy-slab', 'mycelium-mossy-rock',
   'olympus-rock', 'olympus-palace', 'olympus-relief', 'olympus-aether',
   'infinite-bloom-faces', 'infinite-bloom-sky-eyeless',
@@ -417,6 +420,8 @@ const textureSettledPromises = new Map(TEXTURE_NAMES.map((name) => {
 }));
 const COLOR_ONLY_TEXTURES = new Set([
   'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
+  'poster-oldwest', 'poster-bloom', 'poster-tidebreaker', 'poster-solar',
+  'poster-mycelium', 'poster-reef',
   'target', 'hazard', 'atrium-gate-frame-atlas',
   'infinite-bloom-sky-eyeless', 'infinite-bloom-eye-atlas',
 ]);
@@ -563,8 +568,48 @@ function addDecal(scene, name, x, y, z, w, yaw = 0, h = w) {
   }));
   m.position.set(x, y, z);
   m.rotation.y = yaw;
+  m.name = `arena-decal:${name}`;
   scene.add(m);
   return m;
+}
+
+// Maps without planar architecture still get the same arena-poster language.
+// These lightweight placards are visual-only so their posts never create a
+// hidden snag in open traversal or underwater swimming routes.
+function addPosterStand(scene, name, x, groundY, z, w, yaw = 0, h = w, color = 0x344a4a) {
+  const normal = V(Math.sin(yaw), 0, Math.cos(yaw));
+  const right = V(Math.cos(yaw), 0, -Math.sin(yaw));
+  const bottomClearance = 1.2;
+  const centerY = groundY + bottomClearance + h / 2;
+  const backing = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.55, h + 0.55, 0.18),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.78, metalness: 0.22 }),
+  );
+  backing.position.set(x, centerY, z);
+  backing.rotation.y = yaw;
+  backing.name = `arena-poster-stand:${name}`;
+  backing.castShadow = backing.receiveShadow = true;
+  scene.add(backing);
+
+  const postHeight = bottomClearance + 0.15;
+  const postMaterial = new THREE.MeshStandardMaterial({ color: 0x263638, roughness: 0.7, metalness: 0.38 });
+  for (const side of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, postHeight, 0.24), postMaterial);
+    post.position.set(
+      x + right.x * side * w * 0.36,
+      groundY + postHeight / 2,
+      z + right.z * side * w * 0.36,
+    );
+    post.rotation.y = yaw;
+    post.name = `arena-poster-post:${name}`;
+    post.castShadow = true;
+    scene.add(post);
+  }
+  return addDecal(
+    scene, name,
+    x + normal.x * 0.101, centerY, z + normal.z * 0.101,
+    w, yaw, h,
+  );
 }
 
 // Bullseye posters are thin rectangular targets rather than spherical props.
@@ -4400,6 +4445,10 @@ function buildOldWest(scene) {
     for (const sx of [-1, 1]) addBox(scene, world, x + sx * (w / 2 - 0.7), 1.6, z - d / 2 - 2.1, 0.45, 3.2, 0.45, timber);
     addBox(scene, world, x, 0.35, z - d / 2 - 2.1, w, 0.7, 4, timber, { tex: 'panel', repeat: [4, 1] });
   }
+  // The plain side walls keep the tournament art clear of storefront signs,
+  // windows, porches, and the mounted combat line through town.
+  addDecal(scene, 'poster-oldwest', -55.56, 3.2, 62, 5.2, -Math.PI / 2);
+  addDecal(scene, 'poster-oldwest', 5.06, 3.2, 63, 5.2, Math.PI / 2);
 
   const cactusSpecs = [
     [-205,-145,5.8,.2],[-178,-65,4.5,1.1],[-202,142,5.1,2.4],[-154,126,4.3,.7],
@@ -8208,6 +8257,11 @@ function buildInfiniteBloom(scene) {
     );
     eye.position.set(x + nx * 2.08, 4.05, z + nz * 2.08);
     arenaRoot.add(eye);
+  }
+  // The inward totem faces remain living machine portraits. Poster art goes
+  // on the flat north faces and repeats naturally with the canonical arena.
+  for (const x of [-14, 14]) {
+    addDecal(arenaRoot, 'poster-bloom', x, 3.25, -15.83, 3, Math.PI);
   }
   for (const [x, y, z, yaw, tint] of [
     [-24, 6, -35.94, 0, 0xff5417], [0, 8, -35.94, 0, 0xe8ed1a], [24, 5, -35.94, 0, 0x79d91c],
@@ -13656,6 +13710,11 @@ function buildTidebreaker(scene) {
   for (const z of [-14.5, 14.5]) {
     addBox(scene, world, 35.2, 3.8, z, 1.2, 7.6, 19, emergencyOrange, { ...orangeSteel, debugName: 'operations doorway wall' });
   }
+  // Face the processing deck so both posters announce the ops block without
+  // covering its doors, windows, warning fascia, or climb route.
+  for (const z of [-14.5, 14.5]) {
+    addDecal(scene, 'poster-tidebreaker', 34.57, 3.8, z, 5.8, -Math.PI / 2);
+  }
   // A painted fascia and external stiffeners keep the broad roof silhouette
   // from reading as a featureless dark slab when viewed from the ocean.
   for (const z of [-30.41, 30.41]) addBox(scene, world, 49, 7.48, z, 30, 0.9, 0.12, emergencyOrange, {
@@ -15924,6 +15983,10 @@ function buildSolarFlare(scene) {
     doors: { west: 0, east: 0, south: 42 },
     windows: { north: [{ center: 42, width: 16, bottom: 1.5, top: 5.1 }] },
   });                                                               // elevated bridge
+
+  // The central module's uninterrupted north bulkhead is the one large hull
+  // surface that stays readable without competing with doors or glass.
+  for (const x of [-9, 9]) addDecal(scene, 'poster-solar', x, 3.1, -13.47, 5.4, 0);
 
   // L-bend to science and one upper bridge. Each connection has a single
   // obvious direction of travel.
@@ -18604,6 +18667,9 @@ function buildMyceliumGrove(scene) {
         tex: 'mycelium-mossy-slab', repeat: [3, 1.5], debugName: 'mycelium-perimeter-wall',
       });
   }
+  // Keep the new art between the north-wall shelf clusters. At this height it
+  // reads from the ground and branch routes without blocking either climb.
+  for (const x of [-23, 23]) addDecal(scene, 'poster-mycelium', x, 14, -79.94, 10, 0);
   // Scattered bracket-fungus stair clusters grow from the inward faces. Each
   // starts near ground height and retains exact shelf collision, making these
   // useful little wall perches rather than unreachable decoration.
@@ -19977,6 +20043,14 @@ function buildSunkenReef(scene) {
   addReefFishLife(scene, world);
   addReefLargeSeaLife(scene, world, 120);
   addReefBoundarySharks(scene, world, 120);
+
+  // Salvaged placards make the arena identity visible in a map with no planar
+  // walls. They face the center from two common spawn lanes and remain purely
+  // decorative, so swimmers and projectiles pass through the frames.
+  for (const [x, z] of [[-38, 46], [40, -45]]) {
+    const yaw = Math.atan2(-x, -z);
+    addPosterStand(scene, 'poster-reef', x, reefSurfaceY(x, z), z, 7, yaw, 7, 0x315f5e);
+  }
 
   const spawnXZ = [
     [-72, -24], [72, 24], [-52, 43], [50, -44],
