@@ -1,3 +1,5 @@
+export const DROWNING_GRACE_SECONDS = 30;
+
 export function waterSpeedMultiplier(character, water, eyeHeight = character.eyeHeight ?? 1.55) {
   if (!water) return 1;
 

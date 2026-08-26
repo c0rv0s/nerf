@@ -46,7 +46,7 @@ import {
 import {
   TOAD_EFFECT_LOCKOUT, queueToadEffect, updateToadEffects,
 } from './toad-effects.js';
-import { clearDrowningState } from './water-movement.js';
+import { clearDrowningState, DROWNING_GRACE_SECONDS } from './water-movement.js';
 
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
@@ -6310,7 +6310,8 @@ function step(dt) {
     }
   }
 
-  // staying fully underwater too long starts drowning: 40s grace, then 5 hp/s
+  // Staying fully underwater too long starts drowning after the shared grace
+  // period, then deals 5 hp/s directly to health.
   if (G.world.waterZones) {
     for (const ch of G.characters) {
       if (!ch.alive) continue;
@@ -6321,7 +6322,7 @@ function step(dt) {
         ch.pos.y > (zn.bottomY ?? zn.surfaceY - 4) - 0.6);
       if (underwater) {
         ch._drownT = (ch._drownT || 0) + dt;
-        if (ch._drownT > 40) {
+        if (ch._drownT > DROWNING_GRACE_SECONDS) {
           ch._drowning = true;
           ch._drownDamageT = (ch._drownDamageT || 0) + dt;
           while (ch._drownDamageT >= 1 && ch.alive) {

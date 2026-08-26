@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  clearDrowningState, waterSpeedMultiplier, waterVerticalInput,
+  clearDrowningState, DROWNING_GRACE_SECONDS, waterSpeedMultiplier, waterVerticalInput,
 } from '../src/water-movement.js';
 
 const characterAt = (y) => ({
@@ -10,6 +10,10 @@ const characterAt = (y) => ({
   eyeHeight: 1.6,
 });
 const water = { surfaceY: 1 };
+
+test('drowning begins after a 30-second underwater grace period', () => {
+  assert.equal(DROWNING_GRACE_SECONDS, 30);
+});
 
 test('water below knee height only slows movement by 10%', () => {
   assert.equal(waterSpeedMultiplier(characterAt(0.11), water), 0.9);
