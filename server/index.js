@@ -331,14 +331,48 @@ async function serveRequest(req, res) {
     return;
   }
   const ext = extname(full).toLowerCase();
+  const size = statSync(full).size;
   const cacheControl = file.endsWith('index.html') || ext === '.js' || file.startsWith('/textures/')
     ? 'no-store'
     : 'public, max-age=3600';
-  res.writeHead(200, {
+  const headers = {
     'content-type': MIME[ext] || 'application/octet-stream',
     'cache-control': cacheControl,
-  });
-  createReadStream(full).pipe(res);
+    'accept-ranges': 'bytes',
+  };
+  const range = req.headers.range;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+    let start;
+    let end;
+    if (match && (match[1] || match[2])) {
+      if (match[1]) {
+        start = Number(match[1]);
+        end = match[2] ? Number(match[2]) : size - 1;
+      } else {
+        const suffixLength = Number(match[2]);
+        start = Math.max(0, size - suffixLength);
+        end = size - 1;
+      }
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) {
+      res.writeHead(416, { ...headers, 'content-range': `bytes */${size}` });
+      res.end();
+      return;
+    }
+    end = Math.min(end, size - 1);
+    res.writeHead(206, {
+      ...headers,
+      'content-range': `bytes ${start}-${end}/${size}`,
+      'content-length': end - start + 1,
+    });
+    if (req.method === 'HEAD') res.end();
+    else createReadStream(full, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { ...headers, 'content-length': size });
+  if (req.method === 'HEAD') res.end();
+  else createReadStream(full).pipe(res);
 }
 
 const httpServer = createServer((req, res) => {

@@ -112,11 +112,18 @@ const MUSIC = [
   { title: 'Pixel Blast', src: './music/pixel-blast.mp3' },
 ];
 const MUSIC_BASE_VOLUME = 0.3;
+const MUSIC_STALL_RECOVERY_MS = 6000;
+const MUSIC_MAX_RECOVERY_ATTEMPTS = 2;
 let musicEl = null;
 let musicIdx = -1;
 let loadedMusicIdx = -1;
 let preparedMusicIdx = -1;
 let currentTrackTitle = '';
+let musicShouldPlay = false;
+let musicRecoveryTimer = 0;
+let musicRecoveryAttempts = 0;
+let musicRecoveryGeneration = 0;
+let musicUnlockAttempted = false;
 
 function updateTrackTitle() {
   const el = byId('tracktitle');
@@ -130,13 +137,69 @@ function nextMusicIndex() {
   return next;
 }
 
+function clearMusicRecovery() {
+  musicRecoveryGeneration++;
+  if (musicRecoveryTimer) clearTimeout(musicRecoveryTimer);
+  musicRecoveryTimer = 0;
+}
+
+function tryMusicPlay() {
+  if (!musicEl || !musicShouldPlay) return;
+  musicEl.play().catch((error) => {
+    // Autoplay rejection can only be fixed by another user gesture. The pause
+    // overlay/canvas click path calls musicPlay() again synchronously.
+    if (error?.name === 'NotAllowedError') return;
+    scheduleMusicRecovery(1000);
+  });
+}
+
+function recoverMusic() {
+  musicRecoveryTimer = 0;
+  if (!musicEl || !musicShouldPlay || document.hidden) return;
+  if (musicRecoveryAttempts >= MUSIC_MAX_RECOVERY_ATTEMPTS) {
+    musicRecoveryAttempts = 0;
+    playMusicIndex(nextMusicIndex());
+    return;
+  }
+  musicRecoveryAttempts++;
+  const recoveryGeneration = ++musicRecoveryGeneration;
+  const resumeAt = Number.isFinite(musicEl.currentTime) ? musicEl.currentTime : 0;
+  const resume = () => {
+    if (!musicShouldPlay || recoveryGeneration !== musicRecoveryGeneration) return;
+    if (resumeAt > 0 && Number.isFinite(musicEl.duration)) {
+      try { musicEl.currentTime = Math.min(resumeAt, Math.max(0, musicEl.duration - 0.1)); } catch { /* retry from the start */ }
+    }
+    tryMusicPlay();
+  };
+  musicEl.addEventListener('canplay', resume, { once: true });
+  musicEl.load();
+  scheduleMusicRecovery(MUSIC_STALL_RECOVERY_MS);
+}
+
+function scheduleMusicRecovery(delay = MUSIC_STALL_RECOVERY_MS) {
+  if (!musicShouldPlay || musicRecoveryTimer || document.hidden) return;
+  musicRecoveryTimer = setTimeout(recoverMusic, delay);
+}
+
 function ensureMusicElement() {
   if (musicEl) return musicEl;
   musicEl = new Audio();
   musicEl.preload = 'auto';
   musicEl.volume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
   musicEl.addEventListener('ended', () => {
+    clearMusicRecovery();
+    musicRecoveryAttempts = 0;
     playMusicIndex(nextMusicIndex());
+  });
+  musicEl.addEventListener('playing', () => {
+    clearMusicRecovery();
+    musicRecoveryAttempts = 0;
+  });
+  musicEl.addEventListener('waiting', () => scheduleMusicRecovery());
+  musicEl.addEventListener('stalled', () => scheduleMusicRecovery());
+  musicEl.addEventListener('error', () => scheduleMusicRecovery(1000));
+  musicEl.addEventListener('pause', () => {
+    if (!musicEl.ended) scheduleMusicRecovery();
   });
   return musicEl;
 }
@@ -145,6 +208,8 @@ function playMusicIndex(idx) {
   const track = MUSIC[idx];
   if (!track) return;
   ensureMusicElement();
+  musicShouldPlay = true;
+  clearMusicRecovery();
   musicIdx = idx;
   preparedMusicIdx = -1;
   currentTrackTitle = track.title;
@@ -156,29 +221,45 @@ function playMusicIndex(idx) {
   // A track change normally resets this implicitly, but make the new-match
   // contract explicit even when the browser reuses a cached audio resource.
   try { musicEl.currentTime = 0; } catch { /* metadata may not be ready yet */ }
-  musicEl.play().catch(() => {}); // blocked until a user gesture — fine
+  tryMusicPlay();
 }
 
-function prepareMusic() {
+function prepareMusic(unlockPlayback = false) {
   ensureMusicElement();
-  if (preparedMusicIdx >= 0) return;
-  const idx = nextMusicIndex();
-  const track = MUSIC[idx];
-  if (!track) return;
-  preparedMusicIdx = idx;
-  musicEl.src = track.src;
-  loadedMusicIdx = idx;
-  try { musicEl.currentTime = 0; } catch { /* metadata may not be ready yet */ }
-  musicEl.load();
+  if (preparedMusicIdx < 0) {
+    const idx = nextMusicIndex();
+    const track = MUSIC[idx];
+    if (!track) return;
+    preparedMusicIdx = idx;
+    musicEl.src = track.src;
+    loadedMusicIdx = idx;
+    try { musicEl.currentTime = 0; } catch { /* metadata may not be ready yet */ }
+    musicEl.load();
+  }
+  if (!unlockPlayback || musicUnlockAttempted) return;
+  musicUnlockAttempted = true;
+  const intendedVolume = MUSIC_BASE_VOLUME * gameVolume * musicMix;
+  musicEl.volume = 0;
+  musicEl.play().then(() => {
+    if (!musicShouldPlay) {
+      musicEl.pause();
+      try { musicEl.currentTime = 0; } catch { /* metadata may still be loading */ }
+    }
+    musicEl.volume = intendedVolume;
+  }).catch(() => {
+    musicEl.volume = intendedVolume;
+    musicUnlockAttempted = false;
+  });
 }
 
 function musicPlay() {
   ensureMusicElement();
+  musicShouldPlay = true;
   if (loadedMusicIdx < 0) {
     startMatchMusic();
     return;
   }
-  musicEl?.play().catch(() => {});
+  tryMusicPlay();
 }
 
 function startMatchMusic() {
@@ -186,7 +267,11 @@ function startMatchMusic() {
   playMusicIndex(idx);
 }
 
-function musicStop() { musicEl?.pause(); }
+function musicStop() {
+  musicShouldPlay = false;
+  clearMusicRecovery();
+  musicEl?.pause();
+}
 
 const volumeStorageKey = 'nerf-arena-volume-v2';
 const musicMixStorageKey = 'nerf-arena-music-mix-v1';
@@ -4706,7 +4791,8 @@ document.addEventListener('pointerlockchange', () => {
 });
 clickcatch.addEventListener('click', () => {
   warmAudioSamplesInBackground();
-  if (G?.atrium) prepareMusic();
+  if (G?.atrium) prepareMusic(true);
+  else if (G && !G.over) musicPlay();
   if (G?.mpConnectionPaused) return;
   if (usesMobileControls()) {
     if (performance.now() - mobilePauseOpenedAt < 350) return;
@@ -4714,6 +4800,9 @@ clickcatch.addEventListener('click', () => {
     return;
   }
   requestPointerLock();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && musicShouldPlay) musicPlay();
 });
 hud.els.board.addEventListener('click', (e) => e.stopPropagation());
 hud.els.board.addEventListener('pointerdown', (e) => e.stopPropagation());
