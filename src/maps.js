@@ -7870,6 +7870,7 @@ function buildInfiniteBloom(scene) {
   const NEXT_OUTER_PEEK = (OUTER_VISUAL_HALF - ARENA_HALF) * 0.2;
   const FOG_REVEAL_RATE = 1.6;
   const STRUCTURE_DETAIL_SCALE = 1.35;
+  const RAMP_LANDING_SUPPORT = 1.2;
   const sceneRootsBeforeBuild = new Set(scene.children);
   let bloomOwnedRoots = [];
   const world = newWorld({
@@ -8170,19 +8171,19 @@ function buildInfiniteBloom(scene) {
   };
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'z', minX: -4, maxX: 4, minZ: 12, maxZ: 18,
-    h0: 0, h1: 4, color: 0xd9ef20,
+    h0: 0, h1: 4, color: 0xd9ef20, supportPad1: RAMP_LANDING_SUPPORT,
   }), 0xbfd923);
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'z', minX: -4, maxX: 4, minZ: -18, maxZ: -12,
-    h0: 4, h1: 0, color: 0xe53e13,
+    h0: 4, h1: 0, color: 0xe53e13, supportPad0: RAMP_LANDING_SUPPORT,
   }), 0xe1531d);
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'x', minX: 12, maxX: 18, minZ: -4, maxZ: 4,
-    h0: 0, h1: 4, color: 0xff9d12,
+    h0: 0, h1: 4, color: 0xff9d12, supportPad1: RAMP_LANDING_SUPPORT,
   }), 0xe8931b);
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'x', minX: -18, maxX: -12, minZ: -4, maxZ: 4,
-    h0: 4, h1: 0, color: 0x69d51a,
+    h0: 4, h1: 0, color: 0x69d51a, supportPad0: RAMP_LANDING_SUPPORT,
   }), 0x64c522);
 
   // Blocky machine-elf totems stare toward the center. The texture crop on
@@ -8407,7 +8408,6 @@ function buildInfiniteBloom(scene) {
     return THREE.MathUtils.lerp(INNER_SCALE, 1, easedT);
   };
   world.characterVisualScale = character => seamVisualScale(character.pos);
-  world.characterMoveScale = character => seamVisualScale(character.pos);
 
   const actorSource = character => world.characterMirrorSource?.(character) ||
     character?.recursiveRenderSource || character?.mesh || null;
@@ -8888,10 +8888,10 @@ function buildInfiniteBloom(scene) {
     }
     // Position is a feet-space coordinate. Scaling it directly keeps y=0
     // fixed for a grounded crossing and preserves full 3D similarity for a
-    // player falling through the recursive opening. A grounded runner's
-    // planar velocity uses the same similarity transform; characterMoveScale
-    // then eases it back across the inner band, so apparent speed is continuous
-    // instead of jumping by the full recursion ratio on the crossing frame.
+    // player falling through the recursive opening. Grounded runners retain
+    // their planar gameplay velocity across the chart rebase. Actor height
+    // still blends visually at the seam, but chasing and dodging never inherit
+    // the adjacent layer's scale as a movement slowdown or speed burst.
     const planarFloorCrossing = up.y > 0.9 &&
       Math.abs(previous.y) < 0.25 && Math.abs(character.pos.y) < 0.25 &&
       Math.abs(character.vel.y) < 2;
@@ -8906,9 +8906,7 @@ function buildInfiniteBloom(scene) {
     character.pos.multiplyScalar(factor);
     if (planarFloorCrossing) {
       character.pos.y = 0;
-      character.vel.x *= factor;
       character.vel.y = 0;
-      character.vel.z *= factor;
     }
     if (factor > 1 && character.vel.y < -12) character.vel.y = -12;
     character.grounded = planarFloorCrossing;
