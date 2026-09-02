@@ -20,6 +20,7 @@ import { shuffledToadPersonalities } from './toad-effects.js';
 import { buildBlueWhale } from './blue-whale.js';
 import { buildTidebreakerShark } from './tidebreaker-shark.js';
 import { addTidebreakerWhaleBehavior } from './tidebreaker-whale-behavior.js';
+import { RED_ROCK_RANGE_BOUNDS } from './map-rules.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SURFACE_LAYER_EPS = 0.04;
@@ -4228,7 +4229,8 @@ function addOldWestCliff(scene, world) {
 function addOldWestRideBoundary(world) {
   // The desert continues visually into the horizon; this boundary is purely
   // behavioral, letting riders approach it before the horse turns inward.
-  const halfX = 228.5, halfZ = 178.5, margin = 4.5;
+  const { halfX, halfZ } = RED_ROCK_RANGE_BOUNDS;
+  const margin = 4.5;
   world.rideBoundary = { halfX, halfZ, margin };
   world.anim.push((dt, t, characters) => {
     for (const ch of characters) {
@@ -4409,8 +4411,8 @@ function addOldWestRailroad(scene, world) {
 
 function buildOldWest(scene) {
   const world = newWorld({
-    killY: -25, playerSpeed: 12.6, waypointLinkDist: 72, waypointLinkDy: 7.5,
-    mounted: true, horseTurnRate: 1.45, horseGallopSpeed: 19.5,
+    killY: -25, playerSpeed: 13, waypointLinkDist: 72, waypointLinkDy: 7.5,
+    mounted: true, horseTurnRate: 1.45, horseGallopSpeed: 20.5,
     horseGallopDuration: 15, horseGallopRecharge: 0.65,
   });
   scene.background = new THREE.Color(0x79b6d0);
@@ -10643,6 +10645,7 @@ const HALL_MAP_NAMES = {
 };
 
 const HALL_AWARD_LABELS = [
+  ['longShot250', '250M LONG SHOT'], ['deadEye500', '500M DEAD EYE'],
   ['multi2', 'DOUBLE KILL'], ['multi3', 'TRIPLE KILL'], ['multi4', 'QUAD KILL'],
   ['multi5', 'PENTA KILL'], ['multi6', 'HEXA KILL'], ['multi7', 'SEPTUPLE KILL'],
   ['oneShot2', 'ONE SHOT, TWO KILLS'], ['oneShot3', 'ONE SHOT, THREE KILLS'],

@@ -4,7 +4,9 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { DEFAULT_MAP_PLAYER_LIMIT, mapPlayerLimit } from '../src/map-rules.js';
+import {
+  DEFAULT_MAP_PLAYER_LIMIT, mapPlayerLimit, RED_ROCK_RANGE_BOUNDS,
+} from '../src/map-rules.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -71,7 +73,7 @@ const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(
 const MAPS = [
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
   { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
-  { id: 'oldwest', name: 'RED ROCK RANGE', bounds: 230, spawns: [[-190, 0.1, -108], [190, 0.1, 108], [-190, 0.1, 108], [190, 0.1, -108], [0, 0.1, -152], [0, 0.1, 152], [-172, 0.1, 0], [172, 0.1, 0]] },
+  { id: 'oldwest', name: 'RED ROCK RANGE', bounds: { x: RED_ROCK_RANGE_BOUNDS.halfX, z: RED_ROCK_RANGE_BOUNDS.halfZ }, spawns: [[-190, 0.1, -108], [190, 0.1, 108], [-190, 0.1, 108], [190, 0.1, -108], [0, 0.1, -152], [0, 0.1, 152], [-172, 0.1, 0], [172, 0.1, 0]] },
   { id: 'asteroids', name: 'ASTEROID BELT', bounds: 78, spawns: [[-45, 8, -20], [45, 8, 20], [-30, 8, 35], [30, 8, -35], [0, 8, -45], [0, 8, 45], [-55, 8, 0], [55, 8, 0]] },
   // Mirrors buildCanopy's FFA pool. The previous corner coordinates were
   // inside the solid tree trunks, so the authoritative multiplayer snapshot
@@ -648,12 +650,14 @@ function finite(v, fallback = 0) {
 }
 
 function sanitizePos(pos, map) {
-  const b = map?.bounds || 70;
+  const bounds = map?.bounds || 70;
+  const bx = Number.isFinite(bounds?.x) ? bounds.x : bounds;
+  const bz = Number.isFinite(bounds?.z) ? bounds.z : bounds;
   if (!pos || typeof pos !== 'object') return null;
   return {
-    x: Math.max(-b, Math.min(b, finite(pos.x, 0))),
+    x: Math.max(-bx, Math.min(bx, finite(pos.x, 0))),
     y: Math.max(-200, Math.min(260, finite(pos.y, 0))),
-    z: Math.max(-b, Math.min(b, finite(pos.z, 0))),
+    z: Math.max(-bz, Math.min(bz, finite(pos.z, 0))),
   };
 }
 

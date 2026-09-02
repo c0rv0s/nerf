@@ -34,7 +34,9 @@ import { unlockSecretMap } from './secret-maps.js';
 import { byId, setStyle, setText } from './dom.js';
 import { mapPlayerLimit } from './map-rules.js';
 import { HORSE_HEIGHT_DELTA } from './mount.js';
-import { damageMultiplierForPowerup, resolveShieldedDamage } from './combat.js';
+import {
+  damageMultiplierForPowerup, longShotAwardForDistance, resolveShieldedDamage,
+} from './combat.js';
 import { MobileControls } from './mobile-controls.js';
 import { isStandaloneApp, setupPwaInstall } from './pwa.js';
 import {
@@ -4281,6 +4283,17 @@ function recordKillAwards(attacker, target, ctx = {}) {
       );
     }
   }
+
+  const longShot = longShotAwardForDistance(ctx.shotDistance);
+  if (longShot) {
+    incrementAward(
+      attacker,
+      longShot.key,
+      longShot.title,
+      `${Math.floor(ctx.shotDistance)}m kill`,
+      longShot.color,
+    );
+  }
 }
 
 function awardsLine(awards = {}) {
@@ -4289,6 +4302,7 @@ function awardsLine(awards = {}) {
     ['headshot2', 'Double Headshot'], ['headshot3', 'Triple Headshot'],
     ['headshot4', 'Quad Headshot'], ['headshot5', 'Penta Headshot'],
     ['headshot6', 'Hexa Headshot'], ['headshot7', 'Septuple Headshot'],
+    ['longShot250', '250m Long Shot'], ['deadEye500', '500m Dead Eye'],
     ['multi2', 'Double Kill'], ['multi3', 'Triple Kill'], ['multi4', 'Quad Kill'],
     ['multi5', 'Penta Kill'], ['multi6', 'Hexa Kill'], ['multi7', 'Septuple Kill'],
     ['oneShot2', 'One Shot, Two Kills'], ['oneShot3', 'One Shot, Three Kills'],

@@ -811,6 +811,7 @@ export class ProjectileSystem {
       limitedTargetHitLimit: opts.limitedTargetHitLimit ?? 0,
       limitedTargetMinBounces: opts.limitedTargetMinBounces ?? 0,
       noSplit: opts.noSplit === true,
+      travelDistance: Math.max(0, Number(opts.travelDistance) || 0),
       shotGroup: opts.shotGroup || this.makeShotGroup(owner, weapon),
     };
     // A muzzle can extend across a recursive seam even while its owner remains
@@ -872,6 +873,7 @@ export class ProjectileSystem {
         limitedTargetHitLimit: 1,
         limitedTargetMinBounces: 1,
         noSplit: true,
+        travelDistance: p.travelDistance,
         shotGroup: p.shotGroup,
       });
     }
@@ -883,6 +885,7 @@ export class ProjectileSystem {
     sfx('thunder', p.pos);
     this.fx.spawnPuff(p.pos, p.weapon.color, 2.5);
     let origin = p.pos.clone();
+    let chainDistance = p.travelDistance;
     const struck = new Set(primary ? [primary] : []);
     for (let hop = 0; hop < (p.weapon.chainCount || 0); hop++) {
       let target = null;
@@ -905,7 +908,11 @@ export class ProjectileSystem {
       if (!target) break;
       this.spawnLightningArc(origin, targetCenter, p.weapon.color);
       const damage = (p.weapon.chainDmg || p.weapon.dmg) * Math.pow(0.78, hop);
-      this.fx.onDamage(target, damage * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+      chainDistance += origin.distanceTo(targetCenter);
+      this.fx.onDamage(target, damage * p.owner.damageMult, p.owner, {
+        shotGroup: p.shotGroup,
+        shotDistance: chainDistance,
+      });
       this.fx.spawnPuff(targetCenter, p.weapon.color, 0.85);
       struck.add(target);
       origin = targetCenter;
@@ -1212,6 +1219,7 @@ export class ProjectileSystem {
         const stepDt = speed > 1e-6 ? Math.min(remainingDt, maxStepDistance / speed) : remainingDt;
         remainingDt -= stepDt;
         step.copy(p.vel).multiplyScalar(stepDt);
+        p.travelDistance += step.length();
         prev.copy(p.pos);
         p.pos.add(step);
         const traversalResult = this.world.postProjectileMove?.(p, prev);
@@ -1238,6 +1246,7 @@ export class ProjectileSystem {
             this.fx.onDamage(ch, baseDamage * p.owner.damageMult, p.owner, {
               shotGroup: p.shotGroup,
               headshot: hit.headshot,
+              shotDistance: p.travelDistance,
             });
             if (p.weapon.lightning) p.chainPrimary = ch;
             this.fx.spawnPuff(p.pos, p.currentColor || p.weapon.color, 0.6 * Math.sqrt(p.recursionScale || 1));
@@ -1319,7 +1328,10 @@ export class ProjectileSystem {
         const dmg = p.weapon.flatSplash
           ? p.weapon.splashDmg
           : p.weapon.splashDmg * (1 - d / p.weapon.splash);
-        this.fx.onDamage(ch, dmg * p.owner.damageMult, p.owner, { shotGroup: p.shotGroup });
+        this.fx.onDamage(ch, dmg * p.owner.damageMult, p.owner, {
+          shotGroup: p.shotGroup,
+          shotDistance: p.travelDistance,
+        });
       }
     }
     for (const target of this.shootableTargets()) {

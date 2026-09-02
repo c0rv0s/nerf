@@ -4,6 +4,18 @@ export function damageMultiplierForPowerup(powerup) {
   return 1;
 }
 
+export function longShotAwardForDistance(distance) {
+  const metres = Number(distance);
+  if (!Number.isFinite(metres)) return null;
+  if (metres >= 500) {
+    return { key: 'deadEye500', title: '500M DEAD EYE', color: '#b57cff' };
+  }
+  if (metres >= 250) {
+    return { key: 'longShot250', title: '250M LONG SHOT', color: '#54d9ff' };
+  }
+  return null;
+}
+
 export function resolveShieldedDamage(hp, shield, rawDamage, options = {}) {
   const damage = Math.max(0, Number(rawDamage) || 0);
   const currentHp = Math.max(0, Number(hp) || 0);

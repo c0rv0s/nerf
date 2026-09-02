@@ -2,6 +2,12 @@
 // Vote lobbies still hold eight people; a smaller map can only be selected
 // when the current lobby fits its match limit.
 export const DEFAULT_MAP_PLAYER_LIMIT = 8;
+export const RED_ROCK_RANGE_BOUNDS = Object.freeze({
+  width: 500,
+  depth: 400,
+  halfX: 250,
+  halfZ: 200,
+});
 
 const MAP_PLAYER_LIMITS = Object.freeze({
   bloom: 4,

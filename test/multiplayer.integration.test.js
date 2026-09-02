@@ -6,6 +6,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import { RED_ROCK_RANGE_BOUNDS } from '../src/map-rules.js';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 class TestClient {
@@ -99,6 +101,63 @@ async function startServer(port, env = {}) {
   });
   return child;
 }
+
+test('Red Rock snapshots use the 500 by 400 metre rectangular bounds', {
+  skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
+}, async (t) => {
+  assert.deepEqual(RED_ROCK_RANGE_BOUNDS, {
+    width: 500, depth: 400, halfX: 250, halfZ: 200,
+  });
+  const port = await freePort();
+  const server = await startServer(port);
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.close();
+    server.kill('SIGTERM');
+    await once(server, 'exit').catch(() => {});
+  });
+
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const host = new TestClient(url, 'Host', 'redrock_bounds_host_12345');
+  clients.push(host);
+  const hostJoined = await host.joined;
+  const guest = new TestClient(url, 'Guest', 'redrock_bounds_guest_1234');
+  clients.push(guest);
+  await guest.joined;
+
+  host.send({ type: 'voteMap', mapId: 'oldwest' });
+  guest.send({ type: 'voteMap', mapId: 'oldwest' });
+  const playing = await host.waitFor(message =>
+    message.type === 'phaseChanged' && message.phase === 'playing', 4000);
+
+  host.send({
+    type: 'hostSnapshot',
+    authorityEpoch: playing.authorityEpoch,
+    seq: 1,
+    snapshot: {
+      players: [{
+        id: hostJoined.slotId,
+        name: 'Host',
+        human: true,
+        pos: { x: 999, y: 0.1, z: 999 },
+        hp: 100,
+        alive: true,
+        weapons: ['blaster'],
+        ammo: {},
+      }],
+      events: [],
+      drops: [],
+    },
+  });
+
+  const snapshot = await guest.waitFor(message => message.type === 'snapshot' && message.seq === 1);
+  const hostState = snapshot.players.find(player => player.id === hostJoined.slotId);
+  assert.deepEqual(hostState.pos, {
+    x: RED_ROCK_RANGE_BOUNDS.halfX,
+    y: 0.1,
+    z: RED_ROCK_RANGE_BOUNDS.halfZ,
+  });
+});
 
 test('guest input follows the host spawn and loadout snapshots include dropped weapons', {
   skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
