@@ -38,8 +38,14 @@ test('Silver and Gold produce their authoritative damage multipliers', () => {
   assert.equal(damageMultiplierForPowerup(null), 1);
 });
 
-test('long-shot awards use inclusive 250m Long Shot and 500m Dead Eye tiers', () => {
-  assert.equal(longShotAwardForDistance(249.99), null);
+test('long-shot awards use inclusive 100m, 250m, and 500m tiers', () => {
+  assert.equal(longShotAwardForDistance(99.99), null);
+  assert.deepEqual(longShotAwardForDistance(100), {
+    key: 'longShot100', title: '100M LONG SHOT', color: '#8ef7a8',
+  });
+  assert.deepEqual(longShotAwardForDistance(249.99), {
+    key: 'longShot100', title: '100M LONG SHOT', color: '#8ef7a8',
+  });
   assert.deepEqual(longShotAwardForDistance(250), {
     key: 'longShot250', title: '250M LONG SHOT', color: '#54d9ff',
   });

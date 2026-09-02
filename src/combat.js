@@ -13,6 +13,9 @@ export function longShotAwardForDistance(distance) {
   if (metres >= 250) {
     return { key: 'longShot250', title: '250M LONG SHOT', color: '#54d9ff' };
   }
+  if (metres >= 100) {
+    return { key: 'longShot100', title: '100M LONG SHOT', color: '#8ef7a8' };
+  }
   return null;
 }
 

@@ -10645,7 +10645,8 @@ const HALL_MAP_NAMES = {
 };
 
 const HALL_AWARD_LABELS = [
-  ['longShot250', '250M LONG SHOT'], ['deadEye500', '500M DEAD EYE'],
+  ['longShot100', '100M LONG SHOT'], ['longShot250', '250M LONG SHOT'],
+  ['deadEye500', '500M DEAD EYE'],
   ['multi2', 'DOUBLE KILL'], ['multi3', 'TRIPLE KILL'], ['multi4', 'QUAD KILL'],
   ['multi5', 'PENTA KILL'], ['multi6', 'HEXA KILL'], ['multi7', 'SEPTUPLE KILL'],
   ['oneShot2', 'ONE SHOT, TWO KILLS'], ['oneShot3', 'ONE SHOT, THREE KILLS'],

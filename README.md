@@ -62,8 +62,8 @@ development uses an in-memory top 100 that resets when the server restarts.
   anyone can collect — or steal. Value scales with the victim's placing:
   1000 for the leader, 750 for second, 500 for third, 250 otherwise.
   Hidden ★ stars are +500.
-- **Long-shot awards**: a 250m projectile kill earns **Long Shot**; a 500m kill
-  earns the higher **Dead Eye** tier.
+- **Long-shot awards**: projectile kills at 100m and 250m earn **Long Shot**
+  tiers; a 500m kill earns **Dead Eye**.
 - **Weapons** (keys 1–8, or scroll):
   1. **Secret Shot** — default blaster, infinite ammo
   2. **Scatterblast** — 6-pellet shotgun
