@@ -29,11 +29,11 @@ const SURFACE_LAYER_EPS = 0.04;
 // shallow viewing angles and 900-unit camera depth range without intersecting
 // the frame or changing the gate trigger/collision volume.
 const PORTAL_SURFACE_EPS = 0.18;
-// Portal faces must continue behind their surrounding frame. A full world-unit
-// overlap on every edge keeps shallow viewing angles from exposing the backing
-// wall through a hairline seam; this changes only the rendered face, never the
-// portal trigger or the gate collision geometry.
-const PORTAL_FRAME_OVERLAP = 1;
+// Portal faces continue just 1 cm behind the surrounding frame at the sides and
+// top. Keep the bottom flush with the authored opening so the effect cannot
+// spill below the gate; this changes only the rendered face, never the portal
+// trigger or collision geometry.
+const PORTAL_FRAME_OVERLAP = 0.01;
 const DECOR_DEPTH_BIAS = Object.freeze({
   polygonOffset: true,
   polygonOffsetFactor: -2,
@@ -9656,12 +9656,16 @@ function addMagicPortal(scene, world, x, y, z, w, h, color, yaw = 0, parent = sc
   const material = portalMaterial(color);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(
     w + PORTAL_FRAME_OVERLAP * 2,
-    h + PORTAL_FRAME_OVERLAP * 2,
+    h + PORTAL_FRAME_OVERLAP,
   ),
     material);
   const nX = Math.sin(yaw);
   const nZ = Math.cos(yaw);
-  m.position.set(x + nX * PORTAL_SURFACE_EPS, y, z + nZ * PORTAL_SURFACE_EPS);
+  m.position.set(
+    x + nX * PORTAL_SURFACE_EPS,
+    y + PORTAL_FRAME_OVERLAP / 2,
+    z + nZ * PORTAL_SURFACE_EPS,
+  );
   m.rotation.y = yaw;
   m.renderOrder = 2;
   parent.add(m);
