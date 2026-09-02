@@ -34,6 +34,8 @@ const PORTAL_SURFACE_EPS = 0.18;
 // spill below the gate; this changes only the rendered face, never the portal
 // trigger or collision geometry.
 const PORTAL_FRAME_OVERLAP = 0.01;
+const ATRIUM_GATE_OPENING_WIDTH = 6.4;
+const ATRIUM_GATE_OPENING_HEIGHT = 6.2;
 const DECOR_DEPTH_BIAS = Object.freeze({
   polygonOffset: true,
   polygonOffsetFactor: -2,
@@ -1696,10 +1698,11 @@ function addAtriumUnderwaterChamber(scene, world) {
   shell(0, chamberFloorY + 14.2, -11, 14, 1.2, 12);
   shell(0, chamberFloorY + 14.2, 11, 14, 1.2, 12);
 
-  const gateY = chamberFloorY + 3.7;
+  const gateY = chamberFloorY + ATRIUM_GATE_OPENING_HEIGHT / 2;
   addAtriumGateBrickFrame(scene, world, 'tidebreaker', 0x49e6d0,
     0, -16.35, true, chamberFloorY, chamber);
-  addMagicPortal(scene, world, 0, gateY, -16.18, 7.8, 7.8,
+  addMagicPortal(scene, world, 0, gateY, -16.18,
+    ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT,
     0x49e6d0, 0, chamber);
   const marquee = addAtriumMarquee(scene, 'tidebreaker', 'SUNKEN REEF', 0x49e6d0,
     0, chamberFloorY + 10.45, -16.3, 0, 16.5);
@@ -2018,11 +2021,14 @@ function addAtriumSecretObservatory(scene, world, fountain) {
     addAtriumGateBrickFrame(scene, world, door.frame, door.color,
       door.x, door.z, door.horiz, floorY, observatory);
     if (door.id === 'bloom') {
-      addBloomFacePortal(scene, world, door.portalX, floorY + 3.7, door.portalZ,
-        6.2, 7.6, door.yaw, observatory);
+      addBloomFacePortal(scene, world, door.portalX,
+        floorY + ATRIUM_GATE_OPENING_HEIGHT / 2, door.portalZ,
+        ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT, door.yaw, observatory);
     } else {
-      addMagicPortal(scene, world, door.portalX, floorY + 3.7, door.portalZ,
-        6.2, 7.6, door.color, door.yaw, observatory);
+      addMagicPortal(scene, world, door.portalX,
+        floorY + ATRIUM_GATE_OPENING_HEIGHT / 2, door.portalZ,
+        ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT,
+        door.color, door.yaw, observatory);
     }
     const marquee = addAtriumMarquee(scene, door.marquee, door.name, door.color,
       door.x, floorY + 10.35, door.z, door.yaw, 15.5);
@@ -10587,10 +10593,14 @@ export function buildAtrium(scene) {
     const frameId = id === 'hall' ? 'arena' : id === 'multiplayer' ? 'sanctum' : id;
     if (horiz) {
       addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, true);
-      addMagicPortal(scene, world, px, 3.7, pz + sgn * 0.82, 7.8, 7.8, color, sgn === -1 ? 0 : Math.PI);
+      addMagicPortal(scene, world, px, ATRIUM_GATE_OPENING_HEIGHT / 2, pz + sgn * 0.82,
+        ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT,
+        color, sgn === -1 ? 0 : Math.PI);
     } else {
       addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, false);
-      addMagicPortal(scene, world, px + sgn * 0.82, 3.7, pz, 7.8, 7.8, color, -sgn * Math.PI / 2);
+      addMagicPortal(scene, world, px + sgn * 0.82, ATRIUM_GATE_OPENING_HEIGHT / 2, pz,
+        ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT,
+        color, -sgn * Math.PI / 2);
     }
     // Oversized attraction marquees echo the original Arena Blast atrium.
     // Pull them slightly into the room so their transparent wings clear the wall.
@@ -11073,7 +11083,8 @@ export function buildHallOfFame(scene) {
   // Match the atrium-side Hall of Fame entrance while retaining the blue
   // return portal, so both ends read as the same doorway.
   addAtriumGateBrickFrame(scene, world, 'arena', 0xffd45a, 0, 110.8, true);
-  addMagicPortal(scene, world, 0, 3.7, 110.15, 7.8, 7.8, 0x73dcff, Math.PI);
+  addMagicPortal(scene, world, 0, ATRIUM_GATE_OPENING_HEIGHT / 2, 110.15,
+    ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT, 0x73dcff, Math.PI);
   addAtriumMarquee(scene, 'hall', 'RETURN TO ATRIUM', 0xffd45a,
     0, 10.45, 110.1, Math.PI, 16.5);
   addHallGoldPowerupOrnament(scene);
