@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'nerf-arena-v8';
+const CACHE_VERSION = 'nerf-arena-__BUILD_ID__';
 const CORE_CACHE = `${CACHE_VERSION}-core`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CORE_ASSETS = [
@@ -46,7 +46,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CORE_CACHE);
     await Promise.allSettled(CORE_ASSETS.map((asset) => cache.add(asset)));
-    await self.skipWaiting();
   })());
 });
 
@@ -58,6 +57,12 @@ self.addEventListener('activate', (event) => {
       .map((key) => caches.delete(key)));
     await self.clients.claim();
   })());
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'NERF_ARENA_SKIP_WAITING') {
+    event.waitUntil(self.skipWaiting());
+  }
 });
 
 async function networkFirst(request) {

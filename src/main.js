@@ -4773,7 +4773,10 @@ const mobileControls = new MobileControls({
     !G.mpConnectionPaused && !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
   shouldShowGrapple: () => !!(G?.world?.grappleEnabled && G?.player?.grapple),
 });
-setupPwaInstall();
+setupPwaInstall({
+  isSafeToReload: () => !mapLoadInProgress && !openingMultiplayer &&
+    (!G || (G.atrium && (!multiplayer.overlay || multiplayer.overlay.hidden))),
+});
 
 document.addEventListener('pointerlockchange', () => {
   if (usesMobileControls()) return;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,13 @@ import {
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
+const serviceWorkerBuildId = String(
+  process.env.RAILWAY_GIT_COMMIT_SHA ||
+  process.env.RAILWAY_DEPLOYMENT_ID ||
+  `local-${Date.now()}`,
+).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+const serviceWorkerSource = readFileSync(join(ROOT, 'sw.js'), 'utf8')
+  .replaceAll('__BUILD_ID__', serviceWorkerBuildId);
 const PORT = Number(process.env.PORT || 3000);
 const { Pool } = pg;
 const databaseUrl = process.env.DATABASE_URL || '';
@@ -277,6 +284,18 @@ async function serveRequest(req, res) {
     return;
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname === '/sw.js') {
+    const body = Buffer.from(serviceWorkerSource);
+    res.writeHead(200, {
+      'content-type': 'text/javascript; charset=utf-8',
+      'cache-control': 'no-store',
+      'content-length': body.byteLength,
+      'service-worker-allowed': '/',
+    });
+    if (req.method === 'HEAD') res.end();
+    else res.end(body);
+    return;
+  }
   if (url.pathname === '/api/leaderboard' && req.method === 'GET') {
     const entries = await getLeaderboard();
     const hasRequestedScore = url.searchParams.has('score');

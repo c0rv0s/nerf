@@ -18,10 +18,10 @@ async function freePort() {
   return port;
 }
 
-async function startServer(port) {
+async function startServer(port, extraEnv = {}) {
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), DATABASE_URL: '' },
+    env: { ...process.env, ...extraEnv, PORT: String(port), DATABASE_URL: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await new Promise((resolveStart, rejectStart) => {
@@ -41,6 +41,26 @@ async function startServer(port) {
   });
   return child;
 }
+
+test('service worker cache version follows the deployed Railway commit', async (t) => {
+  const port = await freePort();
+  const server = await startServer(port, {
+    RAILWAY_GIT_COMMIT_SHA: 'abc123def456',
+  });
+  t.after(async () => {
+    server.kill('SIGTERM');
+    await once(server, 'exit').catch(() => {});
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/sw.js`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('service-worker-allowed'), '/');
+  const source = await response.text();
+  assert.match(source, /nerf-arena-abc123def456/);
+  assert.doesNotMatch(source, /__BUILD_ID__/);
+  assert.equal(source.match(/skipWaiting/g)?.length, 1);
+});
 
 test('static audio supports browser byte-range requests', async (t) => {
   const port = await freePort();

@@ -441,7 +441,7 @@
   }
 
   /* ---------- TOUCH CONTROLS + INSTALL ---------- */
-  #mobilecontrols[hidden],#installPrompt[hidden] { display:none !important; }
+  #mobilecontrols[hidden],#installPrompt[hidden],#updatePrompt[hidden] { display:none !important; }
   #mobilecontrols { position:fixed; inset:0; z-index:4; pointer-events:none; touch-action:none;
     -webkit-user-select:none; user-select:none; font-family:var(--body); }
   .mobile-touch-zone { position:absolute; top:0; bottom:0; width:50%; pointer-events:auto;
@@ -502,6 +502,13 @@
   #installDismiss { flex:0 0 auto; width:28px; height:28px; border:0; background:transparent;
     color:#aebbd0; font:500 20px/1 var(--body); cursor:pointer; }
   #installPrompt.instructions { font-size:10px; }
+  #updatePrompt { position:fixed; z-index:31; left:50%; top:max(12px,env(safe-area-inset-top));
+    transform:translateX(-50%); width:min(92vw,520px); padding:11px 14px;
+    border:1px solid rgba(181,124,255,.76); border-radius:5px;
+    background:linear-gradient(135deg,rgba(37,25,61,.97),rgba(7,12,24,.97));
+    box-shadow:0 10px 30px rgba(0,0,0,.38),0 0 18px rgba(181,124,255,.18);
+    color:#eee4ff; text-align:center; font:850 10px/1.25 var(--body);
+    letter-spacing:1px; text-transform:uppercase; pointer-events:none; }
 
   body.touch-capable { overscroll-behavior:none; }
   body.touch-capable canvas#game { touch-action:none; }
@@ -603,6 +610,9 @@
   <span id="installMessage">Install for fullscreen play and quicker launches.</span>
   <button id="installButton" type="button">INSTALL</button>
   <button id="installDismiss" type="button" aria-label="Dismiss install suggestion">×</button>
+</aside>
+<aside id="updatePrompt" hidden role="status" aria-live="polite">
+  Update ready · restarting when you return to the Atrium
 </aside>
 
 <div id="clickcatch" style="display:flex">
