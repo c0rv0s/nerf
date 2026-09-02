@@ -20,7 +20,7 @@ export function longShotAwardForDistance(distance) {
     return {
       key: 'longShot100',
       title: `${displayDistance} LONG SHOT`,
-      subtitle: 'PRECISION FROM AFAR',
+      subtitle: 'LONG RANGE PRECISION',
       color: '#8ef7a8',
     };
   }
