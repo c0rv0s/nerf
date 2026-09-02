@@ -710,7 +710,21 @@ function rampSupportY(r, x, z, pad = 0) {
   if (along < min - pad - (r.supportPad0 || 0) || along > max + pad + (r.supportPad1 || 0)) return null;
   if (along <= min) return r.h0;
   if (along >= max) return r.h1;
-  return rampSurfaceY(r, x, z);
+  const surface = rampSurfaceY(r, x, z);
+  // A flush deck face begins blocking the capsule before its feet reach the
+  // exact ramp endpoint. Maps can raise collision support through the final
+  // approach so the capsule clears that face without changing visible geometry.
+  if (r.crestBlend0 > 0 && r.h0 > r.h1 && along < min + r.crestBlend0) {
+    const t = clamp((along - min) / r.crestBlend0, 0, 1);
+    const eased = t * t * (3 - 2 * t);
+    return r.h0 + (surface - r.h0) * eased;
+  }
+  if (r.crestBlend1 > 0 && r.h1 > r.h0 && along > max - r.crestBlend1) {
+    const t = clamp((max - along) / r.crestBlend1, 0, 1);
+    const eased = t * t * (3 - 2 * t);
+    return r.h1 + (surface - r.h1) * eased;
+  }
+  return surface;
 }
 
 // Push a sphere out of colliders. Mutates pos; returns ground normal y (0 if airborne).

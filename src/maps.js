@@ -862,8 +862,14 @@ function mergeStatic(scene, world) {
 }
 
 // Walkable slope. Rises along `axis` from h0 (at min end) to h1 (at max end).
-function addRamp(scene, world, { axis, minX, maxX, minZ, maxZ, h0, h1, color, tex = 'panel', visualInset = 0, supportPad0 = 0, supportPad1 = 0 }) {
-  world.ramps.push({ axis, minX, maxX, minZ, maxZ, h0, h1, supportPad0, supportPad1 });
+function addRamp(scene, world, {
+  axis, minX, maxX, minZ, maxZ, h0, h1, color, tex = 'panel', visualInset = 0,
+  supportPad0 = 0, supportPad1 = 0, crestBlend0 = 0, crestBlend1 = 0,
+}) {
+  world.ramps.push({
+    axis, minX, maxX, minZ, maxZ, h0, h1,
+    supportPad0, supportPad1, crestBlend0, crestBlend1,
+  });
   const len = axis === 'x' ? maxX - minX : maxZ - minZ;
   const width = axis === 'x' ? maxZ - minZ : maxX - minX;
   const dh = h1 - h0;
@@ -8171,19 +8177,23 @@ function buildInfiniteBloom(scene) {
   };
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'z', minX: -4, maxX: 4, minZ: 12, maxZ: 18,
-    h0: 0, h1: 4, color: 0xd9ef20, supportPad1: RAMP_LANDING_SUPPORT,
+    h0: 0, h1: 4, color: 0xd9ef20,
+    supportPad1: RAMP_LANDING_SUPPORT, crestBlend1: RAMP_LANDING_SUPPORT,
   }), 0xbfd923);
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'z', minX: -4, maxX: 4, minZ: -18, maxZ: -12,
-    h0: 4, h1: 0, color: 0xe53e13, supportPad0: RAMP_LANDING_SUPPORT,
+    h0: 4, h1: 0, color: 0xe53e13,
+    supportPad0: RAMP_LANDING_SUPPORT, crestBlend0: RAMP_LANDING_SUPPORT,
   }), 0xe1531d);
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'x', minX: 12, maxX: 18, minZ: -4, maxZ: 4,
-    h0: 0, h1: 4, color: 0xff9d12, supportPad1: RAMP_LANDING_SUPPORT,
+    h0: 0, h1: 4, color: 0xff9d12,
+    supportPad1: RAMP_LANDING_SUPPORT, crestBlend1: RAMP_LANDING_SUPPORT,
   }), 0xe8931b);
   styleBloomRamp(addRamp(arenaRoot, world, {
     axis: 'x', minX: -18, maxX: -12, minZ: -4, maxZ: 4,
-    h0: 4, h1: 0, color: 0x69d51a, supportPad0: RAMP_LANDING_SUPPORT,
+    h0: 4, h1: 0, color: 0x69d51a,
+    supportPad0: RAMP_LANDING_SUPPORT, crestBlend0: RAMP_LANDING_SUPPORT,
   }), 0x64c522);
 
   // Blocky machine-elf totems stare toward the center. The texture crop on
@@ -8392,22 +8402,33 @@ function buildInfiniteBloom(scene) {
   const pickupMirrors = new Map();
   const mirrorScales = [INNER_SCALE, PORTAL_SCALE];
   const ACTOR_SEAM_BLEND = 8;
+  const SEAM_MOVE_MIN_SCALE = 0.78;
+  const SEAM_MOVE_RECOVERY = 0.45;
 
   // Bodies change representative at the 7m/36m similarity seam. Ease their
   // *height* toward the adjacent layer's scale over the last few metres, but
   // keep the group origin at the feet. Scaling around the eye lifted grounded
   // actors several metres into the air on the corresponding outer copy.
-  const seamVisualScale = point => {
+  const seamBlend = point => {
     const norm = Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(point.z));
     const seamT = THREE.MathUtils.clamp(
       (norm - PORTAL_HALF) / ACTOR_SEAM_BLEND,
       0,
       1,
     );
-    const easedT = seamT * seamT * (3 - 2 * seamT);
-    return THREE.MathUtils.lerp(INNER_SCALE, 1, easedT);
+    return seamT * seamT * (3 - 2 * seamT);
   };
+  const seamVisualScale = point => THREE.MathUtils.lerp(INNER_SCALE, 1, seamBlend(point));
+  const seamMoveScale = point => THREE.MathUtils.lerp(SEAM_MOVE_MIN_SCALE, 1, seamBlend(point));
   world.characterVisualScale = character => seamVisualScale(character.pos);
+  world.characterMoveScale = character => {
+    const positionalScale = seamMoveScale(character.pos);
+    const elapsed = (world._t || 0) - (character._bloomMoveSlowAt ?? -Infinity);
+    if (elapsed >= SEAM_MOVE_RECOVERY) return positionalScale;
+    const recoveryT = THREE.MathUtils.clamp(elapsed / SEAM_MOVE_RECOVERY, 0, 1);
+    const easedT = recoveryT * recoveryT * (3 - 2 * recoveryT);
+    return Math.min(positionalScale, THREE.MathUtils.lerp(SEAM_MOVE_MIN_SCALE, 1, easedT));
+  };
 
   const actorSource = character => world.characterMirrorSource?.(character) ||
     character?.recursiveRenderSource || character?.mesh || null;
@@ -8888,10 +8909,9 @@ function buildInfiniteBloom(scene) {
     }
     // Position is a feet-space coordinate. Scaling it directly keeps y=0
     // fixed for a grounded crossing and preserves full 3D similarity for a
-    // player falling through the recursive opening. Grounded runners retain
-    // their planar gameplay velocity across the chart rebase. Actor height
-    // still blends visually at the seam, but chasing and dodging never inherit
-    // the adjacent layer's scale as a movement slowdown or speed burst.
+    // player falling through the recursive opening. Grounded runners get a
+    // shallow, short movement blend instead of inheriting the adjacent layer's
+    // full 0.194x scale or keeping enough speed to read as a seam boost.
     const planarFloorCrossing = up.y > 0.9 &&
       Math.abs(previous.y) < 0.25 && Math.abs(character.pos.y) < 0.25 &&
       Math.abs(character.vel.y) < 2;
@@ -8907,6 +8927,14 @@ function buildInfiniteBloom(scene) {
     if (planarFloorCrossing) {
       character.pos.y = 0;
       character.vel.y = 0;
+      if (factor < 1) {
+        const beforeScale = seamMoveScale(previous);
+        const afterScale = seamMoveScale(character.pos);
+        const velocityScale = beforeScale > 0 ? Math.min(1, afterScale / beforeScale) : 1;
+        character.vel.x *= velocityScale;
+        character.vel.z *= velocityScale;
+      }
+      character._bloomMoveSlowAt = world._t || 0;
     }
     if (factor > 1 && character.vel.y < -12) character.vel.y = -12;
     character.grounded = planarFloorCrossing;
