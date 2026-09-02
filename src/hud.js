@@ -207,7 +207,7 @@ export class HUD {
       headshot: 'Headshot',
       headshot2: 'Double HS', headshot3: 'Triple HS', headshot4: 'Quad HS',
       headshot5: 'Penta HS', headshot6: 'Hexa HS', headshot7: 'Septuple HS',
-      longShot100: '100m Long Shot', longShot250: '250m Long Shot', deadEye500: '500m Dead Eye',
+      longShot100: 'Long Shot', longShot250: 'Long Shot', deadEye500: 'Dead Eye',
       multi2: 'Double', multi3: 'Triple', multi4: 'Quad', multi5: 'Penta', multi6: 'Hexa', multi7: 'Septuple',
       oneShot2: '1S2K', oneShot3: '1S3K', oneShot4: '1S4K', oneShot5: '1S5K', oneShot6: '1S6K', oneShot7: '1S7K',
     };
