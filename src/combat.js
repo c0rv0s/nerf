@@ -7,15 +7,21 @@ export function damageMultiplierForPowerup(powerup) {
 export function longShotAwardForDistance(distance) {
   const metres = Number(distance);
   if (!Number.isFinite(metres)) return null;
-  const title = `${Math.floor(metres)}M`;
+  const displayDistance = `${Math.floor(metres)}M`;
   if (metres > 500) {
     return {
-      key: 'deadEye500', title, label: 'DEAD EYE', color: '#b57cff',
+      key: 'deadEye500',
+      title: `${displayDistance} DEAD EYE`,
+      subtitle: 'EXTREME-RANGE PRECISION',
+      color: '#b57cff',
     };
   }
   if (metres > 100) {
     return {
-      key: 'longShot100', title, label: 'LONG SHOT', color: '#8ef7a8',
+      key: 'longShot100',
+      title: `${displayDistance} LONG SHOT`,
+      subtitle: 'PRECISION FROM AFAR',
+      color: '#8ef7a8',
     };
   }
   return null;

@@ -42,15 +42,15 @@ test('long-shot awards use actual distance above 100m and Dead Eye above 500m', 
   assert.equal(longShotAwardForDistance(99.99), null);
   assert.equal(longShotAwardForDistance(100), null);
   assert.deepEqual(longShotAwardForDistance(101.25), {
-    key: 'longShot100', title: '101M', label: 'LONG SHOT', color: '#8ef7a8',
+    key: 'longShot100', title: '101M LONG SHOT', subtitle: 'PRECISION FROM AFAR', color: '#8ef7a8',
   });
   assert.deepEqual(longShotAwardForDistance(249.99), {
-    key: 'longShot100', title: '249M', label: 'LONG SHOT', color: '#8ef7a8',
+    key: 'longShot100', title: '249M LONG SHOT', subtitle: 'PRECISION FROM AFAR', color: '#8ef7a8',
   });
   assert.deepEqual(longShotAwardForDistance(500), {
-    key: 'longShot100', title: '500M', label: 'LONG SHOT', color: '#8ef7a8',
+    key: 'longShot100', title: '500M LONG SHOT', subtitle: 'PRECISION FROM AFAR', color: '#8ef7a8',
   });
   assert.deepEqual(longShotAwardForDistance(500.01), {
-    key: 'deadEye500', title: '500M', label: 'DEAD EYE', color: '#b57cff',
+    key: 'deadEye500', title: '500M DEAD EYE', subtitle: 'EXTREME-RANGE PRECISION', color: '#b57cff',
   });
 });

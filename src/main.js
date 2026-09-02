@@ -4290,7 +4290,7 @@ function recordKillAwards(attacker, target, ctx = {}) {
       attacker,
       longShot.key,
       longShot.title,
-      longShot.label,
+      longShot.subtitle,
       longShot.color,
     );
   }
