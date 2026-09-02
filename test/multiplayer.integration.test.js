@@ -106,7 +106,7 @@ test('Red Rock snapshots use the 500 by 400 metre rectangular bounds', {
   skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
 }, async (t) => {
   assert.deepEqual(RED_ROCK_RANGE_BOUNDS, {
-    width: 500, depth: 400, halfX: 250, halfZ: 200,
+    width: 500, depth: 400, halfX: 250, halfZ: 200, expansionPerEdge: 21.5,
   });
   const port = await freePort();
   const server = await startServer(port);

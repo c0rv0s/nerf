@@ -4416,7 +4416,8 @@ function buildOldWest(scene) {
     horseGallopDuration: 15, horseGallopRecharge: 0.65,
   });
   scene.background = new THREE.Color(0x79b6d0);
-  scene.fog = new THREE.Fog(0xd8a366, 300, 920);
+  const horizonExtension = RED_ROCK_RANGE_BOUNDS.expansionPerEdge;
+  scene.fog = new THREE.Fog(0xd8a366, 300 + horizonExtension, 920 + horizonExtension);
   baseLighting(scene, 0xffd9a4, 0x71402c, [-85, 125, 55], 260);
   addDaytimeSkyDome(scene);
 

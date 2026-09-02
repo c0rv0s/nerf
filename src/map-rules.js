@@ -7,6 +7,7 @@ export const RED_ROCK_RANGE_BOUNDS = Object.freeze({
   depth: 400,
   halfX: 250,
   halfZ: 200,
+  expansionPerEdge: 21.5,
 });
 
 const MAP_PLAYER_LIMITS = Object.freeze({
