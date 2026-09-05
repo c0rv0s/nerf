@@ -78,22 +78,23 @@ const WORLD_EVENT_IDS = new Set([
 ]);
 const PROFANITY = /\b(?:asshole|bastard|bitch|bullshit|cock|cunt|damn|dick|fuck(?:er|ing)?|motherfucker|nigg(?:er|a)|piss|shit|slut|wanker|whore)\b/gi;
 const MAPS = [
+  { id: 'orrery', name: 'THE ORRERY', bounds: 65, spawns: [[-50,.1,10],[-50,.1,-10],[-46,.1,0],[-14,10.1,-8],[50,.1,10],[50,.1,-10],[46,.1,0],[14,10.1,8],[10,.1,51],[-8,.1,-52],[0,10.1,44.5],[0,10.1,-44.5]] },
   { id: 'arena', name: 'BLAST COMPLEX', bounds: 62, spawns: [[-22, 0.1, -22], [22, 0.1, 22], [-22, 0.1, 22], [22, 0.1, -22], [0, 0.1, -30], [0, 0.1, 30], [-30, 0.1, 0], [30, 0.1, 0]] },
-  { id: 'fortress', name: 'FORTRESS FALLS', bounds: 70, spawns: [[-45, 0.1, -20], [45, 0.1, 20], [-45, 0.1, 20], [45, 0.1, -20], [0, 0.1, -42], [0, 0.1, 42], [-25, 0.1, 0], [25, 0.1, 0]] },
+  { id: 'fortress', name: 'FORTRESS FALLS', bounds: 77, spawns: [[-60, 0.1, 30], [60, 0.1, -30], [-60, 0.1, -30], [60, 0.1, 30], [0, 0.1, -40], [0, 0.1, 42], [-30, 0.1, -40], [30, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0], [-72, 0.1, 8], [72, 0.1, 8]] },
   { id: 'oldwest', name: 'RED ROCK RANGE', bounds: { x: RED_ROCK_RANGE_BOUNDS.halfX, z: RED_ROCK_RANGE_BOUNDS.halfZ }, spawns: [[-190, 0.1, -108], [190, 0.1, 108], [-190, 0.1, 108], [190, 0.1, -108], [0, 0.1, -152], [0, 0.1, 152], [-172, 0.1, 0], [172, 0.1, 0]] },
-  { id: 'asteroids', name: 'ASTEROID BELT', bounds: 78, spawns: [[-45, 8, -20], [45, 8, 20], [-30, 8, 35], [30, 8, -35], [0, 8, -45], [0, 8, 45], [-55, 8, 0], [55, 8, 0]] },
+  { id: 'asteroids', name: 'ASTEROID BELT', bounds: 90, spawns: [[-75, 14.2, 0], [75, 14.2, 0], [0, 12.4, -48], [-5.5, 2.4, 44], [-40, 8.4, -18], [40, 8.4, 18], [-44, 13.4, -46], [44, 0.4, 46], [-8, 9.3, -2]] },
   // Mirrors buildCanopy's FFA pool. The previous corner coordinates were
   // inside the solid tree trunks, so the authoritative multiplayer snapshot
   // could repeatedly snap players into scenery.
   { id: 'canopy', name: 'CANOPY', bounds: 78, spawns: [[-32, 10.2, -40], [32, 10.2, 40], [0, 8.2, -7], [-68, 0.1, 25], [68, 0.1, -25], [
     -40, 20.2, 40], [40, 20.2, -40], [8, 10.2, 45], [-8, 10.2, -45], [-34, 0.1, -30], [34, 0.1, -30], [-34, 0.1, 30], [34, 0.1, 30]] },
   { id: 'mycelium', name: 'MYCELIUM GROVE', bounds: 82, spawns: [
-    [-72, 0.1, 55], [-72, 0.1, -25], [-34.2, 7.2, -5], [-10, 10.2, -66],
+    [-72, 0.1, 55], [-72, 2.3, -25], [-34.2, 7.2, -5], [-10, 10.2, -66],
     [72, 0.1, 55], [72, 0.1, -25], [34.2, 7.2, -4], [10, 10.2, -66],
     [0, 0.1, 63], [0, 0.1, 18], [3.1, 8.2, 8], [3.1, 15.2, 8],
-    [0, 0.25, -63], [-52, 7.7, 43],
+    [-4, 0.25, -66], [-52, 10.3, 43],
   ] },
-  { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-55, 0.1, -35], [55, 0.1, 35], [-55, 0.1, 35], [55, 0.1, -35], [0, 16, -35], [0, 16, 35], [-35, 8, 0], [35, 8, 0]] },
+  { id: 'city', name: 'NEON HEIGHTS', bounds: 86, spawns: [[-58, 12.2, -35], [32, 18.2, 34], [64, 10.2, 30], [0, 0.1, -56], [0, 0.1, 56], [-40, 0.1, 0], [52, 0.1, 0], [-18, 20.2, -42], [-21, 8.2, 32], [-64, 24.2, 39], [8, 10.2, 5.3], [24, 28.2, -43]] },
   { id: 'sanctum', name: 'THE LABYRINTH', bounds: 64, spawns: [[-32, 0.1, -32], [32, 0.1, 32], [-32, 0.1, 32], [32, 0.1, -32], [0, 0.1, -40], [0, 0.1, 40], [-40, 0.1, 0], [40, 0.1, 0]] },
   { id: 'tidebreaker', name: 'TIDEBREAKER', bounds: 82, spawns: [[-50, 14.2, -8], [-50, 14.2, 8], [-35, 8.2, -34], [-12, 8.2, 34], [18, 8.2, -34], [38, 8.2, 34], [49, 8.2, -18], [49, 8.2, 18]] },
   // Bounds extend beyond the 120m shark line so authoritative multiplayer
@@ -106,8 +107,8 @@ const MAPS = [
   { id: 'prism', name: 'PRISM RUN', secret: true, bounds: 44, spawns: [[-20, 0.1, -20], [20, 0.1, 20], [-20, 0.1, 20], [20, 0.1, -20], [0, 0.1, -25], [0, 0.1, 25], [-25, 0.1, 0], [25, 0.1, 0]] },
   { id: 'bloom', name: 'INFINITE BLOOM', secret: true, bounds: 48, spawns: [[-24, 0.1, -24], [24, 0.1, 24], [-24, 0.1, 24], [24, 0.1, -24], [0, 0.1, -27], [0, 0.1, 27], [-27, 0.1, 0], [27, 0.1, 0]] },
   // Mirrors buildSolarFlare FFA spawns. Bounds cover the sunward wing tip (~x97 / z-61).
-  { id: 'solar', name: 'SOLAR FLARE', secret: true, bounds: 110, spawns: [[-48, 0.1, -6], [-48, 0.1, 6], [-8, 7.4, 8], [30, 0.1, 20], [38, 0.1, 30], [45, 7.4, 4], [0, 0.1, 8], [5, 7.4, -8], [75, 7.5, 8]] },
-  { id: 'olympus', name: 'OLYMPUS MONS', secret: true, bounds: 170, spawns: [[-18, 60.6, 32], [18, 60.6, 32], [-52, 60.6, 38], [52, 60.6, 38], [-44, 60.6, -14], [44, 60.6, -14], [-15, 60.6, -52], [15, 60.6, -52], [-44, 74.6, 20], [44, 74.6, 20], [-20, 90.6, 26], [20, 90.6, 26]] },
+  { id: 'solar', name: 'SOLAR FLARE', secret: true, bounds: 110, spawns: [[-8, 0.1, -8], [-8, 0.1, 3], [-11, 7.4, 8], [30, 0.1, 20], [33, 0.1, 31], [49, 7.4, 6], [0, 0.1, 5], [5, 7.4, -8], [75, 7.5, 8]] },
+  { id: 'olympus', name: 'OLYMPUS MONS', secret: true, bounds: 430, spawns: [[-18, 60.6, 32], [18, 60.6, 32], [-52, 60.6, 38], [52, 60.6, 38], [-44, 60.6, -14], [44, 60.6, -14], [-15, 60.6, -52], [15, 60.6, -52], [-44, 74.6, 20], [44, 74.6, 20], [-20, 90.6, 26], [20, 90.6, 26]] },
 ];
 const LEADERBOARD_MAP_IDS = new Set([...MAPS.map(map => map.id), 'olympus']);
 
@@ -573,11 +574,21 @@ function handleMessage(conn, msg) {
     const weapon = String(msg.weapon || slot.weapon || 'blaster');
     const input = {
       seq,
+      life: clampInt(msg.life, 0, 999),
+      motionEpoch: Math.max(-1000000, Math.min(1000000, Math.trunc(finite(msg.motionEpoch, 0)))),
+      ...(Array.isArray(msg.shots) ? { shots: msg.shots.slice(0,32).filter(s =>
+        Number.isSafeInteger(s?.seq) && s.seq > 0 && WEAPON_IDS.has(s.weapon)).map(s => ({
+          seq:s.seq, weapon:s.weapon, life:clampInt(s.life,0,999),
+          sampledAt: Math.max(now-10000,Math.min(now+100,finite(s.sampledAt,now))),
+          aim:sanitizeUnitVec(s.aim,{x:0,y:0,z:-1}),
+          up:sanitizeUnitVec(s.up,{x:0,y:1,z:0}),
+        })) } : {}),
       yaw: finite(msg.yaw, slot.yaw),
       pitch: Math.max(-1.55, Math.min(1.55, finite(msg.pitch, slot.pitch))),
       up: sanitizeUnitVec(msg.up, slot.up || { x: 0, y: 1, z: 0 }),
       aim: sanitizeUnitVec(msg.aim, slot.aim || { x: 0, y: 0, z: -1 }),
       firing: !!msg.firing,
+      warmupRemaining: weapon === 'whomper' ? Math.max(0,Math.min(5,finite(msg.warmupRemaining,0))) : 0,
       weapon: WEAPON_IDS.has(weapon) ? weapon : 'blaster',
       jetpackActive: msg.jetpackActive === true,
       sampledAt,
@@ -1205,6 +1216,7 @@ function publicSlots(lobby) {
     score: s.score || 0,
     kills: s.kills || 0,
     deaths: s.deaths || 0,
+    shotAck: s.shotAck || 0,
   }));
 }
 
@@ -1409,10 +1421,13 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
       team: canonical?.team || String(p.team || id).slice(0, 32),
       color: canonical?.color || (/^#[0-9a-f]{6}$/i.test(String(p.color || '')) ? p.color : COLORS[i % COLORS.length]),
       pos,
+      shotAck: clampInt(p.shotAck, 0, Number.MAX_SAFE_INTEGER),
+      motionEpoch: Math.max(-1000000,Math.min(1000000,Math.trunc(finite(p.motionEpoch,0)))),
       vel: sanitizeVel(p.vel),
       yaw: finite(p.yaw, 0),
       pitch: Math.max(-1.55, Math.min(1.55, finite(p.pitch, 0))),
       up: sanitizeUnitVec(p.up, { x: 0, y: 1, z: 0 }),
+      aim: sanitizeUnitVec(p.aim, { x: -Math.sin(finite(p.yaw,0)), y: 0, z: -Math.cos(finite(p.yaw,0)) }),
       hp: Math.max(0, Math.min(100, finite(p.hp, 100))),
       shield: Math.max(0, Math.min(75, finite(p.shield, 0))),
       alive: p.alive !== false,
@@ -1439,7 +1454,9 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     sanitizedPlayers.push({
       id, name: slot.name, human: true, team: slot.team, color: slot.color,
       pos: slot.pos || { x: 0, y: 0, z: 0 }, yaw: slot.yaw || 0, pitch: slot.pitch || 0,
+      shotAck: slot.shotAck || 0, motionEpoch: slot.motionEpoch || 0,
       vel: slot.vel || { x: 0, y: 0, z: 0 },
+      aim: slot.aim || {x:0,y:0,z:-1},
       up: slot.up || { x: 0, y: 1, z: 0 }, hp: slot.hp ?? 100, shield: slot.shield || 0,
       alive: slot.alive !== false,
       score: slot.score || 0, kills: slot.kills || 0, deaths: slot.deaths || 0,
@@ -1476,6 +1493,7 @@ function sanitizeHostSnapshot(snapshot, lobby, snapshotSeq) {
     sampledAt,
     authorityEpoch: lobby.authorityEpoch,
     seq: snapshotSeq,
+    shotProtocol: snapshot.shotProtocol === 1 ? 1 : 0,
     phase: lobby.phase,
     phaseEndsAt: lobby.phaseEndsAt,
     mapId: lobby.map.id,
@@ -1606,6 +1624,9 @@ function mergeHostSnapshot(lobby, snap) {
     if (!p) continue;
     slot.pos = p.pos;
     slot.vel = p.vel;
+    slot.aim = p.aim;
+    slot.shotAck = p.shotAck;
+    slot.motionEpoch = p.motionEpoch;
     slot.yaw = p.yaw;
     slot.pitch = p.pitch;
     slot.up = p.up;

@@ -102,6 +102,43 @@ async function startServer(port, env = {}) {
   return child;
 }
 
+test('The Orrery is publicly selectable and preserves the rotating deck clock', {
+  skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
+}, async (t) => {
+  const port = await freePort();
+  const server = await startServer(port);
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.close();
+    server.kill('SIGTERM');
+    await once(server, 'exit').catch(() => {});
+  });
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const host = new TestClient(url, 'Host', 'orrery_host_token_1234567');
+  const guest = new TestClient(url, 'Guest', 'orrery_guest_token_123456');
+  clients.push(host, guest);
+  const [joined] = await Promise.all([host.joined, guest.joined]);
+  host.send({ type: 'voteMap', mapId: 'orrery' });
+  guest.send({ type: 'voteMap', mapId: 'orrery' });
+  const playing = await host.waitFor(message =>
+    message.type === 'phaseChanged' && message.phase === 'playing', 4000);
+  assert.equal(playing.mapId, 'orrery');
+  host.send({
+    type: 'hostSnapshot', authorityEpoch: playing.authorityEpoch, seq: 1,
+    snapshot: {
+      worldTime: 12.5,
+      players: [{ id: joined.slotId, name: 'Host', human: true,
+        pos: { x: 44.5, y: 10, z: 0 }, hp: 100, alive: true,
+        weapons: ['blaster'], ammo: {} }],
+      events: [], drops: [],
+    },
+  });
+  const snapshot = await guest.waitFor(message => message.type === 'snapshot' && message.seq === 1);
+  assert.equal(snapshot.worldTime, 12.5);
+  assert.deepEqual(snapshot.players.find(player => player.id === joined.slotId).pos,
+    { x: 44.5, y: 10, z: 0 });
+});
+
 test('Red Rock snapshots use the 500 by 400 metre rectangular bounds', {
   skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
 }, async (t) => {
@@ -156,6 +193,60 @@ test('Red Rock snapshots use the 500 by 400 metre rectangular bounds', {
     x: RED_ROCK_RANGE_BOUNDS.halfX,
     y: 0.1,
     z: RED_ROCK_RANGE_BOUNDS.halfZ,
+  });
+});
+
+test('Olympus snapshots preserve the expanded lava moat bounds', {
+  skip: typeof WebSocket === 'undefined' ? 'Requires the Node WebSocket client' : false,
+}, async (t) => {
+  const port = await freePort();
+  const server = await startServer(port);
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.close();
+    server.kill('SIGTERM');
+    await once(server, 'exit').catch(() => {});
+  });
+
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const host = new TestClient(url, 'Host', 'olympus_bounds_host_12345');
+  clients.push(host);
+  const hostJoined = await host.joined;
+  const guest = new TestClient(url, 'Guest', 'olympus_bounds_guest_1234');
+  clients.push(guest);
+  await guest.joined;
+
+  host.send({ type: 'voteMap', mapId: 'olympus' });
+  guest.send({ type: 'voteMap', mapId: 'olympus' });
+  const playing = await host.waitFor(message =>
+    message.type === 'phaseChanged' && message.phase === 'playing', 4000);
+
+  host.send({
+    type: 'hostSnapshot',
+    authorityEpoch: playing.authorityEpoch,
+    seq: 1,
+    snapshot: {
+      players: [{
+        id: hostJoined.slotId,
+        name: 'Host',
+        human: true,
+        pos: { x: 999, y: 0.1, z: 999 },
+        hp: 100,
+        alive: true,
+        weapons: ['blaster'],
+        ammo: {},
+      }],
+      events: [],
+      drops: [],
+    },
+  });
+
+  const snapshot = await guest.waitFor(message => message.type === 'snapshot' && message.seq === 1);
+  const hostState = snapshot.players.find(player => player.id === hostJoined.slotId);
+  assert.deepEqual(hostState.pos, {
+    x: 430,
+    y: 0.1,
+    z: 430,
   });
 });
 
@@ -629,4 +720,31 @@ test('host failover carries combat state forward and pauses the match clock', {
   assert.equal(restoredGuest.shield, 29);
   assert.equal(restoredGuest.damageMult, 3);
   assert.deepEqual(restoredGuest.powerup, { kind: 'gold', timeLeft: 17 });
+});
+
+
+test('shot requests, life and seam frames survive relay and acknowledgements survive host handoff', {
+  skip: typeof WebSocket === 'undefined' ? 'Requires Node WebSocket' : false,
+}, async (t) => {
+  const port = await freePort();
+  const server = await startServer(port, {HOST_SNAPSHOT_TIMEOUT_MS:'500',HOST_INITIAL_SNAPSHOT_TIMEOUT_MS:'500'});
+  const clients=[];
+  t.after(async()=>{for(const c of clients)c.close();server.kill('SIGTERM');await once(server,'exit').catch(()=>{});});
+  const host=new TestClient(`ws://127.0.0.1:${port}/ws`,'Host','shots_host_123456789');clients.push(host);const h=await host.joined;
+  const guest=new TestClient(`ws://127.0.0.1:${port}/ws`,'Guest','shots_guest_12345678');clients.push(guest);const g=await guest.joined;
+  host.send({type:'voteMap',mapId:'bloom'});guest.send({type:'voteMap',mapId:'bloom'});
+  const playing=await host.waitFor(m=>m.type==='phaseChanged'&&m.phase==='playing',4000);
+  const player=(id)=>({id,pos:{x:20,y:0,z:0},vel:{x:0,y:0,z:0},hp:100,alive:true,weapons:['blaster','scatter'],ammo:{scatter:5},weapon:'scatter'});
+  host.send({type:'hostSnapshot',authorityEpoch:playing.authorityEpoch,seq:1,snapshot:{players:[player(h.slotId),player(g.slotId)],events:[],drops:[]}});
+  await guest.waitFor(m=>m.type==='snapshot'&&m.seq===1);
+  const request={seq:1,weapon:'scatter',life:0,sampledAt:Date.now(),aim:{x:1,y:0,z:0},up:{x:1,y:0,z:0}};
+  guest.send({type:'input',authorityEpoch:playing.authorityEpoch,seq:1,pos:{x:20,y:0,z:0},vel:{x:0,y:0,z:0},firing:false,shots:[request],life:0,motionEpoch:3});
+  const input=(await host.waitFor(m=>m.type==='remoteInput'&&m.input.seq===1)).input;
+  assert.equal(input.firing,false);assert.deepEqual(input.shots,[request]);assert.equal(input.motionEpoch,3);
+  host.send({type:'hostSnapshot',authorityEpoch:playing.authorityEpoch,seq:2,snapshot:{shotProtocol:1,players:[player(h.slotId),{...player(g.slotId),shotAck:1,motionEpoch:3,aim:{x:1,y:0,z:0},up:{x:1,y:0,z:0},ammo:{scatter:4}}],events:[],drops:[]}});
+  const snap=await guest.waitFor(m=>m.type==='snapshot'&&m.seq===2);
+  assert.equal(snap.shotProtocol,1);
+  const state=snap.players.find(p=>p.id===g.slotId);assert.equal(state.shotAck,1);assert.equal(state.motionEpoch,3);assert.deepEqual(state.up,{x:1,y:0,z:0});assert.deepEqual(state.aim,{x:1,y:0,z:0});
+  const changed=await guest.waitFor(m=>m.type==='hostChanged'&&m.isHost,2000);
+  assert.equal(changed.snapshot.players.find(p=>p.id===g.slotId).shotAck,1);
 });

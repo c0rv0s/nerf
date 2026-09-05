@@ -1,0 +1,230 @@
+{
+  "before": {
+    "calls": 151,
+    "triangles": 17216,
+    "colliders": 170
+  },
+  "after": {
+    "map": "city",
+    "calls": 210,
+    "triangles": 53888,
+    "colliders": 193,
+    "issues": 0,
+    "meshes": 215
+  },
+  "city": {
+    "map": "city",
+    "transit": {
+      "checks": 36440,
+      "failures": [],
+      "boarding": [
+        {
+          "station": 0,
+          "end": [
+            -1.4527511683699015e-16,
+            10,
+            -5.330376831967016
+          ],
+          "passed": true
+        },
+        {
+          "station": 1,
+          "end": [
+            -53,
+            10,
+            -5.330376831967016
+          ],
+          "passed": true
+        },
+        {
+          "station": 2,
+          "end": [
+            52.99999999999994,
+            10,
+            -5.330376831967016
+          ],
+          "passed": true
+        }
+      ],
+      "walking": [
+        {
+          "route": 0,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 0,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 1,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 1,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 2,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 2,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 3,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 3,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 4,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 4,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 5,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 5,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 6,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 6,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 7,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 7,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 8,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 8,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 9,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 9,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 10,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 10,
+          "reverse": true,
+          "failure": null
+        },
+        {
+          "route": 11,
+          "reverse": false,
+          "failure": null
+        },
+        {
+          "route": 11,
+          "reverse": true,
+          "failure": null
+        }
+      ],
+      "maxRiderDrift": 0.6332566304209024,
+      "cycleSeconds": 35.69222531997354,
+      "routeLength": 455.2289570394178
+    },
+    "checks": 38254,
+    "failures": [],
+    "rayChecks": 648,
+    "candidates": 7702,
+    "exhaustive": 71352,
+    "candidateReductionPercent": 89,
+    "navigationComponents": [
+      246
+    ],
+    "blockedSpawns": []
+  },
+  "fortress": {
+    "map": "fortress",
+    "transit": null,
+    "checks": 1043,
+    "failures": [],
+    "rayChecks": 0,
+    "candidates": 0,
+    "exhaustive": 0,
+    "candidateReductionPercent": null,
+    "navigationComponents": [
+      182
+    ],
+    "blockedSpawns": []
+  },
+  "fortressRampWalks": {
+    "ramps": 25,
+    "directions": 2,
+    "failures": 0
+  },
+  "gameSmoke": {
+    "map": "city",
+    "characters": 8,
+    "finite": true,
+    "transit": {
+      "position": [
+        -53,
+        10,
+        0
+      ],
+      "tangent": [
+        -1,
+        0,
+        0
+      ],
+      "distance": 53,
+      "doors": 1,
+      "station": 1
+    },
+    "player": [
+      -21,
+      8,
+      32
+    ]
+  }
+}

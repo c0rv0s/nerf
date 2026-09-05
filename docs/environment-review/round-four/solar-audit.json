@@ -1,0 +1,83 @@
+{
+  "stats": {
+    "map": "solar",
+    "calls": 114,
+    "triangles": 70112,
+    "colliders": 185,
+    "issues": 0,
+    "meshes": 57
+  },
+  "geometry": {
+    "map": "solar",
+    "transit": null,
+    "checks": 223,
+    "failures": [],
+    "rayChecks": 162,
+    "candidates": 3032,
+    "exhaustive": 5400,
+    "candidateReductionPercent": 44,
+    "navigationComponents": [
+      69,
+      5,
+      1,
+      1,
+      1,
+      1
+    ],
+    "blockedSpawns": []
+  },
+  "integration": {
+    "map": "solar",
+    "checks": 46,
+    "failures": [],
+    "details": {
+      "walks": [
+        {
+          "route": 0,
+          "reverse": false,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            33.819246058041614,
+            -4.9873299934333204e-18,
+            20.00325419409612
+          ]
+        },
+        {
+          "route": 0,
+          "reverse": true,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            0.16739123866373234,
+            1.3010426069826053e-18,
+            0.17180143585641172
+          ]
+        },
+        {
+          "route": 1,
+          "reverse": false,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            35.20581573177159,
+            7.4,
+            24.98218085261611
+          ]
+        },
+        {
+          "route": 1,
+          "reverse": true,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            10.221156164008555,
+            7.3999999999999995,
+            1.2468045283491025e-06
+          ]
+        }
+      ],
+      "spawnFailures": []
+    }
+  }
+}

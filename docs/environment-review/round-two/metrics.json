@@ -1,0 +1,118 @@
+{
+  "myceliumBefore": {
+    "map": "mycelium",
+    "calls": 848,
+    "triangles": 705605,
+    "colliders": 1970,
+    "issues": 0,
+    "meshes": 921
+  },
+  "arenaBefore": {
+    "map": "arena",
+    "calls": 100,
+    "triangles": 9286,
+    "colliders": 207,
+    "issues": 0,
+    "meshes": 183
+  },
+  "canopyAudit": {
+    "blockedSpawns": [],
+    "candidateReductionPercent": 89,
+    "candidates": 43857,
+    "checks": 2238,
+    "exhaustive": 382680,
+    "failures": [],
+    "map": "canopy",
+    "navigationComponents": [
+      419
+    ],
+    "rayChecks": 954
+  },
+  "olympusAudit": {
+    "blockedSpawns": [],
+    "candidateReductionPercent": 83,
+    "candidates": 43403,
+    "checks": 2972,
+    "exhaustive": 261468,
+    "failures": [],
+    "map": "olympus",
+    "navigationComponents": [
+      167
+    ],
+    "rayChecks": 1404
+  },
+  "myceliumAudit": {
+    "blockedSpawns": [],
+    "candidateReductionPercent": 82,
+    "candidates": 113150,
+    "checks": 3957,
+    "exhaustive": 642168,
+    "failures": [],
+    "map": "mycelium",
+    "navigationComponents": [
+      361
+    ],
+    "rayChecks": 2826
+  },
+  "arenaAudit": {
+    "blockedSpawns": [],
+    "candidateReductionPercent": 75,
+    "candidates": 12537,
+    "checks": 661,
+    "exhaustive": 49248,
+    "failures": [],
+    "map": "arena",
+    "navigationComponents": [
+      116
+    ],
+    "rayChecks": 432
+  },
+  "canopyAfter": {
+    "map": "canopy",
+    "calls": 312,
+    "triangles": 447488,
+    "colliders": 168,
+    "issues": 0,
+    "meshes": 336
+  },
+  "olympusAfter": {
+    "map": "olympus",
+    "calls": 398,
+    "triangles": 66561,
+    "colliders": 466,
+    "issues": 0,
+    "meshes": 389
+  },
+  "myceliumAfter": {
+    "map": "mycelium",
+    "calls": 681,
+    "triangles": 736704,
+    "colliders": 1080,
+    "issues": 0,
+    "meshes": 801
+  },
+  "arenaAfter": {
+    "map": "arena",
+    "calls": 113,
+    "triangles": 13108,
+    "colliders": 211,
+    "issues": 0,
+    "meshes": 225
+  },
+  "canopyBefore": {
+    "map": "canopy",
+    "calls": 308,
+    "triangles": 442368,
+    "colliders": 166,
+    "issues": 0,
+    "meshes": 330
+  },
+  "olympusBefore": {
+    "map": "olympus",
+    "calls": 398,
+    "triangles": 66373,
+    "colliders": 465,
+    "issues": 0,
+    "meshes": 389
+  }
+}

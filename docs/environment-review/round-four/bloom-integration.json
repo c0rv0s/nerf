@@ -1,0 +1,181 @@
+{
+  "geometry": {
+    "map": "bloom",
+    "transit": null,
+    "checks": 246,
+    "failures": [],
+    "rayChecks": 0,
+    "candidates": 0,
+    "exhaustive": 0,
+    "candidateReductionPercent": null,
+    "navigationComponents": [
+      33
+    ],
+    "blockedSpawns": []
+  },
+  "integration": {
+    "map": "bloom",
+    "checks": 47,
+    "failures": [],
+    "details": {
+      "crossings": [
+        {
+          "axis": "x",
+          "sign": -1,
+          "inward": false,
+          "pace": 12.199403396928124,
+          "position": [
+            -7.015879629629628,
+            0,
+            -6.851731960638361e-20
+          ],
+          "velocityRatio": 0.19444444444444442,
+          "factor": 0.19444444444444445
+        },
+        {
+          "axis": "x",
+          "sign": -1,
+          "inward": true,
+          "pace": 12.200000125271915,
+          "position": [
+            -35.899331399485796,
+            0,
+            -1.0371816350329857e-18
+          ],
+          "velocityRatio": 5.142458402607335,
+          "factor": 5.142857142857143
+        },
+        {
+          "axis": "x",
+          "sign": 1,
+          "inward": false,
+          "pace": 12.199403396928124,
+          "position": [
+            7.015879629629628,
+            0,
+            -6.851731960638361e-20
+          ],
+          "velocityRatio": 0.19444444444444442,
+          "factor": 0.19444444444444445
+        },
+        {
+          "axis": "x",
+          "sign": 1,
+          "inward": true,
+          "pace": 12.200000125271915,
+          "position": [
+            35.899331399485796,
+            0,
+            -1.0371816350329857e-18
+          ],
+          "velocityRatio": 5.142458402607335,
+          "factor": 5.142857142857143
+        },
+        {
+          "axis": "z",
+          "sign": -1,
+          "inward": false,
+          "pace": 12.199403396928124,
+          "position": [
+            0,
+            0,
+            -7.015879629629628
+          ],
+          "velocityRatio": 0.19444444444444442,
+          "factor": 0.19444444444444445
+        },
+        {
+          "axis": "z",
+          "sign": -1,
+          "inward": true,
+          "pace": 12.200000125271915,
+          "position": [
+            -2.0743632700659715e-18,
+            0,
+            -35.899331399485796
+          ],
+          "velocityRatio": 5.142458402607335,
+          "factor": 5.142857142857143
+        },
+        {
+          "axis": "z",
+          "sign": 1,
+          "inward": false,
+          "pace": 12.199403396928124,
+          "position": [
+            -1.3703463921276722e-19,
+            0,
+            7.015879629629628
+          ],
+          "velocityRatio": 0.19444444444444442,
+          "factor": 0.19444444444444445
+        },
+        {
+          "axis": "z",
+          "sign": 1,
+          "inward": true,
+          "pace": 12.200000125271915,
+          "position": [
+            0,
+            0,
+            35.899331399485796
+          ],
+          "velocityRatio": 5.142458402607335,
+          "factor": 5.142857142857143
+        }
+      ],
+      "twoMinuteFall": {
+        "maxSpeed": 30.483791439866096,
+        "position": [
+          1.884779229041267e-26,
+          -14.030649593983206,
+          0
+        ]
+      },
+      "beams": [
+        {
+          "x": 7,
+          "segments": 4,
+          "stages": [
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "x": 7.0005,
+          "segments": 4,
+          "stages": [
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "x": 36,
+          "segments": 5,
+          "stages": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        {
+          "x": 35.9995,
+          "segments": 5,
+          "stages": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      ]
+    }
+  }
+}

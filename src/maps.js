@@ -14,12 +14,16 @@
 // coplanar audit clean. This is a map-wide invariant, not a per-map workaround.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY } from './engine.js';
+import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY, sphereHitsTriangleMesh } from './engine.js';
 import { advanceNetworkClock } from './network-sync.js';
 import { shuffledToadPersonalities } from './toad-effects.js';
 import { buildBlueWhale } from './blue-whale.js';
 import { buildTidebreakerShark } from './tidebreaker-shark.js';
 import { addTidebreakerWhaleBehavior } from './tidebreaker-whale-behavior.js';
+import { EnvironmentBatch, asteroidBodyGeometry, livingLimbGeometry, roundedDeckGeometry, ribbonSolid, timberSpan, livingTrunkGeometry, canopyBankSection, canopyRiverOffset, batchReefGrowth, olympusMountainGeometry, martianHorizonGeometry } from './environment-design.js';
+import { bloomScale, bloomCrossing, bloomRayBoundary } from './bloom-seams.js';
+import { buildOrrery } from './orrery-map.js';
+import { createTransitSchedule } from './neon-transit.js';
 import { RED_ROCK_RANGE_BOUNDS } from './map-rules.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -337,6 +341,7 @@ const TEXES = {
 // A normal map is derived from each image's luminance so surfaces catch light.
 const AI_TEX = {};
 const AI_TEX_SOURCES = {
+  'orrery-storm': './textures/orrery-storm.webp',
   'fortress-royal': './textures/fortress-royal.webp',
   'crocodile-scales': './textures/crocodile-scales.webp',
   'canopy-bark': './textures/canopy-bark.webp',
@@ -416,7 +421,7 @@ const TEXTURE_NAMES = Object.freeze([
   // Reef species textures must be in the actual load queue as well as the URL
   // registry below. Without these entries mat() cannot find AI_TEX and falls
   // back to texPanel, which is the white riveted material seen in screenshots.
-  'coral-brain-red', 'coral-cup-blue', 'coral-plate-pink',
+  'coral-brain-red', 'coral-cup-blue', 'coral-plate-pink', 'orrery-storm', 'orrery-celestial',
 ]);
 const SHARED_TEXTURE_NAMES = new Set(TEXTURE_NAMES.slice(0, 24));
 const textureSettledResolvers = new Map();
@@ -427,6 +432,7 @@ const textureSettledPromises = new Map(TEXTURE_NAMES.map((name) => {
   return [name, promise];
 }));
 const COLOR_ONLY_TEXTURES = new Set([
+  'orrery-storm',
   'poster1', 'poster2', 'poster3', 'poster4', 'poster5', 'poster6', 'poster7',
   'poster-oldwest', 'poster-bloom', 'poster-tidebreaker', 'poster-solar',
   'poster-mycelium', 'poster-reef',
@@ -908,7 +914,7 @@ function addRamp(scene, world, {
   return m;
 }
 
-function triangleMeshColliderFromMesh(mesh, debugName = 'triangle-mesh') {
+function triangleMeshColliderFromMesh(mesh, debugName = 'triangle-mesh', preserveWinding = false) {
   mesh.updateMatrixWorld(true);
   const geometry = mesh.geometry;
   const positions = geometry.getAttribute('position');
@@ -930,7 +936,7 @@ function triangleMeshColliderFromMesh(mesh, debugName = 'triangle-mesh') {
     // Some imported/generated geometries do not promise winding. Keep every
     // face normal pointing away from the mesh center so inside/outside tests
     // remain stable.
-    if (normal.dot(centroid.sub(center)) < 0) {
+    if (!preserveWinding && normal.dot(centroid.sub(center)) < 0) {
       triangle.b = c;
       triangle.c = b;
       normal.negate();
@@ -1154,7 +1160,7 @@ function addCanopyMeadowGrass(scene, world, count = 4300) {
         0.98,
       );
       if (rnd() > density) return false;
-      const inRiver = Math.abs(Math.abs(x) - 54) < 4.4;
+      const inRiver = [-54,54].some(center => Math.abs(x-center-canopyRiverOffset(z,center)) < 4.5);
       const onRoad = x > -51 && x < 71 && Math.abs(z + 40) < 4;
       const inFlowers = flowerBeds.some(([cx, cz, width, depth]) => (
         Math.abs(x - cx) < width / 2 + 0.5 && Math.abs(z - cz) < depth / 2 + 0.5
@@ -2752,19 +2758,42 @@ function addVine(scene, world, x, z, y0, y1, r = 0.9, leanX = 0, leanZ = 0, exit
   scene.add(leaf);
 }
 
-function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
+function addMonorailTrain(scene, world, schedule) {
+  const y = 10;
   const group = new THREE.Group();
   scene.add(group);
   const boxes = [];
   const doors = [];
-  const onboardPowerup = { kind: 'silver', pos: V(0, y + 0.25, 0) };
+  const onboardPowerup = {
+    kind: "silver",
+    moving: true,
+    pos: V(0, y + 0.25, 0),
+  };
   world.pickups.push(onboardPowerup);
-  const bodyMat = mat(0xd8e2f0, { tex: 'panel', repeat: [3, 1], roughness: 0.38, metalness: 0.28 });
-  const glassMat = mat(0x203650, { emissive: 0x30e0ff, emissiveIntensity: 0.35, transparent: true, opacity: 0.82 });
-  const trimMat = mat(0xff40a0, { emissive: 0xff40a0, emissiveIntensity: 1.5, roughness: 0.42 });
+  const bodyMat = mat(0xd8e2f0, {
+    tex: "panel",
+    repeat: [3, 1],
+    roughness: 0.38,
+    metalness: 0.28,
+  });
+  const glassMat = mat(0x203650, {
+    emissive: 0x30e0ff,
+    emissiveIntensity: 0.35,
+    transparent: true,
+    opacity: 0.82,
+  });
+  const trimMat = mat(0xff40a0, {
+    emissive: 0xff40a0,
+    emissiveIntensity: 1.5,
+    roughness: 0.42,
+  });
   const doorMat = mat(0x18273c, {
-    emissive: 0x30e0ff, emissiveIntensity: 0.25, roughness: 0.5, metalness: 0.2,
-    transparent: true, opacity: 0.78,
+    emissive: 0x30e0ff,
+    emissiveIntensity: 0.25,
+    roughness: 0.5,
+    metalness: 0.2,
+    transparent: true,
+    opacity: 0.78,
   });
 
   const addPart = (lx, ly, lz, w, h, d, material, collide = true) => {
@@ -2773,32 +2802,60 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
     if (!collide) return;
-    const collider = { type: 'box', dynamic: true, min: V(0, 0, 0), max: V(0, 0, 0) };
+    const collider = triangleMeshColliderFromMesh(mesh, "neon-train", true);
+    collider.dynamic = true;
+    delete collider.triangleCells;
+    const localTriangles = collider.triangles.map((e) => e.triangle.clone());
     world.colliders.push(collider);
-    boxes.push({ lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider });
+    boxes.push({
+      mesh,
+      localTriangles,
+      lx,
+      ly,
+      lz,
+      hx: w / 2,
+      hy: h / 2,
+      hz: d / 2,
+      collider,
+    });
   };
   const addDoor = (lx, ly, lz, w, h, d, openDir) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), doorMat);
     mesh.position.set(lx, ly, lz);
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
-    const collider = { type: 'box', dynamic: true, min: V(0, 0, 0), max: V(0, 0, 0) };
+    const collider = triangleMeshColliderFromMesh(mesh, "neon-train", true);
+    collider.dynamic = true;
+    delete collider.triangleCells;
+    const localTriangles = collider.triangles.map((e) => e.triangle.clone());
     world.colliders.push(collider);
-    const door = { lx, ly, lz, hx: w / 2, hy: h / 2, hz: d / 2, collider, mesh, openDir, open: 0 };
+    const door = {
+      localTriangles,
+      lx,
+      ly,
+      lz,
+      hx: w / 2,
+      hy: h / 2,
+      hz: d / 2,
+      collider,
+      mesh,
+      openDir,
+      open: 0,
+    };
     boxes.push(door);
     doors.push(door);
   };
 
   // local +X is the train's forward axis. Side walls have center door gaps.
-  addPart(0, -0.22, 0, 15.5, 0.44, 4.8, bodyMat);          // floor, top at y
-  addPart(0, 3.05, 0, 15.5, 0.38, 4.8, bodyMat);           // roof
+  addPart(0, -0.22, 0, 15.5, 0.44, 4.8, bodyMat); // floor, top at y
+  addPart(0, 3.05, 0, 15.5, 0.38, 4.8, bodyMat); // roof
   for (const z of [-2.25, 2.25]) {
     for (const x of [-5.25, 5.25]) {
-      addPart(x, 0.55, z, 4.8, 0.8, 0.34, bodyMat);        // lower sill
-      addPart(x, 2.72, z, 4.8, 0.52, 0.34, bodyMat);       // upper rail
+      addPart(x, 0.55, z, 4.8, 0.8, 0.34, bodyMat); // lower sill
+      addPart(x, 2.72, z, 4.8, 0.52, 0.34, bodyMat); // upper rail
       addPart(x - 2.25, 1.62, z, 0.32, 1.7, 0.34, bodyMat);
       addPart(x + 2.25, 1.62, z, 0.32, 1.7, 0.34, bodyMat);
-      addPart(x, 1.62, z, 3.8, 1.45, 0.22, glassMat);      // side window
+      addPart(x, 1.62, z, 3.8, 1.45, 0.22, glassMat); // side window
     }
     addDoor(-1.25, 1.42, z, 2.5, 2.45, 0.38, -1);
     addDoor(1.25, 1.42, z, 2.5, 2.45, 0.38, 1);
@@ -2809,82 +2866,71 @@ function addMonorailTrain(scene, world, route, y = 10, speed = 18, dwell = 4) {
   addPart(0, 1.9, -2.47, 12.8, 0.22, 0.18, trimMat, false);
   addPart(0, 1.9, 2.47, 12.8, 0.22, 0.18, trimMat, false);
 
-  const segs = [];
-  let total = 0;
-  for (let i = 0; i < route.length; i++) {
-    const a = route[i], b = route[(i + 1) % route.length];
-    const len = Math.hypot(b.x - a.x, b.z - a.z);
-    segs.push({ a, b, len, start: total, yaw: Math.atan2(a.z - b.z, b.x - a.x) });
-    total += len;
-  }
-  const sample = (dist) => {
-    dist = ((dist % total) + total) % total;
-    const seg = segs.find(s => dist >= s.start && dist <= s.start + s.len) || segs[segs.length - 1];
-    const k = seg.len ? (dist - seg.start) / seg.len : 0;
-    return {
-      x: seg.a.x + (seg.b.x - seg.a.x) * k,
-      z: seg.a.z + (seg.b.z - seg.a.z) * k,
-      yaw: seg.yaw,
-    };
-  };
-  const rotate = (x, z, yaw) => ({
-    x: Math.cos(yaw) * x + Math.sin(yaw) * z,
-    z: -Math.sin(yaw) * x + Math.cos(yaw) * z,
-  });
-  const setOnboardPowerup = (pos) => {
-    const rc = rotate(0, 0, pos.yaw);
-    onboardPowerup.pos.set(pos.x + rc.x, y + 0.25, pos.z + rc.z);
-  };
-  const updateColliders = (pos) => {
-    const ca = Math.abs(Math.cos(pos.yaw)), sa = Math.abs(Math.sin(pos.yaw));
+  const local = V(),
+    forward = V(),
+    up = V(),
+    side = V(),
+    slideVector = V(),
+    worldUp = V(0, 1, 0);
+  const poseMatrix = new THREE.Matrix4(),
+    inverse = new THREE.Matrix4();
+  let initialized = false;
+  const update = (dt, t, characters) => {
+    const pose = schedule.sample(t);
+    const riders = [];
+    if (initialized) {
+      inverse.copy(group.matrixWorld).invert();
+      for (const ch of characters) {
+        if (!ch.alive) continue;
+        local.copy(ch.pos).applyMatrix4(inverse);
+        if (
+          Math.abs(local.x) < 7.9 &&
+          Math.abs(local.z) < 2.6 &&
+          local.y > -0.5 &&
+          local.y < 3.4
+        )
+          riders.push({ ch, position: local.clone() });
+      }
+    }
+    forward.fromArray(pose.tangent);
+    side.crossVectors(forward, worldUp).normalize();
+    up.crossVectors(side, forward).normalize();
+    poseMatrix.makeBasis(forward, up, side);
+    group.quaternion.setFromRotationMatrix(poseMatrix);
+    group.position.fromArray(pose.position);
+    group.updateMatrixWorld(true);
+    for (const { ch, position } of riders)
+      ch.pos.copy(position.applyMatrix4(group.matrixWorld));
+    onboardPowerup.pos.copy(V(0, 0.25, 0).applyMatrix4(group.matrixWorld));
     for (const b of boxes) {
-      const lx = b.lx + (b.openDir || 0) * (b.open || 0) * 2.8;
-      if (b.mesh) b.mesh.position.x = lx;
-      const rc = rotate(lx, b.lz, pos.yaw);
-      const cx = pos.x + rc.x, cy = y + b.ly, cz = pos.z + rc.z;
-      const hx = ca * b.hx + sa * b.hz;
-      const hz = sa * b.hx + ca * b.hz;
-      b.collider.min.set(cx - hx, cy - b.hy, cz - hz);
-      b.collider.max.set(cx + hx, cy + b.hy, cz + hz);
+      const slide = (b.openDir || 0) * pose.doors * 2.8;
+      b.mesh.position.x = b.lx + slide;
+      b.collider.min.set(Infinity, Infinity, Infinity);
+      b.collider.max.set(-Infinity, -Infinity, -Infinity);
+      slideVector.set(slide, 0, 0);
+      b.collider.triangles.forEach((entry, i) => {
+        const source = b.localTriangles[i];
+        for (const key of ["a", "b", "c"])
+          entry.triangle[key]
+            .copy(source[key])
+            .add(slideVector)
+            .applyMatrix4(group.matrixWorld);
+        entry.triangle.getNormal(entry.normal);
+        entry.box
+          .makeEmpty()
+          .expandByPoint(entry.triangle.a)
+          .expandByPoint(entry.triangle.b)
+          .expandByPoint(entry.triangle.c);
+        b.collider.min.min(entry.box.min);
+        b.collider.max.max(entry.box.max);
+      });
     }
+    world.transit.pose = pose;
+    initialized = true;
   };
-  const inside = (ch, pos) => {
-    const dx = ch.pos.x - pos.x, dz = ch.pos.z - pos.z;
-    const c = Math.cos(-pos.yaw), s = Math.sin(-pos.yaw);
-    const lx = c * dx + s * dz;
-    const lz = -s * dx + c * dz;
-    const ly = ch.pos.y - y;
-    return Math.abs(lx) < 8.4 && Math.abs(lz) < 2.8 && ly > -0.45 && ly < 3.35;
-  };
-  const carry = (ch, oldPos, newPos) => {
-    const dx = ch.pos.x - oldPos.x, dz = ch.pos.z - oldPos.z;
-    const c = Math.cos(-oldPos.yaw), s = Math.sin(-oldPos.yaw);
-    const lx = c * dx + s * dz;
-    const lz = -s * dx + c * dz;
-    const rc = rotate(lx, lz, newPos.yaw);
-    ch.pos.x = newPos.x + rc.x;
-    ch.pos.z = newPos.z + rc.z;
-  };
-
-  let prev = sample(0);
-  setOnboardPowerup(prev);
-  updateColliders(prev);
-  world.anim.push((dt, t, characters) => {
-    const cycle = total / speed + dwell;
-    const phase = t % cycle;
-    const opening = Math.min(1, phase / 0.45, (dwell - phase) / 0.45);
-    for (const door of doors) door.open = Math.max(0, opening);
-    const dist = phase < dwell ? 0 : (phase - dwell) * speed;
-    const next = sample(dist);
-    for (const ch of characters) {
-      if (ch.alive && inside(ch, prev)) carry(ch, prev, next);
-    }
-    group.position.set(next.x, y, next.z);
-    group.rotation.y = next.yaw;
-    setOnboardPowerup(next);
-    updateColliders(next);
-    prev = next;
-  });
+  world.transit = { schedule, group, boxes, update, pose: null };
+  update(0, 0, []);
+  world.anim.push(update);
 }
 
 // A real moving platform: the visible cab, its floor collider, and riders all
@@ -3245,7 +3291,7 @@ function addBlastComplexPresentation(scene, world) {
   registerWallFeature(world, 'west', 'TRAINING DECK sign', 5, 13.5, 17, 4.25);
   addArenaSign(essential, 'COOLANT RUN', 76.96, 11.5, -5, 17, 4.25, -Math.PI / 2, '#38d6ff');
   registerWallFeature(world, 'east', 'COOLANT RUN sign', -5, 11.5, 17, 4.25);
-  addArenaSign(essential, 'TOWER 01', 2, 7, 4.51, 7, 2.2, Math.PI, '#ffd04b');
+  addArenaSign(essential, 'TOWER 01', 2, 7, 4.51, 7, 2.2, 0, '#ffd04b');
 
   const wallPlane = (x, y, z, w, h, yaw = 0) => {
     const geometry = new THREE.PlaneGeometry(w, h);
@@ -3352,6 +3398,137 @@ function addBlastComplexPresentation(scene, world) {
    West wing: two rooms (crate maze + mezzanine room with a second floor).
    Center: grand atrium — tall room, tiered tower, balcony, floating top platform.
    East wing: sunken basement lanes with a ground-level bridge crossing above. */
+function blastBatch(scene, world) {
+  return (world._blastArchitecture ||= new EnvironmentBatch(scene));
+}
+
+function addBlastBody(scene, world, x, y, z, w, h, d, color, bevel = 0.65) {
+  const geometry = roundedDeckGeometry(w, d, h, bevel);
+  geometry.translate(x, y, z);
+  const material = mat(color, {
+    tex: "arena-foam",
+    repeat: [0.24, 0.24],
+    roughness: 0.82,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  const collider = triangleMeshColliderFromMesh(
+    mesh,
+    "blast-rounded-structure",
+    true,
+  );
+  world.colliders.push(collider);
+  blastBatch(scene, world).add(geometry, material);
+  return collider;
+}
+
+function addBlastBarrier(
+  scene,
+  world,
+  x,
+  y,
+  z,
+  w,
+  h = 2.4,
+  d = 2.4,
+  accent = 0xff7a2d,
+) {
+  addBlastBody(scene, world, x, y, z, w, h, d, 0x6946b8, 0.65);
+  const cap = roundedDeckGeometry(w - 0.18, d - 0.18, 0.035, 0.58);
+  cap.translate(x, y + h + 0.005, z);
+  blastBatch(scene, world).add(cap, mat(accent, { roughness: 0.8 }));
+  const batch = blastBatch(scene, world),
+    seam = mat(0x2c264b, { roughness: 0.94 });
+  // Padded modules have seams and a protected base rather than crate faces.
+  for (let dx = -w / 2 + 3; dx < w / 2 - 0.8; dx += 3)
+    for (const side of [-1, 1])
+      batch.box(
+        x + dx,
+        y + h * 0.48,
+        z + side * (d / 2 + 0.006),
+        0.045,
+        h * 0.76,
+        0.018,
+        seam,
+      );
+}
+
+function addBlastArchitecture(scene, world) {
+  const batch = blastBatch(scene, world);
+  const steel = mat(0x253d50, { roughness: 0.65, metalness: 0.35 }),
+    trim = mat(0xa6bac1, { roughness: 0.5, metalness: 0.45 });
+  const orange = mat(0xffa04d, { roughness: 0.72 }),
+    cyan = mat(0x53ccd2, { roughness: 0.72 });
+  // Exposed roof trusses sit above the entire playable upper deck.
+  for (const x of [-58, -30, 26, 54]) {
+    for (const y of [21.8, 23.4]) batch.box(x, y, 0, 0.42, 0.38, 112, steel);
+    for (let z = -56; z < 56; z += 8)
+      batch.beam(V(x, 21.8, z), V(x, 23.4, z + 8), 0.12, trim, 5);
+  }
+  for (const z of [-52, -26, 26, 52])
+    batch.box(0, 23.65, z, 153, 0.4, 0.55, steel);
+  // Load paths make the mezzanine and bridges read as built structures.
+  for (const x of [-64, -42]) {
+    const geometry = new THREE.CylinderGeometry(0.64, 0.82, 4.4, 8);
+    geometry.translate(x, 2.2, 48);
+    const mesh = new THREE.Mesh(geometry, steel);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(mesh, "blast-mezzanine-support", true),
+    );
+    batch.add(geometry, steel);
+    batch.box(x, 4.2, 44.5, 0.65, 0.35, 24, steel);
+  }
+  for (const z of [-2.65, 2.65]) {
+    batch.box(50, -1.2, z, 40, 0.5, 0.35, steel);
+    for (let x = 32; x < 68; x += 6)
+      batch.beam(V(x, -1.45, z), V(x + 6, -0.65, z), 0.11, trim, 5);
+  }
+  // Steel portal surrounds sit on existing jambs; the full door width stays open.
+  for (const x of [-25, 30])
+    for (const z of [-26, 26]) {
+      for (const dz of [-4.4, 4.4])
+        batch.box(x, 4.6, z + dz, 1.58, 9.2, 0.34, steel);
+      batch.box(x, 9.7, z, 1.6, 0.55, 8.8, steel);
+      batch.box(x, 9.72, z, 1.64, 0.18, 7.9, x < 0 ? orange : cyan);
+    }
+  // The tower's corners carry one consistent vertical frame.
+  for (const dx of [-4.25, 4.25])
+    for (const dz of [-4.25, 4.25])
+      batch.box(2 + dx, 6.55, dz, 0.22, 4.6, 0.22, steel);
+  for (const dx of [-6.1, 6.1])
+    for (const dz of [-6.1, 6.1])
+      batch.beam(
+        V(2 + dx, 14.5, -7 + dz),
+        V(2 + dx, 24, -7 + dz),
+        0.06,
+        trim,
+        5,
+      );
+  // A paired coolant main bends down into the east service wall.
+  for (const x of [74.3, 76.1]) {
+    const path = new THREE.CatmullRomCurve3([
+      V(x, -5.8, 47),
+      V(x, 8, 47),
+      V(x, 11, 41),
+      V(x, 11, -42),
+      V(x, 8, -48),
+      V(x, -5.8, -48),
+    ]);
+    const geometry = new THREE.TubeGeometry(path, 36, 0.55, 8, false);
+    const mesh = new THREE.Mesh(geometry, cyan);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(mesh, "blast-coolant-main", true),
+    );
+    batch.add(geometry, cyan);
+    for (const z of [-36, -12, 12, 36])
+      batch.box(x, 12, z, 0.2, 3, 0.22, steel);
+  }
+  // Underside brackets replace unsupported slab edges in the west gallery.
+  for (const z of [-16, 0, 16, 36])
+    batch.beam(V(-24.9, 1.8, z), V(-19.2, 4.32, z), 0.16, steel, 5);
+  batch.flush("blast-coherent-architecture");
+  delete world._blastArchitecture;
+}
+
 function buildArena(scene) {
   const world = newWorld({ killY: -20, waypointLinkDist: 22, waypointLinkDy: 4.6 });
   const arenaColor = {
@@ -3550,15 +3727,15 @@ function buildArena(scene) {
   // --- NW room: mezzanine (second floor) ---
   addBox(scene, world, -51.75, 4.7, 44.5, 50.5, 0.6, 25, arenaColor.green, { tex: 'arena-floor' });
   addRamp(scene, world, { axis: 'z', minX: -77, maxX: -71, minZ: 6, maxZ: 32, h0: 0, h1: 5, color: arenaColor.green, tex: 'arena-floor' });
-  addArenaBarrier(scene, world, -40, 0, 20, 2.5, 2.5, 2.5, arenaColor.yellow);
-  addArenaBarrier(scene, world, -37.5, 0, 20, 2.5, 2.5, 2.5, arenaColor.orange);
+  addBlastBarrier(scene, world, -40, 0, 20, 2.5, 2.5, 2.5, arenaColor.yellow);
+  addBlastBarrier(scene, world, -37.5, 0, 20, 2.5, 2.5, 2.5, arenaColor.orange);
 
   // --- SW room: crate maze ---
   const crate = (x, y, z, s = 2.4, accent = arenaColor.orange) =>
-    addArenaBarrier(scene, world, x, y, z, s, s, s, accent);
-  addArenaBarrier(scene, world, -60.4, 0, -15, 21.6, 2.4, 2.4, arenaColor.orange);
-  addArenaBarrier(scene, world, -45.4, 0, -28, 21.6, 2.4, 2.4, arenaColor.yellow);
-  addArenaBarrier(scene, world, -60.4, 0, -41, 21.6, 2.4, 2.4, arenaColor.orange);
+    addBlastBarrier(scene, world, x, y, z, s, s, s, accent);
+  addBlastBarrier(scene, world, -60.4, 0, -15, 21.6, 2.4, 2.4, arenaColor.orange);
+  addBlastBarrier(scene, world, -45.4, 0, -28, 21.6, 2.4, 2.4, arenaColor.yellow);
+  addBlastBarrier(scene, world, -60.4, 0, -41, 21.6, 2.4, 2.4, arenaColor.orange);
   crate(-32, 0, -50); crate(-32, 0, -47.5); crate(-45, 0, -50);
   crate(-70, 0, -28, 2.4, arenaColor.yellow);
   crate(-70, 2.4, -28, 2.4, arenaColor.yellow); // double stack at the west end
@@ -3597,10 +3774,10 @@ function buildArena(scene) {
   addRamp(scene, world, { axis: 'z', minX: 22, maxX: 28, minZ: 20, maxZ: 27, h0: 3, h1: 0, color: arenaColor.green, tex: 'arena-floor' });
   addRamp(scene, world, { axis: 'z', minX: 22, maxX: 28, minZ: -27, maxZ: -20, h0: 0, h1: 3, color: arenaColor.green, tex: 'arena-floor' });
   // tiered tower
-  addBox(scene, world, 2, 2, 0, 18, 4, 18, 0xb84822, { tex: 'arena-wall' });
-  addBox(scene, world, 2, 6.5, 0, 9, 5, 9, arenaColor.orange, { tex: 'arena-wall' });
-  addBox(scene, world, 2, 14, -7, 14, 0.8, 14, arenaColor.partition, { tex: 'arena-floor' });  // floating top platform
-  addBox(scene, world, 2, 14.53, -7, 14.4, 0.2, 14.4, arenaColor.yellow, { collide: false, shadow: false, emissive: arenaColor.orange, emissiveIntensity: 0.42 });
+  addBlastBody(scene,world,2,0,0,18,4,18,0xb84822,2.1);
+  addBlastBody(scene,world,2,4,0,9,5,9,arenaColor.orange,1.2);
+  addBlastBody(scene,world,2,13.6,-7,14,.8,14,arenaColor.partition,1.5);  // floating top platform
+  const towerTrim=roundedDeckGeometry(13.9,13.9,.04,1.5);towerTrim.translate(2,14.405,-7);blastBatch(scene,world).add(towerTrim,mat(arenaColor.yellow,{emissive:arenaColor.orange,emissiveIntensity:.3}));
   addRamp(scene, world, { axis: 'x', minX: -16, maxX: -7, minZ: -4, maxZ: 4, h0: 0, h1: 4, color: arenaColor.yellow, tex: 'arena-floor' });
   addRamp(scene, world, { axis: 'x', minX: 11, maxX: 20, minZ: -4, maxZ: 4, h0: 4, h1: 0, color: arenaColor.yellow, tex: 'arena-floor' });
   // pads: floor→balcony ×2, base→mid, mid→top
@@ -3775,7 +3952,7 @@ function buildArena(scene) {
   world.spawns.red.push(V(72, 0.1, 6), V(72, 0.1, -6), V(65, -4.9, 30), V(65, -4.9, -30), V(50, -4.9, 0));
   for (const [x, y, z] of [[25, 0.1, 45], [25, 0.1, -45], [-15, 0.1, 20], [-15, 0.1, -24],
                            [-21.5, 5.1, 20], [-50, 5.1, 45], [-55, 0.1, -33], [55, -4.9, 26],
-                           [-72, 0.1, 0], [72, 0.1, 0], [54, -4.9, -26], [2, 9.2, -4]]) {
+                           [-74, 0.1, -5], [72, 0.1, 0], [54, -4.9, -26], [2, 9.2, -4]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
@@ -3874,6 +4051,7 @@ function buildArena(scene) {
     [-32, -5, 0, -32, 0, -22],
     [-52, -5, 0, -70, 0, 0],              // far ramp out
   );
+  addBlastArchitecture(scene, world);
   addBlastComplexPresentation(scene, world);
   mergeStatic(scene, world);
   return world;
@@ -5019,58 +5197,195 @@ function buildFortress(scene) {
 /* ============== MAP 3 — ASTEROID BELT (low gravity, 240×240) ==============
    Flat-topped rock platforms (easy to walk) with features: a cave rock with a
    walkable roof, a canyon rock with an under-deck, side balconies, and
-   stepping-stone paths. Decorative boulder keels sell the asteroid look. */
+   stepping-stone paths. Continuous fractured bodies share their visible collision. */
 
-// A walkable rock: flat box collider on top, rocky slab visual + boulder keel.
-function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
-  const thick = 2.5;
-  world.colliders.push({
-    type: 'box',
-    min: V(x - w / 2, y - thick, z - d / 2),
-    max: V(x + w / 2, y, z + d / 2),
-  });
-  // slab visual: flat top, craggy sides/bottom — pooled into one merged mesh
-  const bake = (geoIn, uvScale) => {
-    // icosahedra are non-indexed and boxes are indexed — normalize so the
-    // whole rockflat group can merge into one mesh
-    const geo = geoIn.index ? geoIn.toNonIndexed() : geoIn;
-    const uv = geo.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * uvScale, uv.getY(i) * uvScale);
-    const col = new THREE.Color(color);
-    const n = geo.attributes.position.count;
-    const colors = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) colors.set([col.r, col.g, col.b], i * 3);
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    (world._geoGroups.rockflat ||= []).push(geo);
-  };
-  const geo = new THREE.BoxGeometry(w, thick, d, 3, 2, 3);
-  const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const vx = pos.getX(i), vy = pos.getY(i), vz = pos.getZ(i);
-    if (vy > thick / 2 - 0.01) {
-      pos.setXYZ(i, vx + rand(-0.3, 0.3), vy, vz + rand(-0.3, 0.3));
-    } else {
-      pos.setXYZ(i, vx * rand(1.0, 1.12), vy - rand(0, 0.9), vz * rand(1.0, 1.12));
-    }
+// A broad landing crown and fractured underside form one closed rock body.
+// Keep sign lettering separate, but fold its nine frame/bolt meshes into the
+// surrounding equipment batches instead of paying one draw per small fitting.
+function addSpaceSign(scene, batch, backing, trim, bolts, ...args) {
+  const group = addArenaSign(scene, ...args);
+  group.updateMatrixWorld(true);
+  const retired = new Set();
+  for (const [i, child] of [...group.children].entries()) {
+    if (child.material.isMeshBasicMaterial) continue;
+    const material =
+      i === 0
+        ? backing
+        : child.geometry.type === "CylinderGeometry"
+          ? bolts
+          : trim;
+    batch.add(child.geometry, material, child.matrixWorld);
+    retired.add(child.material);
+    group.remove(child);
   }
-  geo.computeVertexNormals();
-  geo.translate(x, y - thick / 2, z);
-  bake(geo, 3);
-  // Boulder keel under the slab. On wide decks its rounded top can poke above
-  // the walkable face — keep the original placement/look, but size the sphere
-  // to the visual radius so players cannot walk through the crest.
-  const r = Math.min(w, d) * 0.5;
-  const keelX = x + rand(-1, 1);
-  const keelY = y - thick - r * 0.5;
-  const keelZ = z + rand(-1, 1);
-  const keel = new THREE.IcosahedronGeometry(r, 1);
-  keel.scale(1, 0.85, 1);
-  keel.rotateX(rand(0, 3)); keel.rotateY(rand(0, 3)); keel.rotateZ(rand(0, 3));
-  keel.translate(keelX, keelY, keelZ);
-  bake(keel, 2);
-  // After scale+tilt the mesh still fits in ~r of the center; 0.85 left a
-  // walkable gap through the part that sticks above the deck.
-  world.colliders.push({ type: 'sphere', center: V(keelX, keelY, keelZ), radius: r });
+  for (const material of retired) {
+    material.map?.dispose();
+    material.normalMap?.dispose();
+    material.dispose();
+  }
+  return group;
+}
+
+function addRockPlatform(scene, world, x, y, z, w, d, color = 0x8a7f72) {
+  const batch = (world._asteroidBatch ||= new EnvironmentBatch(scene));
+  const material = (world._asteroidMaterial ||= mat(0xffffff, {
+    tex: "rock",
+    repeat: [0.24, 0.24],
+    roughness: 1,
+  }));
+  material.vertexColors = true;
+  const geometry = asteroidBodyGeometry(w, d, x * 0.17 + z * 0.31);
+  geometry.translate(x, y, z);
+  const tint = new THREE.Color(color),
+    colors = [];
+  for (let i = 0; i < geometry.attributes.position.count; i++)
+    colors.push(tint.r, tint.g, tint.b);
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  const mesh = new THREE.Mesh(geometry, material);
+  const collider = triangleMeshColliderFromMesh(
+    mesh,
+    "asteroid-landing-rock",
+    true,
+  );
+  world.colliders.push(collider);
+  (world.asteroidLandings ||= []).push({ x, y, z, w, d, collider });
+  batch.add(geometry, material);
+}
+
+function addAsteroidStation(scene, world) {
+  const batch = new EnvironmentBatch(scene);
+  const hull = mat(0x77889c, { roughness: 0.7, metalness: 0.25 });
+  const dark = mat(0x263342, { roughness: 0.7 });
+  const white = mat(0xc1c9c9, { roughness: 0.68 });
+  const amber = new THREE.MeshBasicMaterial({
+    color: 0xffb864,
+    toneMapped: false,
+  });
+  const blue = new THREE.MeshBasicMaterial({
+    color: 0x65deed,
+    toneMapped: false,
+  });
+  const solid = (x, y, z, w, h, d, m, r = 0.5) => {
+    const g = roundedDeckGeometry(w, d, h, r);
+    g.translate(x, y - h / 2, z);
+    const mesh = new THREE.Mesh(g, m);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(mesh, "asteroid-station-hull", true),
+    );
+    batch.add(g, m);
+  };
+  solid(0, 8, 0, 30, 2, 20, hull, 2);
+  solid(0, 8.6, -11, 10, 0.8, 4, hull, 0.7); // rear airlock apron, level with the main deck
+  // Docking wings meet the original deck height and retain their pickup landings.
+  solid(-18, 8.4, 0, 8, 0.8, 8, hull, 1);
+  solid(18, 8.4, 0, 8, 0.8, 8, hull, 1);
+  // A compact through-cabin occupies the former solid core block. Two broad
+  // doorways give the interior an escape route on either side of the station.
+  for (const x of [-6, 6])
+    addBox(scene, world, x, 11.3, -6, 0.7, 4.6, 7.2, 0x77889c);
+  for (const z of [-9.6, -2.4])
+    for (const x of [-4.1, 4.1])
+      addBox(scene, world, x, 11.3, z, 3.1, 4.6, 0.7, 0x77889c);
+  for (const z of [-9.6, -2.4])
+    addBox(scene, world, 0, 13.2, z, 5.1, 0.8, 0.7, 0x77889c);
+  solid(0, 13.9, -6, 13.4, 0.6, 8.4, white, 0.75); // roof remains at 14.2
+  // Exterior access to the roof stays beside the room, with a full-width crest.
+  addRamp(scene, world, {
+    axis: "z",
+    minX: 7,
+    maxX: 10,
+    minZ: -8,
+    maxZ: 6,
+    h0: 14.2,
+    h1: 9,
+    color: 0x596b7c,
+  });
+  addBox(scene, world, 8.2, 13.9, -9.2, 3.6, 0.6, 2.4, 0x77889c);
+
+  for (const x of [-13.5, 13.5]) {
+    for (const z of [-7, 7])
+      batch.beam(V(x, 7, z), V(x * 0.7, 4.4, z * 0.6), 0.24, dark);
+    solid(x, 9.65, -7, 1, 1.3, 3, white, 0.12);
+    batch.box(x, 10.35, -7, 1.1, 0.12, 3.1, amber);
+  }
+  for (const z of [-8.5, 8.5])
+    for (const x of [-9, 9]) batch.box(x, 9.035, z, 6, 0.04, 0.18, amber);
+  for (const z of [-7.7, -4.2]) {
+    batch.box(0, 13.48, z, 10.8, 0.16, 0.22, blue);
+    for (const x of [-5.55, 5.55]) batch.box(x, 11.4, z, 0.2, 4.2, 0.3, dark);
+  }
+  // Low side consoles leave the centre of both doors unobstructed.
+  for (const x of [-4.8, 4.8]) {
+    solid(x, 9.65, -6, 1.45, 1.3, 3.3, dark, 0.2);
+    batch.box(x, 10.32, -6, 1.2, 0.03, 2.9, blue);
+    for (let z = -7; z <= -5; z += 0.5)
+      batch.box(x, 10.35, z, 0.65, 0.04, 0.05, white);
+  }
+  const antenna = new THREE.CylinderGeometry(0.12, 0.24, 5, 8);
+  antenna.translate(-12, 11.5, 6);
+  batch.add(antenna, white);
+  const dish = new THREE.SphereGeometry(
+    1.5,
+    12,
+    6,
+    0,
+    Math.PI * 2,
+    0,
+    Math.PI * 0.35,
+  );
+  dish.rotateZ(0.5);
+  dish.translate(-12, 14.1, 6);
+  batch.add(dish, hull);
+  batch.box(-12, 14.7, 6, 0.45, 0.2, 0.45, amber);
+  for (const side of [-1, 1]) {
+    batch.box(side * 6.37, 11.1, -6, 0.045, 2.7, 5.7, dark);
+    batch.box(side * 6.4, 12.57, -6, 0.05, 0.09, 5.8, blue);
+    for (const z of [-8, -6, -4])
+      batch.box(side * 6.41, 11.2, z, 0.07, 2.1, 0.08, hull);
+    for (const x of [side * 3.2, side * 5]) {
+      batch.box(x, 11.3, -2.03, 0.06, 3.2, 0.08, dark);
+    }
+    batch.box(side * 4.1, 9.45, -1.99, 2.8, 0.13, 0.08, amber);
+  }
+  addSpaceSign(
+    scene,
+    batch,
+    dark,
+    blue,
+    hull,
+    "KEPLER / 04",
+    0,
+    12.6,
+    -2.0,
+    4.7,
+    0.65,
+    0,
+    "#65deed",
+    "industrial",
+  );
+  batch.flush("asteroid-station-details");
+  const light = new THREE.PointLight(0x80dded, 14, 16);
+  light.position.set(0, 12.5, -6);
+  scene.add(light);
+  world.asteroidStationRoutes = [
+    [
+      [0, 9, 1],
+      [0, 9, -6],
+      [0, 9, -11.5],
+    ],
+    [
+      [8.5, 9, 7.5],
+      [8.5, 14.2, -8],
+      [8.5, 14.2, -9.2],
+      [5, 14.2, -9.2],
+      [0, 14.2, -8],
+    ],
+  ];
+  for (const route of world.asteroidStationRoutes) {
+    for (const p of route) wp(world, ...p);
+    for (let i = 1; i < route.length; i++)
+      world.manualLinks.push([...route[i - 1], ...route[i]]);
+  }
 }
 
 function buildAsteroids(scene) {
@@ -5435,9 +5750,13 @@ function buildAsteroids(scene) {
 
   // CAVE ROCK (north): tunnel through the slab, walkable roof on top
   addRockPlatform(scene, world, 0, 12, -44, 18, 14);
-  addBox(scene, world, -5, 13.5, -44, 1.2, 3, 10, 0x77695c, { tex: 'rock' });   // cave walls
-  addBox(scene, world, 5, 13.5, -44, 1.2, 3, 10, 0x77695c, { tex: 'rock' });
-  addBox(scene, world, 0, 15.9, -44, 11.5, 1.2, 10, 0x77695c, { tex: 'rock' }); // roof (top 16.5)
+  const arch=new THREE.Shape();
+  const outline=[[-7,0],[-7.3,2],[-5.75,4.5],[5.75,4.5],[7.3,2],[7,0],[4.4,0],[4.4,1.7],[3.4,3],[0,3.3],[-3.4,3],[-4.4,1.7],[-4.4,0]];
+  outline.forEach(([x,y],i)=>i?arch.lineTo(x,y):arch.moveTo(x,y));arch.closePath();
+  const vaultGeometry=new THREE.ExtrudeGeometry(arch,{depth:11,bevelEnabled:false,steps:1});vaultGeometry.translate(0,12,-49.5);
+  const vault=new THREE.Mesh(vaultGeometry,mat(0x998d80,{tex:'rock',roughness:1}));
+  vault.castShadow=vault.receiveShadow=true;scene.add(vault);
+  world.colliders.push(triangleMeshColliderFromMesh(vault,'asteroid-cave-vault',true));
   const caveLight = new THREE.PointLight(0xffb060, 20, 14);
   caveLight.position.set(0, 14.4, -44);
   scene.add(caveLight);
@@ -5447,18 +5766,7 @@ function buildAsteroids(scene) {
   addRockPlatform(scene, world, 5.5, 2, 44, 7, 14);
   addRockPlatform(scene, world, 0, -3, 44, 12, 10);
 
-  // Derelict station (center)
-  addBox(scene, world, 0, 8, 0, 30, 2, 20, 0x6a7688, { tex: 'panel' });          // deck, top y=9
-  addBox(scene, world, 0, 11, -6, 12, 4, 6, 0x59657a, { tex: 'panel' });         // core room block
-  addBox(scene, world, 0, 13.6, -6, 13, 1.2, 7, 0x8892a8);                       // core roof
-  addBox(scene, world, -18, 8.4, 0, 8, 0.8, 8, 0x59657a, { tex: 'panel' });      // west wing
-  addBox(scene, world, 18, 8.4, 0, 8, 0.8, 8, 0x59657a, { tex: 'panel' });       // east wing
-  addDecal(scene, 'poster3', 0, 11, -2.94, 4.5, 0);
-  addBox(scene, world, 0, 12, 8, 1, 6, 1, 0x8892a8, { collide: false });         // antenna
-  addBox(scene, world, 0, 15.2, 8, 1.6, 0.5, 1.6, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
-  const stnLight = new THREE.PointLight(0x30e0ff, 60, 30);
-  stnLight.position.set(0, 11, 0);
-  scene.add(stnLight);
+  addAsteroidStation(scene,world);
 
   // Bounce pads (players only — bots use their own ballistic hops)
   addJumpPad(scene, world, 6, 9, 2, 15, -1.6, -0.6, 0xffd23c, true);   // deck → gold perch
@@ -5508,7 +5816,7 @@ function buildAsteroids(scene) {
   pk(world, 'ammo', 13, -7.8, 72, { weapon: 'whomper' });
   pk(world, 'ammo', -40, 13.2, -46, { weapon: 'sidewinder' });
   pk(world, 'ammo', 40, 0.2, 49, { weapon: 'parasite' });
-  pk(world, 'ammo', -3, 9.3, -2, { weapon: 'zooka' });
+  pk(world, 'ammo', -3, 9.3, 0.5, { weapon: 'zooka' });
   pk(world, 'ammo', 0, 16.7, -44, { weapon: 'hyper' });           // cave roof
   pk(world, 'ammo', -48, 4.2, -10, { weapon: 'pulsar' });         // west balcony
   pk(world, 'ammo', 48, 4.2, 10, { weapon: 'scatter' });          // east balcony
@@ -5522,11 +5830,13 @@ function buildAsteroids(scene) {
   pk(world, 'speed', 18, 9, 0);                          // station east wing
   pk(world, 'djump', 8, 9.2, -2);                         // station center
   // LAVA CRATER ROCK: walk the rim, fall in the heart, jump for your life
-  addBox(scene, world, 40, 2.75, 60, 20, 2.5, 20, 0x8a7f72, { tex: 'rock' });  // body (top 4) + safe apron
-  addBox(scene, world, 40, 4.55, 55, 16, 1.1, 6, 0x8a7f72, { tex: 'rock' });   // rim ring (top 5.1)
-  addBox(scene, world, 40, 4.55, 65, 16, 1.1, 6, 0x8a7f72, { tex: 'rock' });
-  addBox(scene, world, 35, 4.55, 60, 6, 1.1, 4, 0x8a7f72, { tex: 'rock' });
-  addBox(scene, world, 45, 4.55, 60, 6, 1.1, 4, 0x8a7f72, { tex: 'rock' });
+  addRockPlatform(scene,world,40,4,60,20,20);
+  const craterGeometry=ribbonSolid(t=>{
+    const angle=-t*Math.PI*2,c=Math.cos(angle),sn=Math.sin(angle),r=8.2+.35*Math.sin(angle*5);
+    return {left:[40+c*r,5.1+.12*Math.sin(angle*3),60+sn*r],right:[40+c*2.85,5.1,60+sn*2.85]};
+  },40,1.1);
+  const crater=new THREE.Mesh(craterGeometry,mat(0x8a7f72,{tex:'rock',roughness:1}));scene.add(crater);
+  world.colliders.push(triangleMeshColliderFromMesh(crater,'asteroid-crater-rim',true));
   addLava(scene, world, 40, 60, 4, 4, 3.95);
   pk(world, 'star', 40, 5.5, 60, { hidden: true });    // hovers over the melt — jump the crater
   pk(world, 'gold', 0, 22.2, 0);                          // the perch above the station
@@ -5559,51 +5869,320 @@ function buildAsteroids(scene) {
     [-5.5, 2, 44, 0, -3, 44],         // canyon rims ↔ under-deck
     [5.5, 2, 44, 0, -3, 44],
   );
+  world._asteroidBatch.flush('asteroid-rock-bodies');
   mergeStatic(scene, world);
   return world;
 }
 
-function addCanopyVillageBridge(scene, world, start, end, width = 4.2) {
-  const delta = end.clone().sub(start);
-  const length = Math.hypot(delta.x, delta.z);
-  const yaw = Math.atan2(delta.x, delta.z);
-  const bridge = new THREE.Mesh(
-    new THREE.BoxGeometry(width, 0.62, length),
-    mat(0x8f693d, { tex: 'crate', repeat: [2, Math.max(3, length / 5)], roughness: 0.94 }),
+function canopyTimber(scene, world) {
+  if (!world._canopyTimber)
+    world._canopyTimber = {
+      batch: new EnvironmentBatch(scene),
+      materials: {
+        wood: mat(0xa18459, { roughness: 0.93, metalness: 0 }),
+        dark: mat(0x473728, { roughness: 0.96, metalness: 0 }),
+        rope: mat(0xc3b389, { roughness: 1, metalness: 0 }),
+      },
+    };
+  return world._canopyTimber;
+}
+
+function addCanopyVillageBridge(
+  scene,
+  world,
+  start,
+  end,
+  width = 4.2,
+  sag = 0.8,
+) {
+  const { batch, materials } = canopyTimber(scene, world);
+  const span = timberSpan(batch, start, end, width, materials, sag);
+  (world.environmentRoutes ||= []).push({
+    start: start.toArray(),
+    end: end.toArray(),
+    width,
+    sag,
+  });
+  const mesh = new THREE.Mesh(span.geometry);
+  world.colliders.push(
+    triangleMeshColliderFromMesh(mesh, 'canopy-timber-span', true),
   );
-  // Sink the rendered top four centimetres below the collision plane. The
-  // bridge ends overlap the destination decks for seamless walking, and a
-  // coplanar top there used to shimmer badly at the four council corners.
-  bridge.position.copy(start).add(end).multiplyScalar(0.5).add(V(0, -0.35, 0));
-  bridge.rotation.y = yaw;
-  bridge.name = 'canopy-village-bridge';
-  bridge.castShadow = bridge.receiveShadow = true;
-  scene.add(bridge);
-
-  // Short overlapping support cells follow the diagonal without filling the
-  // empty corners of its bounding box.
-  const steps = Math.max(3, Math.ceil(length / 2.4));
-  const stepX = delta.x / steps;
-  const stepZ = delta.z / steps;
-  let previous = null;
+  span.geometry.dispose();
+  const steps = Math.max(3, Math.ceil(span.length / 4.8));
+  let previous;
   for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const p = V(start.x + delta.x * t, start.y, start.z + delta.z * t);
-    world.colliders.push({
-      type: 'box',
-      min: V(p.x - Math.abs(stepX) * 0.62 - width * 0.42, p.y - 0.62,
-        p.z - Math.abs(stepZ) * 0.62 - width * 0.42),
-      max: V(p.x + Math.abs(stepX) * 0.62 + width * 0.42, p.y,
-        p.z + Math.abs(stepZ) * 0.62 + width * 0.42),
-    });
-    if (i % 2 === 0 || i === steps) {
-      wp(world, p.x, p.y, p.z);
-      world.waypoints[world.waypoints.length - 1].manualLinksOnly = true;
-      if (previous) world.manualLinks.push([...previous, p.x, p.y, p.z]);
-      previous = [p.x, p.y, p.z];
-    }
+    const p = span.at(i / steps);
+    wp(world, p.x, p.y, p.z);
+    world.waypoints[world.waypoints.length - 1].manualLinksOnly =
+      sag !== 0 || (i !== 0 && i !== steps && i !== steps / 2);
+    if (previous) world.manualLinks.push([...previous, ...p.toArray()]);
+    previous = p.toArray();
   }
+}
 
+function addCanopyRiverbanks(scene, world) {
+  const bankMat = mat(0x657055, {
+    tex: 'rock',
+    repeat: [1, 1],
+    roughness: 1,
+    metalness: 0,
+  });
+  const batch = new EnvironmentBatch(scene);
+  const stone = mat(0x778073, {
+    roughness: 1,
+    metalness: 0,
+    flatShading: true,
+  });
+  const reeds = mat(0x577347, { roughness: 1, metalness: 0 });
+  for (const center of [-54, 54])
+    for (const side of [-1, 1]) {
+      // The inner banks stop around the submerged connector mouth.
+      const ranges =
+        side === -Math.sign(center)
+          ? [
+              [-82, 60],
+              [68, 82],
+            ]
+          : [[-82, 82]];
+      for (const [z0, z1] of ranges) {
+        const g = ribbonSolid(
+          (t) => {
+            const z = z0 + (z1 - z0) * t;
+            const { outer, inner } = canopyBankSection(center, side, z);
+            const a = [outer, 0, z],
+              b = [inner, -4.8, z];
+            const middle = [outer + (inner - outer) * 0.76, -0.3, z];
+            return { left: side < 0 ? a : b, middle, right: side < 0 ? b : a };
+          },
+          Math.ceil((z1 - z0) / 2),
+          () => -5.3,
+        );
+        const mesh = new THREE.Mesh(g, bankMat);
+        mesh.name = 'canopy-sculpted-riverbank';
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        world.colliders.push(
+          triangleMeshColliderFromMesh(mesh, mesh.name, true),
+        );
+      }
+      // Pebbles and reeds occupy the bank lip, leaving bridges and swim exits clear.
+      for (let i = 0; i < 36; i++) {
+        const z = -77 + i * 4.3;
+        if ([64, -40, 30, -50, 4, 46, -4].some((v) => Math.abs(z - v) < 7))
+          continue;
+        const { outer } = canopyBankSection(center, side, z);
+        const g = new THREE.IcosahedronGeometry(0.24 + (i % 3) * 0.08, 0);
+        g.scale(1.6, 0.5, 1);
+        g.translate(outer - side * 0.2, 0.08, z);
+        batch.add(g, stone);
+        if (i % 2 === 0)
+          for (let k = 0; k < 3; k++)
+            batch.beam(
+              V(outer + side * 0.14, 0.02, z + k * 0.13),
+              V(outer + side * 0.4, 0.7 + k * 0.16, z + k * 0.22),
+              0.035,
+              reeds,
+              4,
+            );
+      }
+    }
+  batch.flush('canopy-riverbank-growth');
+}
+
+function addCanopyLivingTrunk(scene, world, x, z, base, height, radius, seed) {
+  const mesh = new THREE.Mesh(
+    livingTrunkGeometry(radius, height, seed),
+    mat(0xd1c5a9, {
+      tex: 'canopy-bark',
+      repeat: [3, height / 4],
+      roughness: 1,
+    }),
+  );
+  mesh.position.set(x, base + height / 2, z);
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.name = 'canopy-living-trunk';
+  scene.add(mesh);
+  world.colliders.push(triangleMeshColliderFromMesh(mesh, mesh.name, true));
+}
+
+function addCanopyThicket(scene, world, x, z, w, d) {
+  const { batch, materials } = canopyTimber(scene, world);
+  materials.moss ||= mat(0x456345, { roughness: 1, metalness: 0 });
+  materials.leaf ||= mat(0x547a43, {
+    roughness: 1,
+    metalness: 0,
+    flatShading: true,
+  });
+  const hw = w / 2 - 0.2,
+    hd = d / 2 - 0.2,
+    r = Math.min(0.55, hw * 0.6, hd * 0.6);
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw + r, -hd);
+  shape.lineTo(hw - r, -hd);
+  shape.quadraticCurveTo(hw, -hd, hw, -hd + r);
+  shape.lineTo(hw, hd - r);
+  shape.quadraticCurveTo(hw, hd, hw - r, hd);
+  shape.lineTo(-hw + r, hd);
+  shape.quadraticCurveTo(-hw, hd, -hw, hd - r);
+  shape.lineTo(-hw, -hd + r);
+  shape.quadraticCurveTo(-hw, -hd, -hw + r, -hd);
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth: 3.1,
+    bevelEnabled: true,
+    bevelSize: 0.18,
+    bevelThickness: 0.2,
+    bevelSegments: 1,
+    steps: 1,
+    curveSegments: 3,
+  });
+  geometry.rotateX(-Math.PI / 2);
+  geometry.translate(x, 0.2, z);
+  const mesh = new THREE.Mesh(geometry, materials.moss);
+  world.colliders.push(
+    triangleMeshColliderFromMesh(mesh, 'canopy-rounded-thicket', true),
+  );
+  batch.add(geometry, materials.moss);
+  // Irregular side growth softens the old clipped hedge silhouette, while a
+  // continuous clear top preserves the balance-beam shortcut and vine exits.
+  const alongX = w > d,
+    length = Math.max(w, d),
+    half = Math.min(w, d) / 2;
+  for (let i = 0; i < Math.floor(length / 1.7); i++)
+    for (const side of [-1, 1]) {
+      const u = -length / 2 + 1 + i * 1.7;
+      const leaf = new THREE.IcosahedronGeometry(1, 0);
+      leaf.scale(alongX ? 1.1 : 0.5, 0.55, alongX ? 0.5 : 1.1);
+      leaf.translate(
+        x + (alongX ? u : side * (half - 0.12)),
+        2.6 + Math.sin(i * 2 + x) * 0.23,
+        z + (alongX ? side * (half - 0.12) : u),
+      );
+      batch.add(leaf, materials.leaf);
+    }
+}
+
+function addCanopyFallenLog(scene, world) {
+  const outer = 1.85,
+    inner = 1.4;
+  const pieces = [];
+  const shell = new THREE.CylinderGeometry(outer, outer, 14, 14, 1, true);
+  shell.rotateZ(Math.PI / 2);
+  pieces.push(shell);
+  const tunnel = new THREE.CylinderGeometry(
+    inner,
+    inner,
+    14,
+    14,
+    1,
+    true,
+  ).toNonIndexed();
+  tunnel.rotateZ(Math.PI / 2);
+  const p = tunnel.attributes.position;
+  for (let i = 0; i < p.count; i += 3) {
+    const a = V().fromBufferAttribute(p, i + 1),
+      b = V().fromBufferAttribute(p, i + 2);
+    p.setXYZ(i + 1, b.x, b.y, b.z);
+    p.setXYZ(i + 2, a.x, a.y, a.z);
+  }
+  tunnel.computeVertexNormals();
+  pieces.push(tunnel);
+  for (const sign of [-1, 1]) {
+    const end = new THREE.RingGeometry(inner, outer, 14);
+    end.rotateY((sign * Math.PI) / 2);
+    end.translate(sign * 7, 0, 0);
+    pieces.push(end);
+  }
+  const flat = pieces.map((g) => (g.index ? g.toNonIndexed() : g));
+  const geometry = mergeGeometries(flat, false);
+  geometry.translate(-27, 1.45, -24);
+  const mesh = new THREE.Mesh(
+    geometry,
+    mat(0xb7aa8e, { tex: 'canopy-bark', repeat: [3, 1], roughness: 1 }),
+  );
+  mesh.name = 'canopy-hollow-fallen-log';
+  mesh.castShadow = mesh.receiveShadow = true;
+  scene.add(mesh);
+  world.colliders.push(triangleMeshColliderFromMesh(mesh, mesh.name, true));
+  new Set([...pieces, ...flat]).forEach((g) => g.dispose());
+}
+
+function addCanopyVillageStructure(scene, world) {
+  const { batch, materials } = canopyTimber(scene, world);
+  // Radial brackets and skirt joists make the tree decks read as construction
+  // attached to a living trunk. They stay below the walking surfaces.
+  for (const [x, z] of [
+    [-45, -45],
+    [45, -45],
+    [-45, 45],
+    [45, 45],
+  ]) {
+    for (const y of [10, 20, 30]) {
+      const radius = y === 30 ? 12.5 : 6.5;
+      for (const [dx, dz] of [
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+      ]) {
+        batch.beam(
+          V(x + dx * 3.4, y - 4, z + dz * 3.4),
+          V(x + dx * radius, y - 0.7, z + dz * radius),
+          0.22,
+          materials.dark,
+        );
+      }
+      for (const side of [-1, 1]) {
+        batch.box(
+          x,
+          y - 0.8,
+          z + side * radius,
+          radius * 2 + 0.6,
+          0.45,
+          0.38,
+          materials.dark,
+        );
+        batch.box(
+          x + side * radius,
+          y - 0.8,
+          z,
+          0.38,
+          0.45,
+          radius * 2 + 0.6,
+          materials.dark,
+        );
+      }
+    }
+    // Plank seams establish human scale on the broad village balconies.
+    for (let offset = -12; offset <= 12; offset += 0.8)
+      batch.box(x + offset, 30.009, z, 0.022, 0.018, 25.8, materials.dark);
+  }
+  // An outer forest breaks the straight wall skyline into overlapping trunks
+  // and crowns, with a handful of shared meshes rather than individual props.
+  const bark = mat(0x64583e, { roughness: 1, metalness: 0 });
+  const leaf = mat(0x416140, { roughness: 1, metalness: 0, flatShading: true });
+  for (let edge = 0; edge < 4; edge++)
+    for (let i = 0; i < 11; i++) {
+      const u = -81 + i * 16.2,
+        jitter = Math.sin(i * 13 + edge * 5) * 4;
+      const x = edge < 2 ? (edge === 0 ? -87 : 87) : u;
+      const z = edge < 2 ? u : edge === 2 ? -87 : 87;
+      const h = 41 + Math.sin(i * 2 + edge) * 7;
+      const trunk = new THREE.CylinderGeometry(1.4, 2.3, h, 7);
+      trunk.translate(x, h / 2, z);
+      batch.add(trunk, bark);
+      for (let c = 0; c < 3; c++) {
+        const g = new THREE.IcosahedronGeometry(1, 1);
+        g.scale(8 + c, 4.5, 7 + c);
+        g.translate(
+          x + Math.sin(c * 2 + i) * 4,
+          h + jitter + c * 2,
+          z + Math.cos(c * 2 + i) * 4,
+        );
+        batch.add(g, leaf);
+      }
+    }
+  batch.flush('canopy-timber-and-forest');
+  delete world._canopyTimber;
 }
 
 function addCanopyTreehouse(scene, world, x, floorY, z, doorSignX, accent = 0xffc45c) {
@@ -5660,6 +6239,111 @@ function addCanopyTreehouse(scene, world, x, floorY, z, doorSignX, accent = 0xff
    Five colossal trees with branch decks at 10/20, a connected village at 30,
    and living crowns above y=40. Edge bridges, vines, ramps, and pad chains
    make the whole forest playable from riverbed to treetop roofs. */
+// A closed arched bank joins both shores without a rectangular lid or fins.
+function addCanopyCreekVault(scene, world, x, z, length, axis = "z") {
+  const positions = [],
+    uv = [];
+  const rings = 12,
+    sides = 16;
+  const vertex = (t, i, outer) => {
+    const angle = -Math.PI / 2 + (Math.PI * i) / sides;
+    const along = (t - 0.5) * length + Math.cos(angle * 3 + 0.4) * 0.28;
+    const across = Math.sin(angle) * (outer ? 8.6 : 4.3);
+    const y = outer
+      ? -0.08 + Math.cos(angle) * (1.05 + 0.12 * Math.sin(t * 5))
+      : -2.8 + Math.cos(angle) * 2.48;
+    return axis === "z"
+      ? [x + across + canopyRiverOffset(z + along, x), y, z + along]
+      : [x + along, y, z + across];
+  };
+  const quad = (a, b, c, d) => {
+    const normal=V(...b).sub(V(...a)).cross(V(...c).sub(V(...a)));
+    const nx=Math.abs(normal.x),ny=Math.abs(normal.y),nz=Math.abs(normal.z);
+    for(const p of [a,b,c,a,c,d]) {
+      positions.push(...p);
+      if(ny>=nx && ny>=nz) uv.push(p[0]*.13,p[2]*.13);
+      else if(nz>=nx) uv.push(p[0]*.13,p[1]*.13);
+      else uv.push(p[2]*.13,p[1]*.13);
+    }
+  };
+  for (let n = 0; n < rings; n++)
+    for (let i = 0; i < sides; i++) {
+      const t = n / rings,
+        u = (n + 1) / rings;
+      quad(
+        vertex(t, i, true),
+        vertex(u, i, true),
+        vertex(u, i + 1, true),
+        vertex(t, i + 1, true),
+      );
+      quad(
+        vertex(t, i, false),
+        vertex(t, i + 1, false),
+        vertex(u, i + 1, false),
+        vertex(u, i, false),
+      );
+    }
+  for (let i = 0; i < sides; i++) {
+    quad(
+      vertex(0, i, true),
+      vertex(0, i + 1, true),
+      vertex(0, i + 1, false),
+      vertex(0, i, false),
+    );
+    quad(
+      vertex(1, i, true),
+      vertex(1, i, false),
+      vertex(1, i + 1, false),
+      vertex(1, i + 1, true),
+    );
+  }
+  for (let n = 0; n < rings; n++)
+    for (const i of [0, sides]) {
+      const t = n / rings,
+        u = (n + 1) / rings;
+      if (i === 0)
+        quad(
+          vertex(t, i, true),
+          vertex(t, i, false),
+          vertex(u, i, false),
+          vertex(u, i, true),
+        );
+      else
+        quad(
+          vertex(t, i, true),
+          vertex(u, i, true),
+          vertex(u, i, false),
+          vertex(t, i, false),
+        );
+    }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  // The axis swap is a reflection. Restore the winding of the closed shell.
+  if (axis === "x") {
+    const p = geometry.attributes.position;
+    for (let i = 0; i < p.count; i += 3) {
+      const b = V().fromBufferAttribute(p, i + 1),
+        c = V().fromBufferAttribute(p, i + 2);
+      p.setXYZ(i + 1, c.x, c.y, c.z);
+      p.setXYZ(i + 2, b.x, b.y, b.z);
+    }
+  }
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geometry,
+    mat(0xb8c0a5, { tex: "mycelium-mossy-rock", repeat: [1, 1], roughness: 1 }),
+  );
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.name = "canopy-natural-creek-vault";
+  scene.add(mesh);
+  world.colliders.push(triangleMeshColliderFromMesh(mesh, mesh.name, true));
+  (world.creekVaults ||= []).push({ x, z, length, axis });
+}
+
 function buildCanopy(scene) {
   const world = newWorld({
     killY: -20,
@@ -5681,33 +6365,24 @@ function buildCanopy(scene) {
   // bed −4.8, water −0.55): swim them, cross the plank bridges, or duck into
   // the covered flooded tunnels. A submerged connector runs under the south
   // lawn between the two riverbeds.
-  addBox(scene, world, -70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
-  // The center lawn is tiled around a 6x10 opening beneath the south bridge.
-  // That opening is the surfaced end of the secret connector branch below.
-  addBox(scene, world, -26.5, -0.5, 0, 47, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [5, 16] });
-  addBox(scene, world, 26.5, -0.5, 0, 47, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [5, 16] });
-  addBox(scene, world, 0, -0.5, -21, 6, 1, 122, 0x5d9c46, { tex: 'rock', repeat: [1, 12] });
-  addBox(scene, world, 0, -0.5, 66, 6, 1, 32, 0x5d9c46, { tex: 'rock', repeat: [1, 3] });
-  addBox(scene, world, 70, -0.5, 0, 24, 1, 164, 0x5d9c46, { tex: 'rock', repeat: [3, 16] });
-  addBox(scene, world, -54, -5.3, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });   // riverbed
-  addBox(scene, world, 54, -5.3, 0, 8, 1, 164, 0x3f6e5e, { tex: 'rock', repeat: [1, 16] });
-  const addRiverSide = (x, z, d) => addBox(scene, world, x, -2.45, z, 0.7, 4.8, d, 0x4a7a52, {
-    tex: 'rock', repeat: [Math.max(1, Math.round(d / 10)), 1],
-  });
-  const riverSide = (x, gapZ = null) => {
-    if (gapZ == null) {
-      addRiverSide(x, 0, 164);
-      return;
-    }
-    addRiverSide(x, (gapZ - 4 - 82) / 2, 82 + gapZ - 4);
-    addRiverSide(x, (gapZ + 4 + 82) / 2, 82 - gapZ - 4);
-  };
-  riverSide(-57.6);        // channel sides — inset 5cm from the bank faces
-  riverSide(-50.4, 64);    // gap opens into the underwater connector
-  riverSide(50.4, 64);
-  riverSide(57.6);
-  addWater(scene, world, -54, -0.55, 0, 7.8, 162, 5.4);
-  addWater(scene, world, 54, -0.55, 0, 7.8, 162, 5.4);
+  // Broad lawns follow both river bends. The central opening is still the
+  // original flooded branch, so the hidden south route remains intact.
+  const lawnMat=mat(0x6a9251,{tex:'rock',repeat:[1,1],roughness:1});
+  for(const [left,right,z0,z1] of [
+    [()=>-82,z=>-58+canopyRiverOffset(z,-54),-82,82],
+    [z=>-50+canopyRiverOffset(z,-54),()=>-3,-82,82],
+    [()=>3,z=>50+canopyRiverOffset(z,54),-82,82],
+    [z=>58+canopyRiverOffset(z,54),()=>82,-82,82],
+    [()=>-3,()=>3,-82,40],[()=>-3,()=>3,50,82],
+  ]) {
+    const geometry=ribbonSolid(t=>{const z=z0+(z1-z0)*t;return {left:[left(z),0,z],right:[right(z),0,z]};},Math.ceil((z1-z0)/2),1);
+    const lawn=new THREE.Mesh(geometry,lawnMat);lawn.name='canopy-river-shaped-lawn';lawn.receiveShadow=true;scene.add(lawn);
+    world.colliders.push(triangleMeshColliderFromMesh(lawn,lawn.name,true));
+  }
+  for(const x of [-54,54]) addBox(scene,world,x,-5.3,0,16,1,164,0x465849,{tex:'rock',repeat:[2,16]});
+  addCanopyRiverbanks(scene, world);
+  addWater(scene, world, -54, -0.55, 0, 15.8, 162, 5.4);
+  addWater(scene, world, 54, -0.55, 0, 15.8, 162, 5.4);
   // Small decorative schools patrol beneath the open portions of both rivers.
   // They intentionally have no collision or gameplay state.
   addMinnowSchool(scene, world, -54, -50, 15, 0.2);
@@ -5721,7 +6396,7 @@ function buildCanopy(scene) {
   addBox(scene, world, -28.7, -2.45, 59.6, 50.6, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [6, 1] });
   addBox(scene, world, 28.7, -2.45, 59.6, 50.6, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [6, 1] });
   addBox(scene, world, 0, -2.45, 68.4, 108, 4.8, 0.7, 0x4a7a52, { tex: 'rock', repeat: [12, 1] });
-  addBox(scene, world, 0, -0.1, 64, 108, 0.3, 8.8, 0x4a7a52, { tex: 'rock', repeat: [12, 1] }); // low ceiling keeps it underwater
+  addBox(scene, world, 0, -0.3, 64, 92, 0.3, 8.8, 0x4a7a52, { tex: 'rock', repeat: [12, 1] }); // low ceiling keeps it underwater
   addWater(scene, world, 0, -0.55, 64, 108, 7.8, 5.4);
   // Secret flooded branch: north from the connector, then a ramp up through
   // the lawn beneath the south bridge for a third entrance into the system.
@@ -5741,10 +6416,11 @@ function buildCanopy(scene) {
   const branchLight = new THREE.PointLight(0x30e0ff, 18, 14);
   branchLight.position.set(0, -2.2, 55);
   scene.add(branchLight);
-  addBox(scene, world, -54, -0.1, 4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });   // flooded tunnel covers
-  addBox(scene, world, -54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
-  addBox(scene, world, 54, -0.1, -4, 8.6, 0.3, 20, 0x5d9c46, { tex: 'rock' });
-  addBox(scene, world, 54, -0.1, 46, 8.6, 0.3, 12, 0x5d9c46, { tex: 'rock' });
+  for(const [x,z,length] of [[-54,4,20],[-54,46,12],[54,-4,20],[54,46,12]])
+    addCanopyCreekVault(scene,world,x,z,length);
+  // Rounded mouths continue the buried cross-channel into each river.
+  addCanopyCreekVault(scene,world,-49,64,10,'x');
+  addCanopyCreekVault(scene,world,49,64,10,'x');
   addBox(scene, world, -54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] }); // plank bridge
   addBox(scene, world, 54, 0.14, -40, 10, 0.28, 3, 0x8a6a40, { tex: 'crate', repeat: [3, 1] });
   addRamp(scene, world, { axis: 'x', minX: -56.5, maxX: -50, minZ: 28, maxZ: 32, h0: -4.8, h1: 0, color: 0x4a7a52 });
@@ -5808,10 +6484,10 @@ function buildCanopy(scene) {
   // Trunks: NE/NW/SE solid; the SW tree is HOLLOW — slip in the ground door,
   // ride the hidden pad shaft to an attic, and step out onto the 20-deck.
   for (const [tx, tz] of [[45, -45], [-45, 45], [45, 45]]) {
-    addBox(scene, world, tx, 21, tz, 8, 42, 8, 0xffffff, { tex: 'canopy-bark', repeat: [2, 11] });
+    addCanopyLivingTrunk(scene, world, tx, tz, 0, 42, 4.15, tx+tz);
   }
   const TR = 0xffffff;
-  addBox(scene, world, -45, 32.5, -45, 8, 19, 8, TR, { tex: 'canopy-bark', repeat: [2, 5] }); // solid upper trunk
+  addCanopyLivingTrunk(scene, world, -45, -45, 23, 19, 4.1, 3); // hollow shaft remains below
   addBox(scene, world, -48.4, 11.5, -45, 1.2, 23, 8, TR, { tex: 'canopy-bark', repeat: [2, 6] }); // shaft walls
   addBox(scene, world, -41.6, 11.5, -45, 1.2, 23, 8, TR, { tex: 'canopy-bark', repeat: [2, 6] });
   addBox(scene, world, -45, 11.5, -48.4, 5.6, 23, 1.2, TR, { tex: 'canopy-bark', repeat: [2, 6] });
@@ -5843,7 +6519,7 @@ function buildCanopy(scene) {
   const roomLight = new THREE.PointLight(0xffb060, 25, 18);
   roomLight.position.set(0, 5, 0);
   scene.add(roomLight);
-  addBox(scene, world, 0, 24, 0, 5, 32, 5, 0xffffff, { tex: 'canopy-bark', repeat: [2, 8] });
+  addCanopyLivingTrunk(scene, world, 0, 0, 8, 32, 2.65, 5);
 
   // hedge lanes — break up the open lawn into corridors, plus a small maze
   // pocket in the SE quadrant (the pulsar sits inside it)
@@ -5859,9 +6535,7 @@ function buildCanopy(scene) {
     [-18, 35, 2, 18], [2, 35, 18, 2],
     [-39, -34, 18, 2], [-15, -16, 2, 18],
   ]) {
-    addBox(scene, world, hx, 1.75, hz, hw, 3.5, hd, 0x588a42, {
-      tex: 'grass', repeat: [Math.max(1, Math.round(Math.max(hw, hd) / 6)), 1],
-    });
+    addCanopyThicket(scene,world,hx,hz,hw,hd);
     (world.foliageZones ||= []).push({
       minX: hx - hw / 2 - 0.45, maxX: hx + hw / 2 + 0.45,
       minY: -0.1, maxY: 3.7,
@@ -5883,10 +6557,7 @@ function buildCanopy(scene) {
   addRamp(scene, world, { axis: 'x', minX: 12.5, maxX: 20.7, minZ: 13, maxZ: 16.5, h0: 0, h1: 4.3, color: HUT });
 
   // FALLEN LOG (SW lawn): crawl-through tunnel, walkable on top via stumps
-  const LOG = 0xffffff;
-  addBox(scene, world, -27, 1.4, -25.6, 14, 2.8, 0.5, LOG, { tex: 'canopy-bark', repeat: [4, 1] });
-  addBox(scene, world, -27, 1.4, -22.4, 14, 2.8, 0.5, LOG, { tex: 'canopy-bark', repeat: [4, 1] });
-  addBox(scene, world, -27, 3, -24, 14, 0.6, 3.7, LOG, { tex: 'canopy-bark', repeat: [4, 1] }); // top 3.3
+  addCanopyFallenLog(scene,world);
   addBox(scene, world, -37, 0.8, -20, 3, 1.6, 3, 0xffffff, { tex: 'canopy-bark' }); // stump steps up
   addBox(scene, world, -33, 1.3, -19.5, 3, 2.6, 3, 0xffffff, { tex: 'canopy-bark' });
 
@@ -5952,8 +6623,8 @@ function buildCanopy(scene) {
       { tex: 'crate', repeat: [6, 6] });
     const cornerRing = addVillageNavRing(tx, tz, 6.2);
 
-    const bridgeStart = V(tx - sx * 10.5, villageY, tz - sz * 10.5);
-    const bridgeEnd = V(sx * 8, villageY, sz * 8);
+    const bridgeStart = V(tx - sx * 10.5, villageY - 0.04, tz - sz * 10.5);
+    const bridgeEnd = V(sx * 8, villageY - 0.04, sz * 8);
     addCanopyVillageBridge(scene, world, bridgeStart, bridgeEnd, 4.4 * 1.3);
     world.manualLinks.push(
       [bridgeStart.x, bridgeStart.y, bridgeStart.z, ...nearestVillagePoint(cornerRing, bridgeStart.x, bridgeStart.z)],
@@ -5994,10 +6665,11 @@ function buildCanopy(scene) {
 
   // Edge bridges butt exactly into the deck edges at the same height. Their
   // runs stop at z/x ±38, leaving no 2cm lip and no coplanar overlap.
-  addBox(scene, world, -45, 19.5, 0, 3.45, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
-  addBox(scene, world, 45, 19.5, 0, 3.45, 1, 76, 0x7a5c38, { tex: 'crate', repeat: [1, 10] });
-  addBox(scene, world, 0, 9.5, -45, 76, 1, 3.45, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
-  addBox(scene, world, 0, 9.5, 45, 76, 1, 3.45, 0x7a5c38, { tex: 'crate', repeat: [10, 1] });
+  // Narrow perimeter routes keep their level decks and vine anchor heights.
+  addCanopyVillageBridge(scene,world,V(-45,20,-38),V(-45,20,38),3.45,0);
+  addCanopyVillageBridge(scene,world,V(45,20,-38),V(45,20,38),3.45,0);
+  addCanopyVillageBridge(scene,world,V(-38,10,-45),V(38,10,-45),3.45,0);
+  addCanopyVillageBridge(scene,world,V(-38,10,45),V(38,10,45),3.45,0);
   addVine(scene, world, -46.72, -18, 0.2, 19.1, 1.05, -0.18, 0, 1, 0);  // hanging from west bridge
   addVine(scene, world, 46.72, 16, 0.2, 19.1, 1.05, 0.18, 0, -1, 0);    // hanging from east bridge
   addVine(scene, world, -46.72, 30, 0.2, 19.1, 1.0, -0.18, 0, 1, 0);    // west bridge south drop
@@ -6194,6 +6866,7 @@ function buildCanopy(scene) {
     if (Math.abs(x) < 4 && z > 39 && z < 51) return true; // surfaced tunnel opening
     const p = V(x, 1, z);
     for (const c of world.colliders) {
+      if (c.type === 'triangleMesh' && sphereHitsTriangleMesh(p, 0.8, c)) return true;
       if (c.type !== 'box') continue;
       if (p.x > c.min.x - 1.2 && p.x < c.max.x + 1.2 && p.y > c.min.y && p.y < c.max.y &&
           p.z > c.min.z - 1.2 && p.z < c.max.z + 1.2) return true;
@@ -6290,6 +6963,17 @@ function buildCanopy(scene) {
     [-45, 20, 45, -45, 10, 45, true], [45, 20, 45, 45, 10, 45, true],
     [-45, 10, -45, -30, 0, -30, true], [45, 10, 45, 30, 0, 30, true],
   );
+  // Underwater routes follow the bends instead of aiming through their banks.
+  for(const node of world.waypoints) if(node.pos.y<0 && Math.abs(Math.abs(node.pos.x)-54)<.01) node.pos.x+=canopyRiverOffset(node.pos.z,node.pos.x);
+  for(const center of [-54,54]) {
+    let previous=null;
+    for(let z=-74;z<=76;z+=6) {
+      const point=[center+canopyRiverOffset(z,center),-2.6,z];wp(world,...point);
+      if(previous) world.manualLinks.push([...previous,...point]);previous=point;
+    }
+  }
+  addCanopyVillageStructure(scene, world);
+  for(const z of [0,22,40,60,72])wp(world,70,0,z);
   mergeStatic(scene, world);
   return world;
 }
@@ -6417,6 +7101,517 @@ function addCityPresentation(scene, world) {
   world.setVisualQuality('high');
 }
 
+// Three parallel platforms form the transfer level. The high diagonal crosses
+// above Central, so the figure eight never intersects itself or leaves the city.
+function addNeonTransit(scene, world) {
+  const controls = [
+    [0, 10, 0],
+    [-26, 10, 0],
+    [-53, 10, 0],
+    [-74, 10, 0],
+    [-76, 21, 16],
+    [-70, 32, 30],
+    [-57, 39, 51],
+    [-35, 43, 54],
+    [-16, 43, 32],
+    [0, 42, 0],
+    [16, 39, -32],
+    [35, 35, -54],
+    [60, 33, -52],
+    [72, 27, -32],
+    [76, 21, -16],
+    [74, 10, 0],
+    [53, 10, 0],
+    [26, 10, 0],
+  ];
+  const curve = new THREE.CatmullRomCurve3(
+    controls.map((p) => V(...p)),
+    true,
+    "centripetal",
+  );
+  const count = controls.length * 24;
+  const points = Array.from({ length: count + 1 }, (_, i) => {
+    const p = curve.getPoint(i / count).toArray();
+    if (i <= 3 * 24 || i >= 15 * 24) {
+      p[1] = 10;
+      p[2] = 0;
+    }
+    return p;
+  });
+  const railPoint = (t) => V(...points[Math.min(count, Math.round(t * count))]);
+  const schedule = createTransitSchedule(points, [0, 2 * 24, 16 * 24], 22, 5);
+  const batch = new EnvironmentBatch(scene);
+  const concrete = mat(0x3f4868, { roughness: 0.8 });
+  const pink = new THREE.MeshBasicMaterial({
+    color: 0xff438e,
+    toneMapped: false,
+  });
+  const cyan = new THREE.MeshBasicMaterial({
+    color: 0x42eced,
+    toneMapped: false,
+  });
+  const rail = ribbonSolid(
+    (t) => {
+      const p = railPoint(t),
+        tangent = railPoint(Math.min(1, t + 1 / count))
+          .sub(railPoint(Math.max(0, t - 1 / count)))
+          .normalize();
+      const normal = V(tangent.z, 0, -tangent.x).normalize();
+      const left = p.clone().addScaledVector(normal, 0.7);
+      left.y -= 0.52;
+      const right = p.clone().addScaledVector(normal, -0.7);
+      right.y -= 0.52;
+      return { left: left.toArray(), right: right.toArray() };
+    },
+    count,
+    0.65,
+  );
+  const mesh = new THREE.Mesh(rail, concrete);
+  world.colliders.push(
+    triangleMeshColliderFromMesh(mesh, "neon-figure-eight-rail", true),
+  );
+  batch.add(rail, concrete);
+  for (let i = 0; i < count; i++) {
+    const a = V(...points[i]),
+      b = V(...points[i + 1]);
+    const n = V(b.z - a.z, 0, a.x - b.x).normalize();
+    for (const side of [-1, 1])
+      batch.beam(
+        a
+          .clone()
+          .addScaledVector(n, side * 0.77)
+          .add(V(0, -0.7, 0)),
+        b
+          .clone()
+          .addScaledVector(n, side * 0.77)
+          .add(V(0, -0.7, 0)),
+        0.055,
+        side > 0 ? pink : cyan,
+        4,
+      );
+  }
+  world.cityStationStairs = [];
+  const stations = [
+    [-53, "ARCADE", 0xff438e],
+    [0, "CENTRAL", 0xffc36d],
+    [53, "PALMS", 0x42eced],
+  ];
+  world.transitStations = stations.map(([x, name]) => ({
+    x,
+    y: 10,
+    z: 0,
+    name,
+  }));
+  for (const [x, name, color] of stations) {
+    for (const z of [-5.3, 5.3]) {
+      addBox(scene, world, x, 9.7, z, 24, 0.6, 5, 0x4c506a, {
+        tex: "panel",
+        repeat: [5, 1],
+      });
+      batch.box(
+        x,
+        10.025,
+        z - Math.sign(z) * 2.18,
+        23,
+        0.035,
+        0.25,
+        Math.sign(z) > 0 ? pink : cyan,
+      );
+      // Cantilever roofs shelter the platforms, leaving the train and exits open.
+      batch.box(x, 14.25, z, 23, 0.25, 4.8, concrete);
+      batch.box(
+        x,
+        14.05,
+        z + Math.sign(z) * 2.25,
+        23,
+        0.14,
+        0.18,
+        Math.sign(z) > 0 ? pink : cyan,
+      );
+      for (const dx of [-10.8, 10.8]) {
+        addBox(
+          scene,
+          world,
+          x + dx,
+          7,
+          z + Math.sign(z) * 1.9,
+          0.35,
+          14,
+          0.35,
+          0x3f4868,
+        );
+      }
+      addArenaSign(
+        scene,
+        name,
+        x,
+        12.5,
+        z + Math.sign(z) * 2.3,
+        9,
+        1.2,
+        z < 0 ? 0 : Math.PI,
+        "#" + color.toString(16),
+        "neon",
+        true,
+      );
+      for (const dx of [-8, 0, 8]) wp(world, x + dx, 10, z);
+    }
+    // Each platform has its own street stair: no need to cross the live track.
+    const sx = x === 0 ? 12 : x === -53 ? x - 8 : x + 8;
+    addRamp(scene, world, {
+      axis: "z",
+      minX: sx - 2.6,
+      maxX: sx + 2.6,
+      minZ: 7.8,
+      maxZ: 20,
+      h0: 10,
+      h1: 0,
+      color: 0x4c506a,
+    });
+    const nx = x === 0 ? -8 : x - 8;
+    addRamp(scene, world, {
+      axis: "z",
+      minX: nx - 2.6,
+      maxX: nx + 2.6,
+      minZ: -21,
+      maxZ: -7.8,
+      h0: 0,
+      h1: 10,
+      color: 0x4c506a,
+    });
+    for (const [rx, z0, z1, h0, h1] of [
+      [sx, 7.8, 20, 10, 0],
+      [nx, -21, -7.8, 0, 10],
+    ]) {
+      const nodes = [];
+      world.cityStationStairs.push([
+        [rx, h0, z0],
+        [rx, h1, z1],
+      ]);
+      for (let i = 0; i <= 6; i++) {
+        const t = i / 6,
+          p = [rx, h0 + (h1 - h0) * t, z0 + (z1 - z0) * t];
+        wp(world, ...p);
+        nodes.push(p);
+      }
+      for (let i = 1; i < nodes.length; i++)
+        world.manualLinks.push([...nodes[i - 1], ...nodes[i]]);
+      const top = h0 === 10 ? nodes[0] : nodes.at(-1);
+      world.manualLinks.push([...top, rx, 10, h0 === 10 ? 5.3 : -5.3]);
+    }
+  }
+  // West arrival feeds the tower interior and the nearby Whomper ledge.
+  addBox(scene, world, -43, 9.7, -13.8, 4, 0.6, 12, 0x4c506a, { tex: "panel" });
+  addRamp(scene, world, {
+    axis: "x",
+    minX: -56,
+    maxX: -45,
+    minZ: -19.8,
+    maxZ: -15.8,
+    h0: 13.145,
+    h1: 10,
+    color: 0x4c506a,
+  });
+  addBox(scene, world, -40, 9.7, 13.9, 5, 0.6, 4.2, 0x4c506a, { tex: "panel" });
+  addBox(scene, world, -43, 9.7, 9.8, 6, 0.6, 4, 0x4c506a, { tex: "panel" });
+  // Central feeds the arcade's upper window and the Galleria's gallery.
+  addRamp(scene, world, {
+    axis: "z",
+    minX: -14,
+    maxX: -10,
+    minZ: -26,
+    maxZ: -7.8,
+    h0: 6.5,
+    h1: 10,
+    color: 0x4c506a,
+  });
+  addRamp(scene, world, {
+    axis: "z",
+    minX: 6,
+    maxX: 9,
+    minZ: 7.8,
+    maxZ: 30,
+    h0: 10,
+    h1: 16,
+    color: 0x4c506a,
+  });
+  addBox(scene, world, 4.75, 15.7, 32, 8.5, 0.6, 4, 0x4c506a, { tex: "panel" });
+  // Palms arrives at two roof routes, with a lower street loop below them.
+  addRamp(scene, world, {
+    axis: "z",
+    minX: 54,
+    maxX: 58,
+    minZ: -23,
+    maxZ: -7.8,
+    h0: 16,
+    h1: 10,
+    color: 0x4c506a,
+  });
+  addBox(scene, world, 66.5, 9.7, 10.3, 9, 0.6, 5, 0x4c506a, { tex: "panel" });
+  addBox(scene, world, 70.5, 9.7, 17.4, 3, 0.6, 9.2, 0x4c506a, {
+    tex: "panel",
+  });
+  const routes = [
+    [
+      [-45, 10, -5.3],
+      [-43, 10, -12],
+      [-43, 10, -17.8],
+      [-50.5, 11.5725, -17.8],
+      [-58, 13.145, -17.8],
+      [-58, 12, -22],
+      [-58, 12, -35],
+    ],
+    [
+      [-45, 10, 5.3],
+      [-43, 10, 9.8],
+      [-40, 10, 13.9],
+      [-40, 10, 20],
+    ],
+    [
+      [-12, 10, -5.3],
+      [-12, 8.5, -16],
+      [-12, 6.5, -26],
+      [-12, 6.5, -32],
+    ],
+    [
+      [7.5, 10, 5.3],
+      [7.5, 13, 19],
+      [7.5, 16, 32],
+      [-3, 16, 32],
+      [-3, 16, 44],
+    ],
+    [
+      [56, 10, -5.3],
+      [56, 13, -15.4],
+      [56, 16, -23],
+      [62, 16, -32],
+    ],
+    [
+      [61, 10, 5.3],
+      [63, 10, 10.3],
+      [70.5, 10, 10.3],
+      [70.5, 10, 18],
+      [70.5, 10, 26],
+      [64, 10, 30],
+    ],
+  ];
+  world.cityTransferRoutes = routes;
+  for (const route of routes) {
+    for (const p of route) wp(world, ...p);
+    for (let i = 1; i < route.length; i++)
+      world.manualLinks.push([...route[i - 1], ...route[i]]);
+  }
+  batch.flush("neon-transit-structure");
+  addMonorailTrain(scene, world, schedule);
+}
+
+function addNeonDistricts(scene, world) {
+  const batch = new EnvironmentBatch(scene);
+  const dark = mat(0x252f47, { roughness: 0.63, metalness: 0.22 });
+  const pale = mat(0x91a3b3, { roughness: 0.58 });
+  const pink = new THREE.MeshBasicMaterial({
+    color: 0xff438e,
+    toneMapped: false,
+  });
+  const cyan = new THREE.MeshBasicMaterial({
+    color: 0x42eced,
+    toneMapped: false,
+  });
+  const gold = new THREE.MeshBasicMaterial({
+    color: 0xffb85f,
+    toneMapped: false,
+  });
+  // Setbacks and ribs turn the playable towers into individual Art Deco buildings.
+  for (const [x, z, w, h, accent] of [
+    [32, -35, 26, 28, cyan],
+    [-58, 33, 22, 24, pink],
+    [32, 34, 22, 18, pink],
+    [62, -32, 18, 16, gold],
+    [-12, -38, 24, 20, pink],
+    [-12, 36, 28, 34, cyan],
+  ]) {
+    for (const y of [h * 0.32, h * 0.65, h - 0.6]) {
+      batch.box(x, y, z - w / 2 - 0.07, w + 0.3, 0.25, 0.22, accent);
+      batch.box(x, y, z + w / 2 + 0.07, w + 0.3, 0.25, 0.22, accent);
+    }
+    for (const side of [-1, 1]) {
+      batch.box(
+        x + side * (w / 2 - 0.75),
+        h * 0.65,
+        z - w / 2 - 0.15,
+        0.4,
+        h * 0.66,
+        0.3,
+        pale,
+      );
+      batch.box(
+        x + side * (w / 2 - 0.75),
+        h * 0.65,
+        z + w / 2 + 0.15,
+        0.4,
+        h * 0.66,
+        0.3,
+        pale,
+      );
+    }
+    // Low parapets provide roof cover without blocking the existing launch pads.
+    for (const dx of [-w * 0.32, w * 0.32])
+      addBox(
+        scene,
+        world,
+        x + dx,
+        h + 0.6,
+        z - w / 2 + 0.5,
+        w * 0.25,
+        1.2,
+        0.7,
+        0x45516d,
+      );
+  }
+  // Lit rooms behind the main street façades, with the hero signs left clear.
+  for (const [x, z, w, h, accent] of [
+    [-12, 21.9, 28, 34, pink],
+    [-58, -21.9, 26, 12, gold],
+    [-12, -25.9, 24, 20, cyan],
+  ]) {
+    for (let y = 9; y < h - 5; y += 3.6)
+      for (let dx = -w / 2 + 3; dx < w / 2 - 2; dx += 3.5) {
+        if (x === -12 && z < 0 && Math.abs(dx) < 5 && y < 11) continue;
+        batch.box(x + dx, y, z, 1.3, 0.85, 0.05, accent);
+      }
+  }
+  // Structural piers land on the highest supporting roof beneath the viaduct.
+  for (const index of [6, 7, 8, 10, 11, 12, 13]) {
+    const p = world.transit.schedule.points[index * 24],
+      x = p[0],
+      z = p[2],
+      top = p[1] - 0.95;
+    let base = 0;
+    for (const c of world.colliders)
+      if (
+        !c.dynamic &&
+        c.type === "box" &&
+        x > c.min.x &&
+        x < c.max.x &&
+        z > c.min.z &&
+        z < c.max.z &&
+        c.max.y < top
+      )
+        base = Math.max(base, c.max.y);
+    if (top - base < 3) continue;
+    const g = new THREE.CylinderGeometry(0.5, 0.8, top - base, 6);
+    g.translate(x, (base + top) / 2, z);
+    const m = new THREE.Mesh(g, dark);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(m, "neon-viaduct-pier", true),
+    );
+    batch.add(g, dark);
+    batch.beam(V(x, top - 4, z), V(x - 2, top, z), 0.18, dark);
+    batch.beam(V(x, top - 4, z), V(x + 2, top, z), 0.18, dark);
+  }
+  // Street rooms alternate cover and crosswalks; both subway mouths stay clear.
+  for (const [x, z, color] of [
+    [-26, 5, 0xff438e],
+    [28, -14, 0x42eced],
+    [42, 13, 0xffb85f],
+    [-65, 12, 0x42eced],
+  ]) {
+    addBox(scene, world, x, 0.7, z, 7, 1.4, 2, 0x45516d);
+    batch.box(
+      x,
+      1.44,
+      z,
+      6.6,
+      0.07,
+      1.6,
+      color === 0xff438e ? pink : color === 0x42eced ? cyan : gold,
+    );
+    // Sheltered kiosks create a readable edge rather than another anonymous cube.
+    addBox(scene, world, x + 2.8, 2.7, z, 0.35, 4, 0.35, 0x45516d);
+    batch.box(x, 4.6, z, 8, 0.25, 4.3, dark);
+    batch.box(x, 4.42, z - 2.1, 8, 0.1, 0.14, color === 0xff438e ? pink : cyan);
+  }
+  for (const x of [-39, 23, 67])
+    for (let i = -2; i <= 2; i++)
+      batch.box(x + i * 1.1, 0.075, 0, 0.58, 0.02, 12, pale);
+  // Subway portals advertise a real covered flank to the opposite street exit.
+  for (const [x, z, yaw] of [
+    [-30, -2, 0],
+    [32, 12, Math.PI],
+  ]) {
+    for (const dx of [-4.1, 4.1])
+      addBox(scene, world, x + dx, 1.8, z, 0.3, 3.6, 0.35, 0x45516d);
+    batch.box(x, 3.8, z, 8.5, 0.3, 0.8, dark);
+    addArenaSign(
+      scene,
+      "SUBWAY",
+      x,
+      3.1,
+      z,
+      7,
+      1,
+      yaw,
+      "#42eced",
+      "neon",
+      true,
+    );
+  }
+  for (const x of [-26, -12, 2, 16, 30]) {
+    batch.box(x, -1.35, -8, 7, 0.12, 0.25, cyan);
+    batch.box(x, -4.3, -13.94, 6, 0.1, 0.05, pink);
+  }
+  // A distant stepped skyline continues the city above the solid perimeter.
+  for (let i = 0; i < 30; i++) {
+    const angle = (i * Math.PI * 2) / 30,
+      r = 142 + (i % 3) * 19;
+    const x = Math.cos(angle) * r,
+      z = Math.sin(angle) * r,
+      h = 38 + ((i * 17) % 49),
+      w = 10 + (i % 4) * 3;
+    batch.box(x, h / 2 - 1, z, w, h, w, dark);
+    batch.box(x, h + 1, z, w * 0.7, 2, w * 0.7, dark);
+    for (let floor = 12; floor < h - 2; floor += 4.5) {
+      batch.box(
+        x,
+        floor,
+        z - w / 2 - 0.03,
+        w * 0.7,
+        0.35,
+        0.05,
+        i % 2 ? pink : cyan,
+      );
+      batch.box(
+        x - w / 2 - 0.03,
+        floor,
+        z,
+        0.05,
+        0.35,
+        w * 0.7,
+        i % 2 ? pink : cyan,
+      );
+      batch.box(
+        x,
+        floor,
+        z + w / 2 + 0.03,
+        w * 0.7,
+        0.35,
+        0.05,
+        i % 2 ? pink : cyan,
+      );
+      batch.box(
+        x + w / 2 + 0.03,
+        floor,
+        z,
+        0.05,
+        0.35,
+        w * 0.7,
+        i % 2 ? pink : cyan,
+      );
+    }
+  }
+  batch.flush("neon-district-architecture");
+}
+
 function buildCity(scene) {
   const world = newWorld({ killY: -20, waypointLinkDist: 24, waypointLinkDy: 4.6 });
   scene.background = new THREE.Color(0x0b1026);
@@ -6463,46 +7658,9 @@ function buildCity(scene) {
   for (const [x, z, w, d] of [[0, -67, 182, 6], [0, 67, 182, 6]]) {
     addBox(scene, world, x, 14, z, w, 40, d, 0x1d2433, { tex: 'neonwall' });
   }
-  // East/west perimeter walls split around the second-floor monorail tunnels.
-  for (const x of [-88, 88]) {
-    addBox(scene, world, x, 14, -37, 6, 40, 60, 0x1d2433, { tex: 'neonwall' });
-    addBox(scene, world, x, 14, 37, 6, 40, 60, 0x1d2433, { tex: 'neonwall' });
-    addBox(scene, world, x, 0.55, 0, 6, 13.1, 12, 0x1d2433, { tex: 'neonwall' });
-    addBox(scene, world, x, 25.3, 0, 6, 17.4, 12, 0x1d2433, { tex: 'neonwall' });
-    addBox(scene, world, x, 7.1, -6.2, 6.4, 2.2, 0.4, 0x30e0ff,
-      { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 1.8 });
-    addBox(scene, world, x, 7.1, 6.2, 6.4, 2.2, 0.4, 0xff40a0,
-      { collide: false, shadow: false, emissive: 0xff40a0, emissiveIntensity: 1.8 });
-  }
-
-  // MONORAIL: second-floor station, rideable train, and an outer return loop.
-  const railY = 10;
-  addBox(scene, world, 0, railY - 0.55, 0, 178, 0.32, 0.45, 0x171b28,
-    { collide: false, shadow: false, emissive: 0x30e0ff, emissiveIntensity: 0.7 });
-  addBox(scene, world, 0, railY - 0.18, 0, 178, 0.3, 1.15, 0x202638, { tex: 'panel', repeat: [22, 1] });
-  addBox(scene, world, 0, railY - 0.95, -2.7, 178, 0.28, 0.35, 0x202638, { collide: false });
-  addBox(scene, world, 0, railY - 0.95, 2.7, 178, 0.28, 0.35, 0x202638, { collide: false });
-  addBox(scene, world, 104, railY - 0.95, 39, 0.35, 0.28, 78, 0x202638, { collide: false });
-  addBox(scene, world, -104, railY - 0.95, 39, 0.35, 0.28, 78, 0x202638, { collide: false });
-  addBox(scene, world, 0, railY - 0.95, 78, 208, 0.28, 0.35, 0x202638, { collide: false });
-  addBox(scene, world, 104, railY - 0.18, 39, 1.15, 0.3, 78, 0x202638, { tex: 'panel', repeat: [1, 10] });
-  addBox(scene, world, -104, railY - 0.18, 39, 1.15, 0.3, 78, 0x202638, { tex: 'panel', repeat: [1, 10] });
-  addBox(scene, world, 0, railY - 0.18, 78, 208, 0.3, 1.15, 0x202638, { tex: 'panel', repeat: [26, 1] });
-  addBox(scene, world, 0, railY - 0.3, 5.3, 30, 0.6, 5, 0x596478, { tex: 'arcade', repeat: [6, 1] });
-  addBox(scene, world, 0, railY - 0.3, -5.3, 30, 0.6, 5, 0x596478, { tex: 'arcade', repeat: [6, 1] });
-  addBox(scene, world, 0, railY + 1.4, 8.05, 28, 0.7, 0.3, 0xffd23c,
-    { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.5 });
-  addBox(scene, world, 0, railY + 1.4, -8.05, 28, 0.7, 0.3, 0xffd23c,
-    { collide: false, shadow: false, emissive: 0xffd23c, emissiveIntensity: 1.5 });
-  addRamp(scene, world, { axis: 'z', minX: 9, maxX: 15, minZ: 8, maxZ: 30, h0: railY, h1: 0, color: 0x596478 });
-  addRamp(scene, world, { axis: 'z', minX: -15, maxX: -9, minZ: -22, maxZ: -8, h0: 0, h1: railY, color: 0x596478 });
-  addBox(scene, world, 38, railY - 0.35, 26, 46, 0.5, 3, 0x596478, { tex: 'panel', repeat: [8, 1] });
-  addBox(scene, world, -37, railY - 0.35, -18, 44, 0.5, 3, 0x51607a, { tex: 'panel', repeat: [8, 1] });
-  addRamp(scene, world, { axis: 'z', minX: -60, maxX: -56, minZ: -34, maxZ: -18, h0: 12, h1: railY, color: 0x51607a });
-  for (const x of [-72, -48, -24, 24, 48, 72]) {
-    addBox(scene, world, x, railY - 5.1, 0, 0.45, 9.8, 0.45, 0x242b3a, { tex: 'panel' });
-  }
-  addMonorailTrain(scene, world, [V(0, 0, 0), V(104, 0, 0), V(104, 0, 78), V(-104, 0, 78), V(-104, 0, 0)], railY, 27, 8);
+  // Solid city limits: the entire transit circuit now stays inside these walls.
+  for (const x of [-88, 88]) addBox(scene, world, x, 14, 0, 6, 40, 128, 0x1d2433, { tex: 'neonwall' });
+  addNeonTransit(scene, world);
 
   // Buildings [x, z, size, height, color] — roofs are the playground.
   // (The two −12 towers are hollow now — built below as interiors.)
@@ -6518,30 +7676,9 @@ function buildCity(scene) {
   for (const [bx, bz, s, h, c] of buildings) {
     addBox(scene, world, bx, h / 2, bz, s, h, s, c, { tex: 'neonwall', repeat: [Math.round(s / 4), Math.round(h / 4)] });
   }
-  /* ---- WEST SKYSCRAPER: the west station skywalk used to dead-end into this
-     tower. It now enters a hollow interior floor, ramps up, and exits onto the
-     roof. Shell x −71..−45, z −48..−22, roof top y=12. ---- */
-  const westTower = 0x51607a;
-  const westIn = 0x5f6f90;
-  addBox(scene, world, -58, 0.03, -35, 24.5, 0.06, 24.5, westIn, { tex: 'arcade', repeat: [5, 5] });
-  addBox(scene, world, -58, 9.65, -35, 24.5, 0.7, 24.5, westIn, { tex: 'arcade', repeat: [5, 5] }); // skywalk interior floor
-  addBox(scene, world, -58, 11.6, -42, 24.5, 0.8, 11, westTower, { tex: 'neonwall', repeat: [5, 2] }); // roof north slab
-  addBox(scene, world, -64.5, 11.6, -28, 11.5, 0.8, 15, westTower, { tex: 'neonwall', repeat: [3, 3] }); // roof west/east strips leave hatch
-  addBox(scene, world, -51.5, 11.6, -28, 11.5, 0.8, 15, westTower, { tex: 'neonwall', repeat: [3, 3] });
-  addBox(scene, world, -68.75, 6, -35, 4.5, 12, 26, westTower, { tex: 'neonwall', repeat: [1, 4] }); // west wall
-  addBox(scene, world, -47.25, 6, -35, 4.5, 12, 26, westTower, { tex: 'neonwall', repeat: [1, 4] }); // east wall
-  addBox(scene, world, -58, 6, -47.25, 26, 12, 1.5, westTower, { tex: 'neonwall', repeat: [6, 3] }); // south wall
-  // North face with a skywalk doorway centered at x -58, y 10.
-  addBox(scene, world, -67, 6, -22.75, 8, 12, 1.5, westTower, { tex: 'neonwall' });
-  addBox(scene, world, -49, 6, -22.75, 8, 12, 1.5, westTower, { tex: 'neonwall' });
-  addBox(scene, world, -58, 4, -22.75, 10, 8, 1.5, westTower, { tex: 'neonwall' });
-  addBox(scene, world, -58, 10.25, -20.35, 11, 0.45, 4.5, westIn, { tex: 'panel', repeat: [2, 1] }); // skywalk threshold
-  addRamp(scene, world, { axis: 'z', minX: -62.5, maxX: -55.5, minZ: -41, maxZ: -29, h0: 10, h1: 12.3, color: westIn });
-  addBox(scene, world, -55, 12.35, -23.8, 0.3, 0.9, 5.5, 0xffd23c);
-  addBox(scene, world, -61, 12.35, -23.8, 0.3, 0.9, 5.5, 0xffd23c);
-  const westTowerLight = new THREE.PointLight(0x30e0ff, 24, 20);
-  westTowerLight.position.set(-58, 10.8, -35);
-  scene.add(westTowerLight);
+  // Arcade station feeds this low hotel roof and its north-south skybridge.
+  // The former 1.2m-high mezzanine could not fit a standing player capsule.
+  addBox(scene,world,-58,6,-35,26,12,26,0x51607a,{tex:'neonwall',repeat:[6,3]});
   // Extra ground-level pathway texture so the city reads less like open asphalt.
   for (const [x, z, w, d] of [
     [-78, 0, 8, 128], [78, 0, 8, 128], [-20, 58, 52, 6], [52, 58, 54, 6],
@@ -6575,7 +7712,8 @@ function buildCity(scene) {
   // east wall: door z 30..34
   addBox(scene, world, 1.25, 16.6, 26, 1.5, 33.2, 8, gal, gw);
   addBox(scene, world, 1.25, 16.6, 42, 1.5, 33.2, 16, gal, gw);
-  addBox(scene, world, 1.25, 18.6, 32, 1.5, 29.2, 4, gal, gw);
+  addBox(scene, world, 1.25, 10, 32, 1.5, 12, 4, gal, gw);
+  addBox(scene, world, 1.25, 26.1, 32, 1.5, 14.2, 4, gal, gw);
   // roof (top 34) with a hatch over the chamber at x −24..−20, z 34..38
   addBox(scene, world, -25, 33.6, 36, 2, 0.8, 28, gal, gw);
   addBox(scene, world, -9, 33.6, 36, 22, 0.8, 28, gal, gw);
@@ -6627,8 +7765,8 @@ function buildCity(scene) {
   addBox(scene, world, -6, 9.4, -49.25, 12, 18.8, 1.5, arc, gw);
   addBox(scene, world, -14, 11.4, -49.25, 4, 14.8, 1.5, arc, gw);
   addBox(scene, world, -22, 9.4, -26.75, 4, 18.8, 1.5, arc, gw);   // north wall: 2 doors + window
-  addBox(scene, world, -12, 3.75, -26.75, 8, 7.5, 1.5, arc, gw);   // below window x −16..−8
-  addBox(scene, world, -12, 14.15, -26.75, 8, 9.3, 1.5, arc, gw);  // above window
+  addBox(scene, world, -12, 3.25, -26.75, 8, 6.5, 1.5, arc, gw);   // below window x −16..−8
+  addBox(scene, world, -12, 14.4, -26.75, 8, 8.8, 1.5, arc, gw);  // above window
   addBox(scene, world, -2, 9.4, -26.75, 4, 18.8, 1.5, arc, gw);
   addBox(scene, world, -18, 11.4, -26.75, 4, 14.8, 1.5, arc, gw);  // door lintels
   addBox(scene, world, -6, 11.4, -26.75, 4, 14.8, 1.5, arc, gw);
@@ -6677,10 +7815,10 @@ function buildCity(scene) {
   // supported near the platform center.
   addBox(scene, world, 1.5, 11.7, -20, 9, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
   // Keep the pad clear of the monorail ramp edge at x = -9.
-  addJumpPad(scene, world, -6, 0, -20, 28, 3.8, 0, 0x30e0ff);
+  addJumpPad(scene, world, 4, 0, -13, 28, -2.5, -4.4, 0x30e0ff);
   pk(world, 'shield', 0, 12.2, -20);
-  wp(world, -6, 0, -20); wp(world, 0, 12, -20);
-  world.manualLinks.push([-6, 0, -20, 0, 12, -20, true]);
+  wp(world, 4, 0, -13); wp(world, 0, 12, -20);
+  world.manualLinks.push([4, 0, -13, 0, 12, -20, true]);
   addBox(scene, world, -40, 9.7, 20, 10, 0.6, 8, 0x5a4a78, { tex: 'neonwall' });
   addJumpPad(scene, world, -49, 0, 20, 26, 5.5, 0, 0x30e0ff);
   pk(world, 'ammo', -40, 10.2, 20, { weapon: 'whomper' });
@@ -6708,8 +7846,7 @@ function buildCity(scene) {
   // Fire escapes: street → B4 roof (two flights), street → A1 (wall ramp + landing)
   addRamp(scene, world, { axis: 'x', minX: 40, maxX: 56, minZ: 19, maxZ: 22, h0: 0, h1: 5, color: 0x596478 });
   addRamp(scene, world, { axis: 'x', minX: 56, maxX: 72, minZ: 19, maxZ: 22, h0: 5, h1: 10, color: 0x596478 });
-  addRamp(scene, world, { axis: 'z', minX: -80, maxX: -74, minZ: -22, maxZ: 8, h0: 12, h1: 0, color: 0x51607a });
-  addBox(scene, world, -73.5, 11.45, -26, 7, 1, 8, 0x51607a, { tex: 'panel' }); // landing → A1 roof
+  // West street access now uses Arcade station, avoiding the old stair buried in the boundary tower.
 
   // Roof-hop pads (one-way up the skyline)
   addJumpPad(scene, world, -48, 12, -36, 26, 15.8, -0.6, 0x30e0ff);  // A1 → A2
@@ -6749,7 +7886,7 @@ function buildCity(scene) {
   pk(world, 'weapon', -6, -5.8, 7, { weapon: 'whomper' }); // subway lava island
   pk(world, 'weapon', -58, 24.2, 33, { weapon: 'sidewinder' });
   pk(world, 'weapon', -12, 20.2, -38, { weapon: 'hyper' });
-  pk(world, 'weapon', 40, 0.2, 0, { weapon: 'zooka' });
+  pk(world, 'weapon', 48, 10.2, 6, { weapon: 'zooka' });
   pk(world, 'weapon', -40, 0.2, 10, { weapon: 'scatter' });
   pk(world, 'weapon', 32, 18.2, 30, { weapon: 'pulsar' });
   pk(world, 'weapon', -21, 8.2, 40, { weapon: 'parasite' });    // galleria mezzanine
@@ -6779,12 +7916,13 @@ function buildCity(scene) {
   pk(world, 'ammo', -66, 0.2, -55, { weapon: 'sidewinder' }); // back alley
   pk(world, 'speed', 0, 10.2, 5.3);                        // monorail station
   pk(world, 'health', 0, 10.2, -5.3);                      // monorail station
-  pk(world, 'ammo', 42, 10.2, 26, { weapon: 'pulsar' });   // east station skywalk
-  pk(world, 'ammo', -37, 10.2, -18, { weapon: 'hyper' });  // west station skywalk
-  pk(world, 'star', 90, 10.2, 0, { hidden: true });        // monorail tunnel lip
+  pk(world, 'ammo', 58, 10.2, 6, { weapon: 'pulsar' });   // east station skywalk
+  pk(world, 'ammo', -48, 10.2, -6, { weapon: 'hyper' });  // west station skywalk
+  pk(world, 'star', 53, 10.2, -6, { hidden: true });        // monorail tunnel lip
 
   // Waypoints: auto grid at street level, hand-placed above
   const blocked = (x, z) => {
+    if(x>-71 && x<-45 && z>-48 && z<-22)return true; // sealed lower storey, entered at station level
     const p = V(x, 1, z);
     for (const c of world.colliders) {
       if (c.type !== 'box') continue;
@@ -6807,11 +7945,11 @@ function buildCity(scene) {
     [-58, 15, -11], [-58, 18, 0], [-58, 21, 11], [-58, 23.5, 19],
     [32, 25.5, -11], [32, 23, 0], [32, 20.5, 11],
     // west skyscraper interior: skywalk entrance → inside floor → roof exit
-    [-58, 10, -21], [-58, 10, -34], [-58, 11, -38], [-58, 12.4, -29],
+    [-58,12,-29],
     // east fire escape: street → B4 roof
     [48, 2.5, 20.5], [56, 5, 20.5], [64, 7.5, 20.5], [71, 10, 20.5],
     // west wall ramp: street → A1 landing → roof
-    [-76, 0, 6], [-77, 2, 3], [-77, 5.5, -8], [-77, 9, -17], [-77, 11.6, -21], [-73.5, 11.9, -26],
+    [-76, 0, 6],
     // street pad up to A4
     [62, 0, -14],
     // subway: stair tops, ramps, tunnel run
@@ -6832,15 +7970,10 @@ function buildCity(scene) {
     [-14, 0, -47], [-18, 0, -29], [-6, 0, -29], [-3, 0, -42],
     [-18, 0, -44], [-6, 0, -44], [-20.75, 3, -43],
     [-12, 6.5, -32], [-19, 6.5, -30], [-4, 6.5, -41],
-    // back alley
+    // back alley and the narrow west sidewalk return
+    [-58,0,-50],[-43,0,-50],[-29,0,-50],[-29,0,-39],
+    [-70.5,0,40],[-70.5,0,32],[-70.5,0,15],
     [-70, 0, -55], [-56, 0, -55], [-42, 0, -55], [-58, 0, -53], [-58, 0, -49],
-    // monorail station, access ramps, and new skywalks
-    [0, 10, 0], [0, 10, 5.3], [0, 10, -5.3], [10, 10, 5.3], [-10, 10, -5.3],
-    [12, 2.5, 25], [12, 5.5, 19], [12, 8.4, 12], [12, 10, 7],
-    [-12, 2.5, -19], [-12, 5.5, -15], [-12, 8.4, -11], [-12, 10, -7],
-    [20, 10, 26], [38, 10, 26], [60, 10, 26],
-    [-18, 10, -18], [-37, 10, -18], [-56, 11.2, -22], [-58, 12, -30],
-    [88, 10, 0], [-88, 10, 0],
   ];
   for (const [x, y, z] of wps) wp(world, x, y, z);
   world.manualLinks.push(
@@ -6862,22 +7995,10 @@ function buildCity(scene) {
     [-12, 20, -38, -12, 0, -56, true],
     [64, 10, 30, 64, 0, 57, true],
     [62, 16, -32, 62, 0, -14, true],
-    [12, 0, 30, 12, 2.5, 25, false],       // station ramps
-    [12, 8.4, 12, 12, 10, 7, false],
-    [-12, 0, -22, -12, 2.5, -19, false],
-    [-12, 8.4, -11, -12, 10, -7, false],
-    [12, 10, 7, 0, 10, 5.3, false],
-    [-12, 10, -7, 0, 10, -5.3, false],
-    [0, 10, 5.3, 0, 10, 0, false],
-    [0, 10, -5.3, 0, 10, 0, false],
-    [-56, 11.2, -22, -58, 10, -21, false],
-    [-58, 10, -34, -58, 12.4, -29, false],
-    [-58, 12.4, -29, -58, 12, -35, false],
-    [0, 10, 5.3, 20, 10, 26, false],
-    [0, 10, -5.3, -18, 10, -18, false],
     [5, 0, 42, 5, 34, 42, true],
     [48, 0, -35, 48, 28, -35, true],
   );
+  addNeonDistricts(scene, world);
   addCityPresentation(scene, world);
   mergeStatic(scene, world);
   return world;
@@ -7072,32 +8193,87 @@ function addScragglyLava(scene, world, x, z, w, d, floorY, seed, {
 // Continuous square-ring moat for Olympus's outer basin. The outside follows
 // the map boundary while the inner shoreline meanders naturally; the central
 // hole remains safe ground both visually and in hazard queries.
-function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -0.72, {
-  pointLights = true,
-} = {}) {
+function addOlympusLavaMoat(
+  scene,
+  world,
+  outerR = 430,
+  innerR = 160,
+  floorY = -1.4,
+  { pointLights = true } = {},
+) {
   const rnd = seededRandom(0x4d4f4154);
   const outer = [
-    [-outerR, -outerR], [outerR, -outerR],
-    [outerR, outerR], [-outerR, outerR],
+    [-outerR, -outerR],
+    [outerR, -outerR],
+    [outerR, outerR],
+    [-outerR, outerR],
   ];
   const inner = [];
   const steps = 9;
   const wobble = () => (rnd() - 0.5) * 8;
-  for (let i = 0; i < steps; i++) inner.push([-innerR + i * innerR * 2 / steps, -innerR + wobble()]);
-  for (let i = 0; i < steps; i++) inner.push([innerR + wobble(), -innerR + i * innerR * 2 / steps]);
-  for (let i = 0; i < steps; i++) inner.push([innerR - i * innerR * 2 / steps, innerR + wobble()]);
-  for (let i = 0; i < steps; i++) inner.push([-innerR + wobble(), innerR - i * innerR * 2 / steps]);
+  for (let i = 0; i < steps; i++)
+    inner.push([-innerR + (i * innerR * 2) / steps, -innerR + wobble()]);
+  for (let i = 0; i < steps; i++)
+    inner.push([innerR + wobble(), -innerR + (i * innerR * 2) / steps]);
+  for (let i = 0; i < steps; i++)
+    inner.push([innerR - (i * innerR * 2) / steps, innerR + wobble()]);
+  for (let i = 0; i < steps; i++)
+    inner.push([-innerR + wobble(), innerR - (i * innerR * 2) / steps]);
 
   const shape = new THREE.Shape();
-  outer.forEach(([px, pz], i) => i === 0 ? shape.moveTo(px, -pz) : shape.lineTo(px, -pz));
+  outer.forEach(([px, pz], i) =>
+    i === 0 ? shape.moveTo(px, -pz) : shape.lineTo(px, -pz),
+  );
   shape.closePath();
   const hole = new THREE.Path();
-  [...inner].reverse().forEach(([px, pz], i) => i === 0 ? hole.moveTo(px, -pz) : hole.lineTo(px, -pz));
+  [...inner]
+    .reverse()
+    .forEach(([px, pz], i) =>
+      i === 0 ? hole.moveTo(px, -pz) : hole.lineTo(px, -pz),
+    );
   hole.closePath();
   shape.holes.push(hole);
 
+  // The island has a genuine irregular edge above a recessed lava bed.
+  const islandShape = new THREE.Shape();
+  inner.forEach(([px, pz], i) =>
+    i ? islandShape.lineTo(px, -pz) : islandShape.moveTo(px, -pz),
+  );
+  islandShape.closePath();
+  const islandGeo = new THREE.ExtrudeGeometry(islandShape, {
+    depth: 1.4,
+    bevelEnabled: false,
+  });
+  islandGeo.rotateX(-Math.PI / 2);
+  islandGeo.translate(0, -1.4, 0);
+  const island = new THREE.Mesh(
+    islandGeo,
+    mat(0x7f3828, { tex: "dirt", repeat: [1 / 12, 1 / 12], roughness: 1 }),
+  );
+  island.name = "olympus-irregular-basin-rim";
+  island.receiveShadow = true;
+  scene.add(island);
+  world.colliders.push(triangleMeshColliderFromMesh(island, island.name, true));
+  addBox(
+    scene,
+    world,
+    0,
+    floorY - 0.5,
+    0,
+    outerR * 2,
+    1,
+    outerR * 2,
+    0x4e251f,
+    { tex: "olympus-rock", repeat: [30, 30] },
+  );
+  world.lavaMoat = { outerR, innerR, floorY, surfaceY: floorY + 0.85, inner };
+
   const lmat = new THREE.MeshStandardMaterial({
-    color: 0xff8040, roughness: 0.32, emissive: 0xff5410, emissiveIntensity: 0.82,
+    color: 0xff8040,
+    roughness: 0.88,
+    metalness: 0,
+    emissive: 0xff5410,
+    emissiveIntensity: 0.82,
     side: THREE.DoubleSide,
   });
   const ai = AI_TEX.lava;
@@ -7106,7 +8282,7 @@ function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -
     lmat.map.needsUpdate = true;
     // This is a map-scale surface, so keep the lava cells broad enough to read
     // as flows instead of a dense, shimmering fabric pattern.
-    lmat.map.repeat.set(10, 10);
+    lmat.map.repeat.set(1 / 28, 1 / 28);
     lmat.emissiveMap = lmat.map;
     lmat.color = new THREE.Color(0xffffff);
     lmat.emissive = new THREE.Color(0xc86432);
@@ -7119,18 +8295,32 @@ function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -
   scene.add(moat);
   world.anim.push((dt, t) => {
     lmat.emissiveIntensity = 0.48 + Math.sin(t * 1.65) * 0.12;
-    if (lmat.map) { lmat.map.offset.x = t * 0.009; lmat.map.offset.y = t * 0.006; }
+    if (lmat.map) {
+      lmat.map.offset.x = t * 0.009;
+      lmat.map.offset.y = t * 0.006;
+    }
   });
   // The north river is a true water-only outlet. Exclude the whole channel
   // from lava damage even though its transparent surface crosses the moat.
   const riverCut = [
-    [-7.5, -outerR - 1], [7.5, -outerR - 1],
-    [7.5, -innerR + 10], [-7.5, -innerR + 10],
+    [-7.5, -171],
+    [7.5, -171],
+    [7.5, -innerR + 10],
+    [-7.5, -innerR + 10],
   ];
-  (world.lavaZones ||= []).push({ points: outer, holes: [inner, riverCut], maxY: floorY + 1.0 });
+  (world.lavaZones ||= []).push({
+    points: outer,
+    holes: [inner, riverCut],
+    maxY: floorY + 1.0,
+  });
 
   if (pointLights) {
-    for (const [x, z] of [[-158, -90], [158, 82], [-86, 158], [94, -158]]) {
+    for (const [x, z] of [
+      [-158, -90],
+      [158, 82],
+      [-86, 158],
+      [94, -158],
+    ]) {
       const glow = new THREE.PointLight(0xff4a18, 18, 34);
       glow.position.set(x, 2.2, z);
       scene.add(glow);
@@ -7142,6 +8332,7 @@ function addOlympusLavaMoat(scene, world, outerR = 170, innerR = 151, floorY = -
    An obsidian labyrinth built around a suspended arcane machine. Four visually
    distinct rune wings surround a vertical crypt-to-gallery combat spine; the
    engine pulses through the wings and pre-opens two rune gates at a time. */
+
 function buildSanctum(scene) {
   const world = newWorld({ killY: -25, waypointLinkDist: 20, waypointLinkDy: 4.6 });
   scene.background = new THREE.Color(0x0a0714);
@@ -8415,34 +9606,9 @@ function buildInfiniteBloom(scene) {
   const damageMarkerMirrors = new Map();
   const pickupMirrors = new Map();
   const mirrorScales = [INNER_SCALE, PORTAL_SCALE];
-  const ACTOR_SEAM_BLEND = 8;
-  const SEAM_MOVE_MIN_SCALE = 0.78;
-  const SEAM_MOVE_RECOVERY = 0.45;
-
-  // Bodies change representative at the 7m/36m similarity seam. Ease their
-  // *height* toward the adjacent layer's scale over the last few metres, but
-  // keep the group origin at the feet. Scaling around the eye lifted grounded
-  // actors several metres into the air on the corresponding outer copy.
-  const seamBlend = point => {
-    const norm = Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(point.z));
-    const seamT = THREE.MathUtils.clamp(
-      (norm - PORTAL_HALF) / ACTOR_SEAM_BLEND,
-      0,
-      1,
-    );
-    return seamT * seamT * (3 - 2 * seamT);
-  };
-  const seamVisualScale = point => THREE.MathUtils.lerp(INNER_SCALE, 1, seamBlend(point));
-  const seamMoveScale = point => THREE.MathUtils.lerp(SEAM_MOVE_MIN_SCALE, 1, seamBlend(point));
-  world.characterVisualScale = character => seamVisualScale(character.pos);
-  world.characterMoveScale = character => {
-    const positionalScale = seamMoveScale(character.pos);
-    const elapsed = (world._t || 0) - (character._bloomMoveSlowAt ?? -Infinity);
-    if (elapsed >= SEAM_MOVE_RECOVERY) return positionalScale;
-    const recoveryT = THREE.MathUtils.clamp(elapsed / SEAM_MOVE_RECOVERY, 0, 1);
-    const easedT = recoveryT * recoveryT * (3 - 2 * recoveryT);
-    return Math.min(positionalScale, THREE.MathUtils.lerp(SEAM_MOVE_MIN_SCALE, 1, easedT));
-  };
+  const seamVisualScale = bloomScale;
+  world.characterVisualScale = character => bloomScale(character.pos);
+  world.characterMoveScale = character => bloomScale(character.pos);
 
   const actorSource = character => world.characterMirrorSource?.(character) ||
     character?.recursiveRenderSource || character?.mesh || null;
@@ -8857,55 +10023,17 @@ function buildInfiniteBloom(scene) {
   // through the origin re-scale before it can ever reach the center.
   const RECURSION_EPSILON = 0.03;
   const recursiveNorm = point => Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(point.z));
-  const crossingFactor = (previous, current) => {
-    const previousNorm = recursiveNorm(previous);
-    const currentNorm = recursiveNorm(current);
-    if (previousNorm >= PORTAL_HALF && currentNorm < PORTAL_HALF) return PORTAL_SCALE;
-    if (previousNorm <= ARENA_HALF && currentNorm > ARENA_HALF) return INNER_SCALE;
-    return 1;
-  };
+  const crossingFactor = bloomCrossing;
   const canonicalFactor = point => {
     const norm = recursiveNorm(point);
     if (norm < PORTAL_HALF - RECURSION_EPSILON) return PORTAL_SCALE;
     if (norm > ARENA_HALF + RECURSION_EPSILON) return INNER_SCALE;
     return 1;
   };
-  const rayCubeInterval = (origin, dir, half) => {
-    let enter = -Infinity;
-    let exit = Infinity;
-    for (const axis of ['x', 'y', 'z']) {
-      if (Math.abs(dir[axis]) < 1e-7) {
-        if (origin[axis] < -half || origin[axis] > half) return null;
-        continue;
-      }
-      let a = (-half - origin[axis]) / dir[axis];
-      let b = (half - origin[axis]) / dir[axis];
-      if (a > b) [a, b] = [b, a];
-      enter = Math.max(enter, a);
-      exit = Math.min(exit, b);
-      if (enter > exit) return null;
-    }
-    return { enter, exit };
-  };
-  // Recursive hitscan effects need the exact next chart boundary. Returning
-  // the similarity transform lets them draw one connected segment on each
-  // recursion level instead of pretending the seam is a flat portal.
-  world.recursiveRayBoundary = (origin, dir, maxDistance = Infinity) => {
-    const candidates = [];
-    const inner = rayCubeInterval(origin, dir, PORTAL_HALF);
-    if (inner?.enter > RECURSION_EPSILON && inner.enter <= maxDistance) {
-      candidates.push({ distance: inner.enter, factor: PORTAL_SCALE });
-    }
-    const outer = rayCubeInterval(origin, dir, ARENA_HALF);
-    if (outer?.exit > RECURSION_EPSILON && outer.exit <= maxDistance) {
-      candidates.push({ distance: outer.exit, factor: INNER_SCALE });
-    }
-    candidates.sort((a, b) => a.distance - b.distance);
-    return candidates[0] || null;
-  };
+  world.recursiveRayBoundary = bloomRayBoundary;
   const syncRecursivePlayerCamera = (character, up, eyeHeight) => {
     if (!character.isPlayer || !character.camera) return;
-    // The first-person eye follows the same linear body shrink as the actor
+    // The first-person eye follows the same smooth body shrink as the actor
     // proxies. Just inside the seam, multiplying the camera by PORTAL_SCALE
     // therefore lands on the full-height camera just outside it without a
     // vertical pop or the old several-metre launch/fall.
@@ -8914,43 +10042,36 @@ function buildInfiniteBloom(scene) {
   };
   world.postCharacterMove = (character, previous) => {
     if (!character?.alive || !previous) return;
+    const now=world._t||0;
+    const dt=Math.max(0,Math.min(.05,now-(character._bloomMotionT??now-1/60)));
+    character._bloomMotionT=now;
     const up = character.up || new THREE.Vector3(0, 1, 0);
     const eyeHeight = character.isPlayer ? (character.eyeHeight || 1.6) : 0;
     const factor = crossingFactor(previous, character.pos);
     if (factor === 1) {
+      // A smooth terminal-speed envelope prevents endless recursive falls
+      // from accelerating without bound. It scales with the surrounding view.
+      const terminal=28*bloomScale(character.pos);
+      if(character.vel.y < -terminal) character.vel.y=THREE.MathUtils.damp(character.vel.y,-terminal,7,dt);
       syncRecursivePlayerCamera(character, up, eyeHeight);
       return;
     }
-    // Position is a feet-space coordinate. Scaling it directly keeps y=0
-    // fixed for a grounded crossing and preserves full 3D similarity for a
-    // player falling through the recursive opening. Grounded runners get a
-    // shallow, short movement blend instead of inheriting the adjacent layer's
-    // full 0.194x scale or keeping enough speed to read as a seam boost.
+    // Rebase position and momentum by the same similarity transform. Body,
+    // eye and walking speed already approach that ratio continuously.
     const planarFloorCrossing = up.y > 0.9 &&
       Math.abs(previous.y) < 0.25 && Math.abs(character.pos.y) < 0.25 &&
       Math.abs(character.vel.y) < 2;
     if (character.isPlayer && scene.fog) {
       const scaledNear = scene.fog.near * factor;
-      const scaledFar = Math.min(820, scene.fog.far * factor);
+      const scaledFar = scene.fog.far * factor;
       scene.fog.far = Math.max(2, scaledFar);
       scene.fog.near = THREE.MathUtils.clamp(scaledNear, 0.5, scene.fog.far - 1);
       // Prevent beforeRender from consuming the transition on the same tick.
       world._bloomFogT = world._t || 0;
     }
     character.pos.multiplyScalar(factor);
-    if (planarFloorCrossing) {
-      character.pos.y = 0;
-      character.vel.y = 0;
-      if (factor < 1) {
-        const beforeScale = seamMoveScale(previous);
-        const afterScale = seamMoveScale(character.pos);
-        const velocityScale = beforeScale > 0 ? Math.min(1, afterScale / beforeScale) : 1;
-        character.vel.x *= velocityScale;
-        character.vel.z *= velocityScale;
-      }
-      character._bloomMoveSlowAt = world._t || 0;
-    }
-    if (factor > 1 && character.vel.y < -12) character.vel.y = -12;
+    character.vel.multiplyScalar(factor);
+    if(planarFloorCrossing){character.pos.y=0;character.vel.y=0;}
     character.grounded = planarFloorCrossing;
     character._camSnap = true;
     character._bloomRecursionLevel = (character._bloomRecursionLevel || 0) + (factor > 1 ? 1 : -1);
@@ -10576,6 +11697,7 @@ export function buildAtrium(scene) {
   world.portals = [];
   const bays = [
     ['hall', 'HALL OF FAME', 0xffd45a, 'n', 0, 'hall'],
+    ['orrery', 'THE ORRERY', 0xc3e3c1, 'n', 22, 'map'],
     ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 36, 'map'],
     ['oldwest', 'RED ROCK RANGE', 0xd46a32, 'w', 12, 'map'],
     ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', -12, 'map'],
@@ -10590,7 +11712,7 @@ export function buildAtrium(scene) {
     const horiz = wall === 'n' || wall === 's';
     const sgn = (wall === 'e' || wall === 's') ? 1 : -1;
     const px = horiz ? off : sgn * 31.2, pz = horiz ? sgn * 47.2 : off;  // back face flush with wall
-    const frameId = id === 'hall' ? 'arena' : id === 'multiplayer' ? 'sanctum' : id;
+    const frameId = id === 'orrery' ? 'fortress' : id === 'hall' ? 'arena' : id === 'multiplayer' ? 'sanctum' : id;
     if (horiz) {
       addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, true);
       addMagicPortal(scene, world, px, ATRIUM_GATE_OPENING_HEIGHT / 2, pz + sgn * 0.82,
@@ -10638,7 +11760,7 @@ export function buildAtrium(scene) {
   world.setModeSign = makeSign(scene, 11, 3.6, 36.8, 9, '#30e0ff', 'MODE: FREE FOR ALL', 0, true);
 
   addDecal(scene, 'poster1', -24, 6, -47.94, 8, 0);
-  addDecal(scene, 'target', 27, 6, -47.94, 8, 0);
+  // The north-east wall bay now holds the Orrery gate.
   // Mount the north-wall glow strips above the poster line, close to the wall,
   // so they frame the Hall of Fame without washing across either poster.
   for (const [x, z, c] of [[-19, -47.78, 0xff40a0], [19, -47.78, 0x30e0ff]]) {
@@ -12248,16 +13370,241 @@ function olympusSurfaceY(x, z) {
 }
 
 function addOlympusMountain(scene, world) {
-  // The visible cliff and its collision are now the exact same five boxes.
-  // This removes the several-metre mismatch created by a noisy heightfield
-  // drawn over a simpler invisible collision ring.
-  for (const [x, z, w, d, repeat] of [
-    [-78, 0, 20, 176, [7, 28]], [78, 0, 20, 176, [7, 28]],
-    [0, 78, 136, 20, [22, 7]],
-    [-38, -78, 60, 20, [10, 7]], [38, -78, 60, 20, [10, 7]],
-  ]) addBox(scene, world, x, 30, z, w, 60, d, 0x8d3d2c, {
-    tex: 'olympus-rock', repeat, roughness: 1, metalness: 0,
+  const material = mat(0xc88d6c, {
+    tex: 'olympus-rock',
+    repeat: [1, 1],
+    roughness: 1,
+    metalness: 0,
+    flatShading: true,
   });
+  const batch = new EnvironmentBatch(scene);
+  // Preserve the cavern interior, summit lip, waterfall entrance, and every
+  // recovery-vine strip; sculpt the exposed outer faces between those routes.
+  for (const [x, z, w, d] of [
+    [-78, 0, 20, 176],
+    [78, 0, 20, 176],
+    [0, 78, 136, 20],
+    [-38, -78, 60, 20],
+    [38, -78, 60, 20],
+  ]) {
+    const geometry = olympusMountainGeometry(x, z, w, d);
+    const uv = geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i++)
+      uv.setXY(i, (uv.getX(i) * Math.max(w, d)) / 8, uv.getY(i) * 8);
+    const mesh = new THREE.Mesh(geometry, material);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(mesh, 'olympus-sculpted-mountain', true),
+    );
+    batch.add(geometry, material);
+  }
+  batch.flush('olympus-sculpted-mountain');
+}
+
+function addOlympusTalus(scene, world) {
+  const material = mat(0xb58469, {
+    tex: "olympus-rock",
+    repeat: [1, 1],
+    roughness: 1,
+    metalness: 0,
+    flatShading: true,
+  });
+  const batch = new EnvironmentBatch(scene);
+  world.olympusTalus = [];
+  const height = (u, axis, side) => {
+    const anchors =
+      axis === "x"
+        ? side < 0
+          ? [
+              [28, 24],
+              [-38, 6],
+            ]
+          : [
+              [28, 24],
+              [65, 30],
+            ]
+        : side < 0
+          ? [
+              [0, 14],
+              [34, 6],
+            ]
+          : [
+              [0, 22],
+              [-30, 6],
+            ];
+    const clearance = Math.min(
+      1,
+      ...anchors.map(([at, r]) =>
+        THREE.MathUtils.smoothstep(Math.abs(u - at), r, r + 12),
+      ),
+    );
+    const edge = THREE.MathUtils.smoothstep(Math.abs(u), 74, 88);
+    return (
+      (34 * (0.8 + 0.2 * Math.sin(u * 0.08)) * (1 - edge) + 34 * edge) *
+        clearance -
+      0.04
+    );
+  };
+  for (const axis of ["x", "z"])
+    for (const side of [-1, 1]) {
+      const geometry = ribbonSolid(
+        (t) => {
+          const u = -88 + 176 * t,
+            h = height(u, axis, side);
+          const inner = [side * 88, h, u],
+            outer = [side * 126, -0.04, u];
+          const middle = [side * 106, Math.max(0, h) * 0.18 - 0.04, u];
+          return {
+            left: side < 0 ? outer : inner,
+            middle,
+            right: side < 0 ? inner : outer,
+          };
+        },
+        88,
+        () => -1,
+      );
+      if (axis === "z") {
+        geometry.rotateY(-Math.PI / 2);
+        geometry.scale(-1, 1, 1);
+        // Reflection above swaps X and Z; restore outward winding.
+        const p = geometry.attributes.position;
+        for (let i = 0; i < p.count; i += 3) {
+          const b = V().fromBufferAttribute(p, i + 1),
+            c = V().fromBufferAttribute(p, i + 2);
+          p.setXYZ(i + 1, c.x, c.y, c.z);
+          p.setXYZ(i + 2, b.x, b.y, b.z);
+        }
+        geometry.computeVertexNormals();
+      }
+      const mesh = new THREE.Mesh(geometry, material);
+      const collider = triangleMeshColliderFromMesh(
+        mesh,
+        "olympus-walkable-talus",
+        true,
+      );
+      world.colliders.push(collider);
+      world.olympusTalus.push(collider);
+      batch.add(geometry, material);
+    }
+  // Corner fans join the skirts into one mountain. The southeast corner is
+  // deliberately open for the existing floating-rock approach.
+  for (const [sx, sz] of [
+    [-1, -1],
+    [-1, 1],
+    [1, -1],
+  ]) {
+    const geometry = ribbonSolid(
+      (t) => {
+        const angle = (t * Math.PI) / 2,
+          dx = Math.cos(angle),
+          dz = Math.sin(angle);
+        return {
+          left: [sx * 88, 33.96, sz * 88],
+          middle: [sx * (88 + 18 * dx), 6.08, sz * (88 + 18 * dz)],
+          right: [sx * (88 + 38 * dx), -0.04, sz * (88 + 38 * dz)],
+        };
+      },
+      12,
+      () => -1,
+    );
+    const p = geometry.attributes.position;
+    if (sx * sz < 0) {
+      for (let i = 0; i < p.count; i += 3) {
+        const b = V().fromBufferAttribute(p, i + 1),
+          c = V().fromBufferAttribute(p, i + 2);
+        p.setXYZ(i + 1, c.x, c.y, c.z);
+        p.setXYZ(i + 2, b.x, b.y, b.z);
+      }
+    }
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, material);
+    const collider = triangleMeshColliderFromMesh(
+      mesh,
+      "olympus-talus-corner",
+      true,
+    );
+    world.colliders.push(collider);
+    world.olympusTalus.push(collider);
+    batch.add(geometry, material);
+  }
+  batch.flush("olympus-grounded-mountain-skirts");
+}
+
+function olympusTalusY(world, x, z) {
+  return Math.max(
+    0,
+    ...(world.olympusTalus || []).map(
+      (c) => triangleMeshSurfaceY(c, x, z) ?? 0,
+    ),
+  );
+}
+
+function addOlympusArchitecture(scene, world) {
+  const batch = new EnvironmentBatch(scene);
+  const stone = mat(0xddc9a5, { roughness: 0.86, metalness: 0 });
+  const dark = mat(0x806851, { roughness: 0.94, metalness: 0 });
+  const gold = mat(0xba934f, { roughness: 0.52, metalness: 0.35 });
+  // Court-facing colonnades carry the wing cornices. Each door remains a
+  // twelve-metre open bay; pillars align with solid wall bays beside it.
+  for (const side of [-1, 1]) {
+    for (const z of [-18, -6, 6, 18])
+      addOlympusColumn(scene, world, side * 22.7, z, 60.5, 13);
+    const vineZ=side<0?12:-12;
+    for(const [a,b] of [[-20,vineZ-2.1],[vineZ+2.1,20]]) {
+      batch.box(side*22.7,73.7,(a+b)/2,2.5,.7,b-a,stone);
+      batch.box(side*22.7,74.12,(a+b)/2,2.9,.18,b-a,gold);
+    }
+    // Ordered coffers replace the blank soffits below the side roofs.
+    for (const z of [-18, -9, 0, 9, 18])
+      batch.box(side * 36, 73.44, z, 23, 0.22, 0.35, dark);
+    for (const x of [side * 27, side * 36, side * 45])
+      batch.box(x, 73.43, 0, 0.3, 0.24, 43, dark);
+  }
+  // Incised stone bands lead from the south gate around the Hades shaft and
+  // into each wing. They are flush decoration on existing walkable floors.
+  for (const x of [-11, 11]) batch.box(x, 60.52, 0, 0.22, 0.025, 38, gold);
+  for (const z of [-18, 18]) batch.box(0, 60.52, z, 22, 0.025, 0.22, gold);
+  for (const x of [-3, 3]) batch.box(x, 60.52, 35, 0.16, 0.025, 32, gold);
+  for (const side of [-1, 1])
+    batch.box(side * 17, 60.52, 0, 10, 0.025, 0.24, gold);
+  // The upper hall's new light court has a clearly modeled sill and an open
+  // north edge for intentional drops. No rail crosses the ramp approaches.
+  for (const side of [-1, 1]) {
+    batch.box(side * 9.16, 90.04, 14, 0.22, 0.7, 12, stone);
+    batch.box(side * 9.16, 90.44, 14, 0.26, 0.08, 12, gold);
+  }
+  batch.box(0, 90.05, 20.2, 18, 0.7, 0.3, stone);
+  // Cavern lift galleries hang from paired chains with underslung beams.
+  // Their collision and launch-pad trajectories remain the authored slabs.
+  for (const [cx, cz, y, w, d] of [
+    [18, -8, 18, 24, 18],
+    [-8, 0, 40, 28, 22],
+  ]) {
+    for (const side of [-1, 1]) {
+      const x = cx + side * (w / 2 - 0.7);
+      batch.box(x, y - 0.7, cz, 0.6, 0.4, d, dark);
+      for (const z of [cz - d / 2 + 0.8, cz + d / 2 - 0.8]) {
+        batch.beam(V(x, y - 0.4, z), V(x, 59.5, z), 0.095, dark, 5);
+        for (let h = y + 1; h < 59; h += 3) {
+          const ring = new THREE.TorusGeometry(0.19, 0.048, 4, 6);
+          ring.translate(x, h, z);
+          batch.add(ring, gold);
+        }
+      }
+    }
+  }
+  const horizon = new THREE.Mesh(
+    martianHorizonGeometry(),
+    mat(0xffffff, {
+      vertexColors: true,
+      roughness: 1,
+      metalness: 0,
+      flatShading: true,
+    }),
+  );
+  horizon.name = 'olympus-continuous-martian-horizon';
+  horizon.receiveShadow = true;
+  scene.add(horizon);
+  batch.flush('olympus-architectural-details');
 }
 
 // Meteors need the highest walkable surface under a random X/Z position. The
@@ -15002,16 +16349,14 @@ function buildOlympusMons(scene) {
 
   // Flat recovery basin. Falling from the temple is survivable, but the sparse
   // outer loot and obvious return shrines push play immediately back upward.
-  addBox(scene, world, 0, -1, 0, 340, 2, 340, 0x7f3828, {
-    tex: 'dirt', repeat: [48, 48],
-  });
   for (const [x, z, w, d, c] of [
     [-137.5, -92, 15, 104, 0x984932], [137.5, 78, 15, 116, 0x6f3027],
     [-90, 137.5, 112, 15, 0xa75635], [92, -137.5, 118, 15, 0x743126],
   ]) addBox(scene, world, x, 0.32, z, w, 0.65, d, c, { collide: false, tex: 'dirt' });
-  addOlympusLavaMoat(scene, world, 170, 151, -0.72, { pointLights: false });
+  addOlympusLavaMoat(scene, world, 430, 160, -1.4, { pointLights: false });
 
   addOlympusMountain(scene, world);
+  addOlympusTalus(scene, world);
 
   // Crimson Martian creepers mark climbable recovery lines on the exterior
   // cliffs. They sit on the visible wall faces and spill all the way down to
@@ -15022,19 +16367,6 @@ function buildOlympusMons(scene) {
   ]) addVine(scene, world, x, z, 0.15, 60.45, 1.18, exitX * 0.16, exitZ * 0.16,
     exitX, exitZ, 0.22, 1.75, 0xc83a3f);
 
-  // Monumental buttresses break the huge cliff into readable vertical bays.
-  // They use the same visible boxes as their collision, so the added density
-  // does not reintroduce the old cliff/physics mismatch.
-  for (const z of [-56, 0, 56]) {
-    addBox(scene, world, -90, 21, z, 4, 42, 10, 0x6d332b, { tex: 'olympus-rock', repeat: [2, 8] });
-    addBox(scene, world, 90, 21, z, 4, 42, 10, 0x6d332b, { tex: 'olympus-rock', repeat: [2, 8] });
-  }
-  for (const x of [-48, 0, 48]) {
-    addBox(scene, world, x, 18, 90, 10, 36, 4, 0x75402f, { tex: 'olympus-rock', repeat: [3, 7] });
-  }
-  for (const x of [-50, -24, 24, 50]) {
-    addBox(scene, world, x, 22, -90, 9, 44, 4, 0x63302a, { tex: 'olympus-rock', repeat: [3, 8] });
-  }
   addOlympusBanner(scene, -88.02, 34, -28, Math.PI / 2, 0xb8392f);
   addOlympusBanner(scene, -88.02, 34, 28, Math.PI / 2, 0xd8912d);
   addOlympusBanner(scene, 88.02, 34, -28, Math.PI / 2, 0x3a74b8);
@@ -15057,7 +16389,7 @@ function buildOlympusMons(scene) {
     [-112, -70, 9], [-108, 68, 11], [110, 72, 10], [112, -74, 8],
     [-84, -48, 8], [-84, 48, 7], [84, 46, 8], [84, -46, 7],
   ];
-  crags.forEach(([x, z, r], i) => addOlympusCrag(scene, world, x, olympusSurfaceY(x, z) + r * 0.28, z, r, i % 2 ? 0x6e3028 : 0x8b402d, i + 1));
+  crags.forEach(([x, z, r], i) => addOlympusCrag(scene, world, x, Math.max(olympusSurfaceY(x, z), olympusTalusY(world,x,z)) + r * 0.28, z, r, i % 2 ? 0x6e3028 : 0x8b402d, i + 1));
 
   for (const [x, z] of [[-146, 38], [145, -34], [-116, -14], [116, 14]]) {
     addBox(scene, world, x, 3, z, 2.1, 6, 2.1, 0x9d7040, { tex: 'panel' });
@@ -15489,9 +16821,11 @@ function buildOlympusMons(scene) {
   // jump pad provides a faster one-way flank. The open front, side balconies,
   // and rear doorway all let players drop back into a different palace route.
   const aetherFloorY = 90;
-  addBox(scene, world, 0, aetherFloorY, 24, 64, 1, 32, 0xffffff, {
-    tex: 'olympus-aether', repeat: [4, 2], roughness: 0.5, metalness: 0.1,
-  });
+  for (const [x,z,w,d] of [[-20.5,24,23,32],[20.5,24,23,32],[0,30,18,20]]) {
+    addBox(scene,world,x,aetherFloorY,z,w,1,d,0xffffff,{
+      tex:'olympus-aether',repeat:[w/16,d/16],roughness:.5,metalness:.1,
+    });
+  }
   addBox(scene, world, -38, aetherFloorY, 28, 12, 1, 16, 0xf3dfba, {
     tex: 'olympus-aether', repeat: [1, 2],
   });
@@ -15529,8 +16863,8 @@ function buildOlympusMons(scene) {
       tex: 'olympus-aether', repeat: [1, 2],
     });
   }
-  for (const x of [-17, 17]) addBox(scene, world, x, 102.9, 24, 28, 0.8, 32, 0xf6e6c6, {
-    tex: 'olympus-aether', repeat: [2, 3],
+  for(const [x,z,w,d] of [[-20,24,22,32],[20,24,22,32],[-6,30,6,20],[6,30,6,20]]) addBox(scene,world,x,102.9,z,w,.8,d,0xf6e6c6,{
+    tex:'olympus-aether',repeat:[2,3],
   });
   for (const z of [10, 24, 38]) addBox(scene, world, 0, 103.55, z, 6, 0.5, 2, 0xd4a53d, {
     tex: 'olympus-aether', repeat: [1, 1], metalness: 0.35, roughness: 0.32,
@@ -15688,8 +17022,9 @@ function buildOlympusMons(scene) {
     minX: -6.1, maxX: 6.1, minZ: -170, maxZ: -82,
     y: 0.24, depth: 0.38, edgeOverlap: 0.14,
   });
-  addBox(scene, world, -6.7, 0.45, -126, 1.2, 0.9, 88, 0x7b4635, { tex: 'olympus-rock' });
-  addBox(scene, world, 6.7, 0.45, -126, 1.2, 0.9, 88, 0x7b4635, { tex: 'olympus-rock' });
+  // Eight-metre curb openings let the basin flank cross the northern approach.
+  for(const x of [-6.7,6.7]) for(const [z,depth] of [[-159,22],[-111,58]])
+    addBox(scene, world, x, 0.45, z, 1.2, 0.9, depth, 0x7b4635, { tex: 'olympus-rock' });
   const caveShade = new THREE.Mesh(new THREE.PlaneGeometry(11, 8.5), new THREE.MeshBasicMaterial({
     color: 0x06060a, transparent: true, opacity: 0.54, side: THREE.DoubleSide, depthWrite: false,
   }));
@@ -15762,29 +17097,33 @@ function buildOlympusMons(scene) {
 
   world.spawns.blue.push(
     V(-52, 60.6, 38), V(-44, 60.6, -14), V(-18, 60.6, 32), V(-15, 60.6, -52),
-    V(-44, 74.6, 20), V(-30, 74.6, 52), V(-15, 78.6, -52), V(-30, 0.1, -22),
+    V(-44, 74.6, 20), V(-30, 74.6, 52), V(-17, 78.6, -52), V(-30, 0.1, -22),
     V(-20, 90.6, 26),
   );
   world.spawns.red.push(
     V(52, 60.6, 38), V(44, 60.6, -14), V(18, 60.6, 32), V(15, 60.6, -52),
-    V(44, 74.6, 20), V(30, 74.6, 52), V(15, 78.6, -52), V(30, 0.1, -22),
+    V(44, 74.6, 20), V(30, 74.6, 52), V(17, 78.6, -52), V(30, 0.1, -22),
     V(20, 90.6, 26),
   );
   world.spawns.ffa.push(
     V(-18, 60.6, 32), V(18, 60.6, 32), V(-52, 60.6, 38), V(52, 60.6, 38),
     V(-44, 60.6, -14), V(44, 60.6, -14), V(-15, 60.6, -52), V(15, 60.6, -52),
     V(-44, 74.6, 20), V(44, 74.6, 20), V(-30, 74.6, 52), V(30, 74.6, 52),
-    V(-15, 78.6, -52), V(15, 78.6, -52), V(-30, 0.1, -22), V(30, 0.1, -22),
+    V(-17, 78.6, -52), V(17, 78.6, -52), V(-30, 0.1, -22), V(30, 0.1, -22),
     V(-20, 90.6, 26), V(20, 90.6, 26),
   );
 
   // Basin recovery loop, explicit pad links, indoor lift, palace rooms, roof
   // city, and skybridge all form one navigable graph.
-  const outerR = 108;
-  for (let i = 0; i < 8; i++) {
-    const u = -outerR + (outerR * 2 * i) / 8;
-    wp(world, -outerR, 0, u); wp(world, u, 0, outerR);
-    wp(world, outerR, 0, -u); wp(world, -u, 0, -outerR);
+  // A continuous basin flank runs outside the mountain's new foothills.
+  // Corner detours clear the existing large crags and remain inside the moat.
+  const basinLoop=[[-149,-110],[-149,-90],[-134,-60],[-134,-20],[-134,20],[-134,60],[-134,100],[-140,130],[-104,134],[-60,134],[-20,134],[0,134],[20,134],[60,134],[104,134],[130,120],[134,100],[134,60],[134,20],[134,-20],[134,-60],[134,-100],[146,-124],[146,-140],[126,-140],[104,-134],[60,-134],[20,-144],[0,-144],[-20,-144],[-60,-134],[-104,-134],[-140,-126]];
+  for(let i=0;i<basinLoop.length;i++) {const [x,z]=basinLoop[i],next=basinLoop[(i+1)%basinLoop.length];wp(world,x,0,z);world.manualLinks.push([x,0,z,next[0],0,next[1]]);}
+  world.environmentBasinRoute = basinLoop.map(([x,z])=>[x,0,z]);
+  // The two quiet cliff climbs meet the outer loop through their clear gullies.
+  for(const [x,z,endZ,loopX] of [[-30,89,134,-20],[34,-89,-134,20]]) {
+    wp(world,x,0,(z+endZ)/2);
+    world.manualLinks.push([x,0,z,x,0,(z+endZ)/2],[x,0,(z+endZ)/2,loopX,0,endZ]);
   }
   world.manualLinks.push(
     [-120, 0, 20, -100, 26, 28], [-96, 26, 28, -62, 60.5, 38],
@@ -15838,7 +17177,8 @@ function buildOlympusMons(scene) {
     [-15, 78.5, -46, 15, 78.5, -46],
     [0, 74.5, -20, -17, 74.5, -20], [-17, 74.5, -20, -17, 90.5, 10],
     [0, 74.5, -20, 17, 74.5, -20], [17, 74.5, -20, 17, 90.5, 10],
-    [-17, 90.5, 10, 0, 90.5, 24], [17, 90.5, 10, 0, 90.5, 24],
+    [-17, 90.5, 10, -17, 90.5, 22], [-17, 90.5, 22, 0, 90.5, 24],
+    [17, 90.5, 10, 17, 90.5, 22], [17, 90.5, 22, 0, 90.5, 24],
     [0, 90.5, 24, -38, 90.5, 28], [0, 90.5, 24, 38, 90.5, 28],
     [30, 74.5, 52, 44, 74.5, 52], [44, 74.5, 52, 38, 90.5, 28],
     [38, 90.5, 28, 0, 90.5, 24], [0, 90.5, 34, 0, 90.5, 24],
@@ -15917,6 +17257,15 @@ function buildOlympusMons(scene) {
   };
   world.setVisualQuality('high');
 
+  wp(world,-17,90.5,22);wp(world,17,90.5,22);
+  // Eye-height visibility crosses the new opening, but a walking route cannot.
+  // Restrict the upper hall to the explicit links around its light court.
+  for(const node of world.waypoints) if(Math.abs(node.pos.y-90.5)<.1 && Math.abs(node.pos.x)<32 && node.pos.z>=8 && node.pos.z<=40) node.manualLinksOnly=true;
+  world.manualLinks.push([30,90.5,20,17,90.5,22]);
+  // Ground loot and basin navigation sit on the same new talus triangles.
+  for(const node of world.waypoints) if(node.pos.y<.5 && Math.max(Math.abs(node.pos.x),Math.abs(node.pos.z))>88) node.pos.y=olympusTalusY(world,node.pos.x,node.pos.z);
+  for(const item of world.pickups) if(item.pos.y<1 && Math.max(Math.abs(item.pos.x),Math.abs(item.pos.z))>88) item.pos.y=olympusTalusY(world,item.pos.x,item.pos.z)+.2;
+  addOlympusArchitecture(scene,world);
   flushOlympusColumns(scene, world);
   buildMeteorSurfaceIndex(world);
   mergeStatic(scene, world);
@@ -15924,6 +17273,295 @@ function buildOlympusMons(scene) {
 }
 
 /* ============== SECRET MAP — SOLAR FLARE (orbital power station) ============== */
+function addSolarInteriors(scene, world) {
+  const batch = new EnvironmentBatch(scene);
+  const dark = mat(0x1c2c3c, { roughness: 0.75, metalness: 0.2 });
+  const steel = mat(0x566b7c, { roughness: 0.55, metalness: 0.45 });
+  const ivory = mat(0xaabbbf, { roughness: 0.8 });
+  const amber = new THREE.MeshBasicMaterial({
+    color: 0xffb65e,
+    toneMapped: false,
+  });
+  const cyan = new THREE.MeshBasicMaterial({
+    color: 0x62ddeb,
+    toneMapped: false,
+  });
+  const screenCanvas = document.createElement("canvas");
+  screenCanvas.width = 1024;
+  screenCanvas.height = 512;
+  const g = screenCanvas.getContext("2d");
+  g.fillStyle = "#071721";
+  g.fillRect(0, 0, 1024, 512);
+  g.strokeStyle = "#21414e";
+  g.lineWidth = 2;
+  for (let x = 32; x < 1024; x += 40) {
+    g.beginPath();
+    g.moveTo(x, 52);
+    g.lineTo(x, 480);
+    g.stroke();
+  }
+  for (let y = 72; y < 512; y += 40) {
+    g.beginPath();
+    g.moveTo(24, y);
+    g.lineTo(1000, y);
+    g.stroke();
+  }
+  g.font = "24px monospace";
+  g.fillStyle = "#b7f4eb";
+  g.fillText("HELIOS OBSERVATORY / LIVE TELEMETRY", 28, 34);
+  for (let ring = 1; ring <= 4; ring++) {
+    g.strokeStyle = ring % 2 ? "#57d8dd" : "#d99950";
+    g.beginPath();
+    g.arc(275, 274, ring * 44, 0, Math.PI * 2);
+    g.stroke();
+  }
+  for (let i = 0; i < 5; i++) {
+    g.strokeStyle = i % 2 ? "#f7bd65" : "#65e9e6";
+    g.beginPath();
+    for (let x = 525; x < 985; x += 3) {
+      const y =
+        112 +
+        i * 74 +
+        Math.sin(x * 0.025 + i) * 13 +
+        Math.sin(x * 0.091 + i * 2) * 4;
+      x === 525 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  g.fillStyle = "#84c0c7";
+  g.font = "17px monospace";
+  g.fillText("CORONAL FIELD / 08:42", 42, 482);
+  const screenMap = new THREE.CanvasTexture(screenCanvas);
+  screenMap.colorSpace = THREE.SRGBColorSpace;
+  const screen = new THREE.MeshBasicMaterial({
+    map: screenMap,
+    toneMapped: false,
+  });
+  // Consolidated consoles replace the old full-height hull-textured cubes.
+  for (const [x, base, z, w, d] of [
+    [-10, 0, 8, 6, 4],
+    [34, 0, 25, 9, 3],
+    [42, 7.4, 3, 11, 3],
+  ]) {
+    const body = new THREE.BoxGeometry(w, 2.1, d);
+    const vertices = body.attributes.position;
+    for (let i = 0; i < vertices.count; i++)
+      vertices.setY(
+        i,
+        vertices.getY(i) > 0 ? 1.7 - (vertices.getZ(i) * 0.8) / d : 0,
+      );
+    body.computeVertexNormals();
+    body.translate(x, base, z);
+    const mesh = new THREE.Mesh(body, dark);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(mesh, "solar-console", true),
+    );
+    batch.add(body, dark);
+    batch.box(x, base + 0.25, z, w + 0.02, 0.12, d + 0.02, steel);
+    const top = new THREE.PlaneGeometry(w - 0.35, Math.hypot(d, 0.8) - 0.35);
+    top.rotateX(-Math.PI / 2 + Math.atan2(0.8, d));
+    top.translate(x, base + 1.73, z);
+    batch.add(top, screen);
+    batch.box(x, base + 1.05, z + d / 2 + 0.025, w - 0.5, 0.05, 0.04, cyan);
+  }
+  // Rib frames follow existing ceiling slabs. None crosses a ladder hatch.
+  for (const [cx, base, z, width] of [
+    [0, 0, -9, 30],
+    [0, 0, 9, 30],
+    [34, 0, 17, 22],
+    [34, 0, 33, 22],
+    [42, 7.4, -7, 24],
+    [42, 7.4, 7, 24],
+    [0, 7.4, -9, 30],
+    [0, 7.4, -3, 30],
+  ]) {
+    batch.box(cx, base + 5.98, z, width, 0.3, 0.42, steel);
+    for (const side of [-1, 1]) {
+      const x = cx + (side * width) / 2;
+      batch.box(x, base + 3, z, 0.3, 5.7, 0.42, steel);
+      batch.beam(
+        V(x, base + 4.7, z),
+        V(x - side * 1.3, base + 5.9, z),
+        0.14,
+        steel,
+      );
+    }
+    batch.box(
+      cx,
+      base + 5.8,
+      z,
+      width * 0.45,
+      0.08,
+      0.16,
+      base === 0 ? cyan : amber,
+    );
+  }
+  // Deep wall insets and service racks break up the repeating hull skin.
+  for (const [x, base, z, w, face] of [
+    [34, 0, 14.56, 13, 0],
+    [0, 7.4, 13.44, 13, Math.PI],
+    [-15.44, 7.4, 0, 8, Math.PI / 2],
+    [54.44, 7.4, 7, 6, -Math.PI / 2],
+  ]) {
+    batch.box(x, base + 2.6, z, w, 3.8, 0.08, dark, face);
+    const normal = V(Math.sin(face), 0, Math.cos(face));
+    const p = V(x, base + 3, z).addScaledVector(normal, 0.065);
+    const panel = new THREE.PlaneGeometry(w * 0.78, 2.35);
+    panel.rotateY(face);
+    panel.translate(p.x, p.y, p.z);
+    batch.add(panel, screen);
+    const bottom = V(x, base + 0.62, z).addScaledVector(normal, 0.09);
+    batch.box(bottom.x, bottom.y, bottom.z, w, 0.06, 0.06, cyan, face);
+  }
+  // Flare chamber: a restrained cage and coolant manifold around its existing cover.
+  for (const x of [-3, 3]) {
+    batch.box(x, 3.35, 11, 0.18, 0.2, 5.4, steel);
+    batch.beam(V(x, 3.45, 9), V(x, 5.4, 9), 0.14, steel);
+    batch.beam(V(x, 3.45, 13), V(x, 5.4, 13), 0.14, steel);
+  }
+  addBox(scene, world, 0, 5.4, 11, 6.2, 0.22, 4.2, 0x566b7c);
+  for (const x of [-1.8, 0, 1.8]) {
+    const tube = new THREE.CylinderGeometry(0.38, 0.38, 1.8, 12);
+    tube.translate(x, 4.35, 11);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(
+        new THREE.Mesh(tube, amber),
+        "solar-coolant-cylinder",
+        true,
+      ),
+    );
+    batch.add(tube, amber);
+  }
+  // Small canister rack at the science bulkhead, outside the bench/hatch route.
+  for (const x of [26, 28, 30]) {
+    const canister = new THREE.CylinderGeometry(0.42, 0.48, 1.55, 10);
+    canister.translate(x, 0.85, 16);
+    world.colliders.push(
+      triangleMeshColliderFromMesh(
+        new THREE.Mesh(canister, steel),
+        "solar-science-canister",
+        true,
+      ),
+    );
+    batch.add(canister, steel);
+    batch.box(x, 1.65, 16, 0.65, 0.08, 0.65, cyan);
+  }
+  // Narrow floor lanes guide the turns without changing floor collision.
+  for (const [x, y, z, w, d] of [
+    [8, 0.04, 18, 0.16, 7],
+    [17, 0.04, 25, 9, 0.16],
+    [22.5, 7.44, 0, 12, 0.16],
+    [42, 7.44, 16, 0.16, 7],
+  ])
+    batch.box(x, y, z, w, 0.025, d, cyan);
+  // Connector ribs and recessed light bars define the tubes at human scale.
+  for (const [x, base, z, axis] of [
+    [8, 0, 17, "z"],
+    [8, 0, 20, "z"],
+    [15, 0, 25, "x"],
+    [19, 0, 25, "x"],
+    [20, 7.4, 0, "x"],
+    [25, 7.4, 0, "x"],
+    [42, 7.4, 14, "z"],
+    [42, 7.4, 18, "z"],
+  ]) {
+    const alongX = axis === "x";
+    batch.box(
+      x,
+      base + 5.12,
+      z,
+      alongX ? 0.25 : 5.4,
+      0.22,
+      alongX ? 5.4 : 0.25,
+      steel,
+    );
+    for (const side of [-1, 1])
+      batch.box(
+        x + (alongX ? 0 : side * 2.55),
+        base + 2.55,
+        z + (alongX ? side * 2.55 : 0),
+        0.17,
+        5.1,
+        0.17,
+        steel,
+      );
+    batch.box(
+      x,
+      base + 4.98,
+      z,
+      alongX ? 0.12 : 3,
+      0.06,
+      alongX ? 3 : 0.12,
+      cyan,
+    );
+  }
+  addSpaceSign(
+    scene,
+    batch,
+    dark,
+    steel,
+    ivory,
+    "SPECTROMETRY",
+    34,
+    4.95,
+    14.65,
+    10,
+    0.65,
+    0,
+    "#62ddeb",
+    "industrial",
+  );
+  addSpaceSign(
+    scene,
+    batch,
+    dark,
+    steel,
+    ivory,
+    "FLIGHT CONTROL",
+    42,
+    12.95,
+    11.4,
+    10,
+    0.7,
+    Math.PI,
+    "#ffb65e",
+    "industrial",
+  );
+  addSpaceSign(
+    scene,
+    batch,
+    dark,
+    steel,
+    ivory,
+    "SCIENCE",
+    8,
+    4.75,
+    13.42,
+    4,
+    0.7,
+    Math.PI,
+    "#62ddeb",
+    "industrial",
+  );
+  addSpaceSign(
+    scene,
+    batch,
+    dark,
+    steel,
+    ivory,
+    "HELIOGRAPH",
+    0,
+    5.45,
+    13.4,
+    7,
+    0.6,
+    Math.PI,
+    "#ffb65e",
+    "industrial",
+  );
+  batch.flush("solar-interior-equipment");
+}
+
 function buildSolarFlare(scene) {
   const world = newWorld({
     gravity: 25, jumpVel: 9.2, killY: -70, playerSpeed: 11.5,
@@ -16121,11 +17759,7 @@ function buildSolarFlare(scene) {
   // Purposeful room furniture: flare emitter cover is separate; map table, lab
   // bench, and bridge console stay waist-high so exits remain readable.
   // Central map table sits south of the ramp well (ramp occupies z −5..5).
-  for (const [x, y, z, w, d, color] of [
-    // West of the ramp well — keep cover off the x −8..8 / z −5..5 climb.
-    [-10, 1.05, 8, 6, 4, 0x4b5965],
-    [34, 1.05, 25, 9, 3, 0x365266], [42, 8.05, 3, 11, 3, 0x394f62],
-  ]) addBox(scene, world, x, y, z, w, 2.1, d, color, { tex: 'solar-hull' });
+  // Instrument consoles are built with the interior equipment below.
 
   // Artificial gravity is full-strength inside pressurized modules. Crossing
   // a doorway onto a roof or passing through the aft energy curtain drops you
@@ -16566,24 +18200,24 @@ function buildSolarFlare(scene) {
   // Indoor starts plus dedicated exterior hull spawns so bots actually contest
   // the flare-exposed arsenal instead of looping the pressurized rooms.
   world.spawns.blue.push(
-    V(-8, 0.1, -8), V(-8, 0.1, 8), V(-8, 7.4, 8),
-    V(0, 14.5, -8), V(-8, 14.5, 8), V(5, 7.4, -8),
+    V(-8, 0.1, -8), V(-8, 0.1, 3), V(-11, 7.4, 8),
+    V(0, 14.5, -8), V(-12, 14.5, 8), V(5, 7.4, -8),
   );
   world.spawns.red.push(
-    V(30, 0.1, 20), V(38, 0.1, 30), V(45, 7.4, 4),
-    V(63, 7.5, -3), V(75, 7.5, 8), V(88, 7.5, 3), V(28, 7.3, 30),
+    V(30, 0.1, 20), V(33, 0.1, 31), V(49, 7.4, 6),
+    V(63, 7.5, -3), V(75, 7.5, 8), V(88, 7.5, 0), V(28, 7.3, 30),
   );
   world.spawns.ffa.push(
     ...world.spawns.blue, ...world.spawns.red,
-    V(0, 0.1, 8), V(8, 0.1, 8),
+    V(0, 0.1, 5), V(8, 0.1, 8),
     V(56, 7.5, 0), V(70, 7.5, 0), V(82, 7.5, -2),
     V(0, 14.5, 0), V(0, hubY + 0.2, hubZ), V(70, 7.5, -12),
   );
   for (const [x, y, z] of [
-    [-8, 0.1, -8], [-8, 0.1, 8], [0, 0.1, 0], [8, 0.1, 8],
+    [-8, 0.1, -8], [-8, 0.1, 3], [0, 0.1, 0], [8, 0.1, 8],
     [8, 0.1, 14], [8, 0.1, 18], [8, 0.1, 22], [8, 0.1, 25],
     [13, 0.1, 25], [17, 0.1, 25], [22, 0.1, 25],
-    [28, 0.1, 20], [34, 0.1, 25], [38, 0.1, 30],
+    [28, 0.1, 20], [34, 0.1, 28], [33, 0.1, 31],
     [0, 7.4, 0], [8, 7.4, 0], [16, 7.4, 0], [22, 7.4, 0],
     [29, 7.4, 0], [38, 7.4, 0], [46, 7.4, 0], [52, 7.5, 0],
     [42, 7.4, 12], [42, 7.4, 16], [42, 7.4, 20], [42, 7.4, 25],
@@ -16592,7 +18226,7 @@ function buildSolarFlare(scene) {
     [8, 6.3, 18], [8, 7.0, 25], [17, 6.3, 25],
     [24, 7.2, 28], [28, 7.3, 30], [32, 7.2, 26], [34, 7.3, 30],
     [-8, 14.5, 0], [0, 14.5, 0], [8, 14.5, 0],
-    [0, 14.5, 8], [0, 14.5, -8], [-8, 14.5, 8], [8, 14.5, -8],
+    [0, 14.5, 8], [0, 14.5, -8], [-12, 14.5, 8], [8, 14.5, -8],
     // Ceiling airlock climb: upper deck → hatch → roof.
     [10, 7.5, 9], [10, 11.0, 9], [10, 14.5, 9], [10, 14.5, 12], [14, 14.5, 9],
     [22, 13.7, 0], [42, 14.4, 0], [42, 13.7, 16], [42, 14.4, 25],
@@ -16643,7 +18277,7 @@ function buildSolarFlare(scene) {
   // Lean loot: one pickup per room when possible, weapons split across inside
   // and outside. Secret Shot (blaster) is the default — never a floor drop.
   // Central lower / upper
-  pk(world, 'weapon', -8, 0.2, 6, { weapon: 'scatter' });
+  pk(world, 'weapon', -10, 0.2, 4, { weapon: 'scatter' });
   pk(world, 'ammo', -5, 0.2, 8, { weapon: 'scatter' });
   pk(world, 'health', 8, 0.2, -8);
   pk(world, 'silver', 12, 7.5, 0);
@@ -16670,6 +18304,7 @@ function buildSolarFlare(scene) {
   pk(world, 'weapon', 0, hubY + 0.3, hubZ - 0.5, { weapon: 'hyper' });
   pk(world, 'ammo', -18, hubY + 0.3, hubZ - 0.5, { weapon: 'hyper' });
   pk(world, 'shield', 18, hubY + 0.3, hubZ - 0.5);
+  addSolarInteriors(scene,world);
   mergeStatic(scene, world);
   return world;
 }
@@ -17480,7 +19115,14 @@ function addMyceliumBranch(scene, start, end, radius = 0.65) {
 // A branch route uses a broad, shallow bark plank as the visible bridge. Short
 // overlapping collision cells follow that slope closely enough to walk while
 // keeping the route grown-looking instead of turning it into a catwalk.
-function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, options = {}) {
+function addWalkableMyceliumBranch(
+  scene,
+  world,
+  start,
+  end,
+  radius = 1.05,
+  options = {},
+) {
   // These are primary traversal lanes, so make the usable limb substantially
   // broader than the decorative branch arms around each crown. The additional
   // 1.5 multiplier is the requested second widening pass.
@@ -17492,96 +19134,65 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, opti
   const crownDepth = Math.max(0.18, walkRadius * 0.1);
   const plankDepth = plankBodyDepth + crownDepth;
 
-  // A shallow structural body replaces the old full-radius cylinder. Its cap
-  // remains separately trimmable where a route merges into the hollow log, so
-  // the junction stays clean without making the rest of the limb bulky.
-  if (horizontalLength > 0.01) {
-    const forward = delta.clone().normalize();
-    const right = V(delta.z / horizontalLength, 0, -delta.x / horizontalLength);
-    const up = forward.clone().cross(right).normalize();
-    const orientation = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().makeBasis(right, up, forward),
+  const matchingDeck = (p) =>
+    world.myceliumCanopyDecks?.find(
+      (d) =>
+        Math.hypot(p.x - d.x, p.z - d.z) < 0.08 && Math.abs(p.y - d.y) < 0.08,
     );
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(plankWidth, plankBodyDepth, delta.length()),
-      mat(0xffffff, {
-        tex: 'canopy-bark', repeat: [2, Math.max(1, delta.length() / 6)], roughness: 0.96,
-      }),
-    );
-    body.quaternion.copy(orientation);
-    body.position.copy(start).add(end).multiplyScalar(0.5)
-      .addScaledVector(up, -crownDepth - plankBodyDepth / 2);
-    body.name = options.debugName ? `${options.debugName}-body` : 'mycelium-branch-plank-body';
-    body.castShadow = body.receiveShadow = true;
-    scene.add(body);
-
-    const matchingDeck = point => world.myceliumCanopyDecks?.find(deck => (
-      Math.hypot(point.x - deck.x, point.z - deck.z) < 0.08
-      && Math.abs(point.y - deck.y) < 0.08
-    ));
-    const startDeck = matchingDeck(start);
-    const endDeck = matchingDeck(end);
-    // Routes are authored center-to-center for pathfinding and collision. The
-    // visible bark crown must begin at the circular balcony rim, though, or it
-    // lies directly on the deck's top face and the two textures z-fight over a
-    // large wedge. Leave the lower structural body and colliders overlapping
-    // beneath the deck so the transition remains completely walkable.
-    const seamGap = 0.04;
-    const autoStartInset = startDeck ? startDeck.topRadius + seamGap : 0;
-    const autoEndInset = endDeck ? endDeck.topRadius + seamGap : 0;
-    const maxInset = Math.max(0, delta.length() - 0.2);
-    const crownStartInset = Math.min(
-      Math.max(0, options.crownStartInset ?? autoStartInset),
-      maxInset,
-    );
-    const crownEndInset = Math.min(
-      Math.max(0, options.crownEndInset ?? autoEndInset),
-      maxInset - crownStartInset,
-    );
-    const crownLength = delta.length() - crownStartInset - crownEndInset;
-    const crownStart = start.clone().addScaledVector(forward, crownStartInset);
-    const crownEnd = crownStart.clone().addScaledVector(forward, crownLength);
-    const crown = new THREE.Mesh(
-      new THREE.BoxGeometry(plankWidth, crownDepth, crownLength),
-      mat(0xffffff, {
-        tex: 'canopy-bark', repeat: [2, Math.max(1, crownLength / 6)], roughness: 0.96,
-      }),
-    );
-    crown.quaternion.copy(orientation);
-    crown.position.copy(crownStart).add(crownEnd).multiplyScalar(0.5)
-      .addScaledVector(up, -crownDepth / 2);
-    crown.name = options.debugName || 'mycelium-branch-crown';
-    crown.userData.routeStart = crownStart.toArray();
-    crown.userData.routeEnd = crownEnd.toArray();
-    crown.castShadow = crown.receiveShadow = true;
-    scene.add(crown);
-  }
+  const insetA = options.crownStartInset ?? matchingDeck(start)?.topRadius ?? 0;
+  const insetB = options.crownEndInset ?? matchingDeck(end)?.topRadius ?? 0;
+  const geometry = livingLimbGeometry(
+    start,
+    end,
+    plankWidth,
+    plankDepth,
+    insetA,
+    insetB,
+  );
+  const limb = new THREE.Mesh(
+    geometry,
+    mat(0xffffff, { tex: "canopy-bark", repeat: [1, 1], roughness: 0.98 }),
+  );
+  limb.name = options.debugName || "mycelium-living-limb";
+  limb.castShadow = limb.receiveShadow = true;
+  scene.add(limb);
+  const collider = triangleMeshColliderFromMesh(limb, limb.name, true);
+  world.colliders.push(collider);
+  (world.livingLimbRoutes ||= []).push({
+    start: start.toArray(),
+    end: end.toArray(),
+    width: plankWidth,
+    collider,
+  });
   // The visible/supporting limb continues beneath each balcony, but bot route
   // nodes must stop on the walkable ring. A center-to-center route puts its
   // endpoint inside the solid trunk, where bots simply face the bark and keep
   // trying to reach an impossible node.
-  const matchingRouteDeck = point => world.myceliumCanopyDecks?.find(deck => (
-    Math.hypot(point.x - deck.x, point.z - deck.z) < 0.08
-    && Math.abs(point.y - deck.y) < 0.08
-  ));
+  const matchingRouteDeck = (point) =>
+    world.myceliumCanopyDecks?.find(
+      (deck) =>
+        Math.hypot(point.x - deck.x, point.z - deck.z) < 0.08 &&
+        Math.abs(point.y - deck.y) < 0.08,
+    );
   const startRouteDeck = matchingRouteDeck(start);
   const endRouteDeck = matchingRouteDeck(end);
-  const forwardXZ = horizontalLength > 0.01
-    ? V(delta.x / horizontalLength, 0, delta.z / horizontalLength)
-    : V(1, 0, 0);
+  const forwardXZ =
+    horizontalLength > 0.01
+      ? V(delta.x / horizontalLength, 0, delta.z / horizontalLength)
+      : V(1, 0, 0);
   const navStart = startRouteDeck
     ? V(
-      startRouteDeck.x + forwardXZ.x * startRouteDeck.navRadius,
-      start.y,
-      startRouteDeck.z + forwardXZ.z * startRouteDeck.navRadius,
-    )
+        startRouteDeck.x + forwardXZ.x * startRouteDeck.navRadius,
+        start.y,
+        startRouteDeck.z + forwardXZ.z * startRouteDeck.navRadius,
+      )
     : start.clone();
   const navEnd = endRouteDeck
     ? V(
-      endRouteDeck.x - forwardXZ.x * endRouteDeck.navRadius,
-      end.y,
-      endRouteDeck.z - forwardXZ.z * endRouteDeck.navRadius,
-    )
+        endRouteDeck.x - forwardXZ.x * endRouteDeck.navRadius,
+        end.y,
+        endRouteDeck.z - forwardXZ.z * endRouteDeck.navRadius,
+      )
     : end.clone();
   const navDelta = navEnd.clone().sub(navStart);
   const navHorizontalLength = Math.hypot(navDelta.x, navDelta.z);
@@ -17594,34 +19205,44 @@ function addWalkableMyceliumBranch(scene, world, start, end, radius = 1.05, opti
     const x = navStart.x + navDelta.x * t;
     const y = navStart.y + navDelta.y * t;
     const z = navStart.z + navDelta.z * t;
-    world.colliders.push({
-      type: 'box',
-      min: V(x - Math.abs(stepX) * 0.62 - walkRadius * 0.48, y - plankDepth,
-        z - Math.abs(stepZ) * 0.62 - walkRadius * 0.48),
-      max: V(x + Math.abs(stepX) * 0.62 + walkRadius * 0.48, y,
-        z + Math.abs(stepZ) * 0.62 + walkRadius * 0.48),
-    });
     if (i % 2 === 0 || i === steps) {
       wp(world, x, y, z);
-      if (previousWaypoint) world.manualLinks.push([
-        previousWaypoint.x, previousWaypoint.y, previousWaypoint.z, x, y, z,
-      ]);
+      if (previousWaypoint)
+        world.manualLinks.push([
+          previousWaypoint.x,
+          previousWaypoint.y,
+          previousWaypoint.z,
+          x,
+          y,
+          z,
+        ]);
       previousWaypoint = { x, y, z };
     }
   }
   const linkEndpointToDeckRing = (point, deck) => {
     if (!deck?.navPoints?.length) return;
-    const nearest = deck.navPoints.reduce((best, candidate) => (
-      Math.hypot(candidate[0] - point.x, candidate[2] - point.z)
-        < Math.hypot(best[0] - point.x, best[2] - point.z) ? candidate : best
-    ));
+    const nearest = deck.navPoints.reduce((best, candidate) =>
+      Math.hypot(candidate[0] - point.x, candidate[2] - point.z) <
+      Math.hypot(best[0] - point.x, best[2] - point.z)
+        ? candidate
+        : best,
+    );
     world.manualLinks.push([point.x, point.y, point.z, ...nearest]);
   };
   linkEndpointToDeckRing(navStart, startRouteDeck);
   linkEndpointToDeckRing(navEnd, endRouteDeck);
 }
 
-function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) {
+function addPlatformMushroom(
+  scene,
+  world,
+  x,
+  topY,
+  z,
+  radius,
+  color,
+  seed = 0,
+) {
   // Platform caps can stand over pond slopes and other uneven terrain. Sink
   // the stalk well below the lowest playable ground so its flat end is never
   // exposed when viewed from underwater or downhill.
@@ -17630,49 +19251,48 @@ function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) 
   const stemHeight = Math.max(2.4, stemTopY - stemBottomY);
   const stem = new THREE.Mesh(
     new THREE.CylinderGeometry(radius * 0.2, radius * 0.31, stemHeight, 12, 3),
-    mat(0xe1d2d9, { roughness: 0.86, flatShading: true }),
+    mat(0xc5cbb2, { roughness: 0.93, flatShading: true }),
   );
   stem.position.set(x, (stemBottomY + stemTopY) / 2, z);
   stem.rotation.z = Math.sin(seed * 2.1) * 0.035;
   stem.castShadow = stem.receiveShadow = true;
 
   const capMaterial = new THREE.MeshStandardMaterial({
-    color, roughness: 0.62, emissive: new THREE.Color(color), emissiveIntensity: 0.16,
+    color,
+    roughness: 0.62,
+    emissive: new THREE.Color(color),
+    emissiveIntensity: 0.16,
     flatShading: true,
   });
+  const profile = [
+    [0, 0],
+    [radius * 0.72, 0],
+    [radius * 0.88, -0.04],
+    [radius, -0.28],
+    [radius * 0.96, -0.62],
+    [radius * 0.64, -1.05],
+    [radius * 0.25, -1.5],
+    [0, -1.5],
+  ].map(([r, y]) => new THREE.Vector2(r, y));
   const cap = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.9, radius, 0.82, 20, 2),
+    new THREE.LatheGeometry(profile.reverse(), 24),
     capMaterial,
   );
-  cap.position.set(x, topY - 0.41, z);
-  cap.rotation.y = seed * 0.83;
+  cap.position.set(x, topY, z);
   cap.castShadow = cap.receiveShadow = true;
-  const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-    capMaterial,
-  );
-  // Keep the visible dome apex exactly on the walkable collision plane.
-  dome.position.set(x, topY - 0.5, z);
-  dome.scale.set(radius * 0.97, 0.5, radius * 0.97);
-  dome.castShadow = dome.receiveShadow = true;
-  scene.add(stem, cap, dome);
-
-  const stemRadius = radius * 0.26;
-  // Match the broad visible top rather than only supporting its inner 78%.
-  // A small amount of forgiving edge support is intentional: these caps are
-  // landing targets reached at speed from directional bounce trajectories.
-  const capSupportRadius = radius * 0.94;
+  const p = stem.geometry.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const t = (p.getY(i) + stemHeight / 2) / stemHeight;
+    p.setX(i, p.getX(i) + Math.sin(t * Math.PI) * Math.sin(seed) * 0.5);
+  }
+  stem.geometry.computeVertexNormals();
+  stem.rotation.z = 0;
+  scene.add(stem, cap);
   world.colliders.push(
-    { type: 'box', min: V(x - stemRadius, stemBottomY, z - stemRadius), max: V(x + stemRadius, topY - 0.75, z + stemRadius) },
-    {
-      type: 'box',
-      min: V(x - capSupportRadius, topY - 0.82, z - capSupportRadius),
-      max: V(x + capSupportRadius, topY, z + capSupportRadius),
-      debugName: 'mycelium-platform-mushroom-cap',
-      visualRadius: radius,
-      supportRadius: capSupportRadius,
-    },
+    triangleMeshColliderFromMesh(stem, "mycelium-curved-mushroom-stem", true),
+    triangleMeshColliderFromMesh(cap, "mycelium-organic-platform-cap", true),
   );
+  (world.fungalPlatforms ||= []).push({ x, y: topY, z, radius });
   wp(world, x, topY, z);
   world.anim.push((_dt, t) => {
     capMaterial.emissiveIntensity = 0.13 + Math.sin(t * 0.75 + seed) * 0.045;
@@ -17683,6 +19303,7 @@ function addPlatformMushroom(scene, world, x, topY, z, radius, color, seed = 0) 
 // Climbable bracket fungi. Local +Z points away from the host surface, so yaw
 // alone can plant an ascending cluster on a trunk, log wall, or rock face.
 // A cylinder-X host lets each step follow the curved side of a horizontal log.
+
 function addMyceliumShelfFungi(
   scene, world, x, y, z, yaw, scale = 1, seed = 0, count = 3, hostSurface = null,
 ) {
@@ -17781,11 +19402,10 @@ function addMyceliumShelfFungi(
   }
   scene.add(group);
   group.updateMatrixWorld(true);
-  for (const { shelf, radius, thickness } of shelves) {
-    world.colliders.push(triangleMeshColliderFromMesh(shelf, 'mycelium-shelf-fungus-step'));
-    const perch = shelf.localToWorld(V(0, thickness / 2 + 0.08, radius * 0.5));
-    wp(world, perch.x, perch.y, perch.z);
-  }
+  // Small brackets are optional player perches. Keep bot goals on the
+  // connected ground, limb and mushroom routes; isolated shelf points inside
+  // steep host rocks previously attracted bots to unreachable destinations.
+  for(const {shelf} of shelves) world.colliders.push(triangleMeshColliderFromMesh(shelf,'mycelium-shelf-fungus-step'));
   return group;
 }
 
@@ -18124,7 +19744,7 @@ function addHollowMyceliumTree(scene, world, x, baseY, z) {
   for (const [ox, oy, oz, r] of [[0, 0, 0, 12], [-8, -1, 3, 7.2], [8, -0.5, -3, 7.5], [0, -1, -8, 7]]) {
     const lobe = new THREE.Mesh(crownGeometry, crownMaterial);
     lobe.position.set(x + ox, baseY + trunkHeight + oy, z + oz);
-    lobe.scale.setScalar(r);
+    lobe.scale.set(r*1.12,r*.44,r);
     lobe.castShadow = lobe.receiveShadow = true;
     scene.add(lobe);
   }
@@ -18139,7 +19759,7 @@ function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed, trunkRadius 
   const balconyRadius = trunkRadius + (radius - trunkRadius) * 2.25;
   const thickness = 1.45;
   const deck = new THREE.Mesh(
-    new THREE.CylinderGeometry(balconyRadius * 0.94, balconyRadius, thickness, 24, 2),
+    new THREE.CylinderGeometry(balconyRadius * 0.94, balconyRadius * .88, thickness, 32, 3),
     mat(0xffffff, {
       tex: 'canopy-bark', repeat: [Math.max(4, balconyRadius / 2), 2], roughness: 0.98,
     }),
@@ -18173,25 +19793,7 @@ function addMyceliumCanopyDeck(scene, world, x, y, z, radius, seed, trunkRadius 
   // Follow the circular balcony instead of filling its bounding square with
   // an invisible floor. Short tangent cells provide full-width support while
   // keeping the outer edge and the trunk opening faithful to the mesh.
-  const innerSupportRadius = trunkRadius * 0.76;
-  const radialHalf = (balconyRadius - innerSupportRadius) / 2;
-  const midRadius = (balconyRadius + innerSupportRadius) / 2;
-  const segments = 48;
-  const tangentHalf = Math.PI * midRadius / segments * 1.08;
-  for (let i = 0; i < segments; i++) {
-    const angle = i * Math.PI * 2 / segments;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const extentX = Math.abs(cos) * radialHalf + Math.abs(sin) * tangentHalf;
-    const extentZ = Math.abs(sin) * radialHalf + Math.abs(cos) * tangentHalf;
-    const cx = x + cos * midRadius;
-    const cz = z + sin * midRadius;
-    world.colliders.push({
-      type: 'box',
-      min: V(cx - extentX, y - thickness, cz - extentZ),
-      max: V(cx + extentX, y, cz + extentZ),
-    });
-  }
+  world.colliders.push(triangleMeshColliderFromMesh(deck, 'mycelium-grown-balcony', true));
   return { ...deckRoute, thickness };
 }
 
@@ -18487,12 +20089,12 @@ function addDenseMyceliumForest(scene, world, specs) {
         baseY + height + (lobe === 0 ? radius * 0.28 : 0),
         z + Math.sin(angle) * radius * 0.42,
       );
-      scale.setScalar(radius);
-      rotation.setFromEuler(new THREE.Euler(index * 0.13, angle, lobe * 0.19));
+      scale.set(radius*1.14,radius*.43,radius);
+      rotation.setFromEuler(new THREE.Euler(.03*Math.sin(index), angle, .04*Math.cos(lobe)));
       matrix.compose(position, rotation, scale);
       const crownIndex = index * 3 + lobe;
       crowns.setMatrixAt(crownIndex, matrix);
-      crowns.setColorAt(crownIndex, new THREE.Color(colors[(index + lobe) % colors.length]));
+      crowns.setColorAt(crownIndex, new THREE.Color(colors[z < -20 ? 5 : x < 0 ? 1 : 6]));
     }
   });
   trunks.instanceMatrix.needsUpdate = true;
@@ -18642,7 +20244,7 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1, optio
   const crown = new THREE.Group();
   crown.position.set(x, baseY + trunkHeight - 0.5, z);
   const crownColors = MYCELIUM_CROWN_VARIANTS.map((_, index) => myceliumCrownTint(index));
-  const crownMaterials = crownColors.map(color => myceliumCrownMaterial(color));
+  const crownMaterials = [myceliumCrownMaterial(crownColors[z < -20 ? 5 : x < 0 ? 1 : 6])];
   const crownGeometry = myceliumLeafCrownGeometry();
   const crownOffsets = [
     [0, 1.8, 0, 7.2], [-5.2, 0, 1.3, 5.4], [5.1, 0.5, -0.8, 5.6],
@@ -18651,11 +20253,14 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1, optio
   crownOffsets.forEach(([ox, oy, oz, radius], index) => {
     const lobe = new THREE.Mesh(crownGeometry, crownMaterials[index % crownMaterials.length]);
     lobe.position.set(ox, oy, oz);
-    lobe.scale.setScalar(radius);
-    lobe.rotation.set(seed * 0.11 + index, index * 0.47, index * 0.19);
+    lobe.scale.set(radius*1.12,radius*.42,radius);
+    lobe.rotation.set(.02*Math.sin(seed), index*.47, .035*Math.cos(index));
     lobe.castShadow = lobe.receiveShadow = true;
     crown.add(lobe);
   });
+  const leafPieces=[];
+  for(const lobe of crown.children){lobe.updateMatrix();leafPieces.push(lobe.geometry.clone().applyMatrix4(lobe.matrix));}
+  crown.clear();const leaves=new THREE.Mesh(mergeGeometries(leafPieces,false),crownMaterials[0]);leaves.castShadow=leaves.receiveShadow=true;crown.add(leaves);leafPieces.forEach(g=>g.dispose());
   scene.add(crown);
   (world.foliageZones ||= []).push({ x, y: baseY + trunkHeight + 0.5, z, r: 10.5 });
 
@@ -18670,6 +20275,161 @@ function addMyceliumTree(scene, world, x, baseY, z, deckHeights, seed = 1, optio
       crownMaterials[i].emissiveIntensity = 0.13 + Math.sin(t * 0.8 + seed + i) * 0.045;
     }
   });
+}
+
+function addMyceliumEnvironment(scene, world) {
+  const batch = new EnvironmentBatch(scene);
+  const bark = mat(0xa5ae91, {
+    tex: "canopy-bark",
+    repeat: [1, 3],
+    roughness: 1,
+  });
+  const veins = mat(0x4caa95, {
+    emissive: 0x33776a,
+    emissiveIntensity: 0.28,
+    roughness: 1,
+  });
+  const gills = mat(0xa5bea1, {
+    emissive: 0x244d3e,
+    emissiveIntensity: 0.2,
+    roughness: 1,
+  });
+  // Buttressed fungal shelves visibly grow from each elder, with tapering
+  // ribs below the usable crown. Nothing interrupts the broad walking band.
+  for (const d of world.myceliumCanopyDecks || [])
+    for (let i = 0; i < 10; i++) {
+      const a = (i * Math.PI) / 5,
+        dx = Math.cos(a),
+        dz = Math.sin(a);
+      const root = V(d.x + dx * 1.9, d.y - 3, d.z + dz * 1.9);
+      const tip = V(
+        d.x + dx * d.topRadius * 0.95,
+        d.y - 1.3,
+        d.z + dz * d.topRadius * 0.95,
+      );
+      batch.beam(root, tip, 0.18, bark, 6);
+      const veinStart = V(d.x + dx * 2.55, d.y + 0.018, d.z + dz * 2.55);
+      const veinEnd = V(
+        d.x + dx * d.topRadius * 0.88,
+        d.y + 0.018,
+        d.z + dz * d.topRadius * 0.88,
+      );
+      batch.beam(veinStart, veinEnd, 0.025, veins, 4);
+    }
+  for (const m of world.fungalPlatforms || [])
+    for (let i = 0; i < 18; i++) {
+      const a = (i * Math.PI) / 9,
+        dx = Math.cos(a),
+        dz = Math.sin(a);
+      batch.beam(
+        V(m.x + dx * m.radius * 0.27, m.y - 1.48, m.z + dz * m.radius * 0.27),
+        V(m.x + dx * m.radius * 0.92, m.y - 0.56, m.z + dz * m.radius * 0.92),
+        0.045,
+        gills,
+        4,
+      );
+    }
+  // A continuous, irregular rock crown encloses the grove. The lower wall
+  // faces keep their original location for the established fungus climbs.
+  for (const [x, z, w, d] of [
+    [0, -82, 168, 4],
+    [0, 82, 168, 4],
+    [-82, 0, 4, 168],
+    [82, 0, 4, 168],
+  ]) {
+    const g = new THREE.BoxGeometry(
+      w,
+      38,
+      d,
+      Math.ceil(w / 5),
+      6,
+      Math.ceil(d / 5),
+    );
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      let px = p.getX(i) + x,
+        py = p.getY(i) + 17,
+        pz = p.getZ(i) + z;
+      const u = w > d ? px : pz,
+        upper = THREE.MathUtils.smoothstep(py, 18, 36);
+      py += upper * (3 + 2.5 * Math.sin(u * 0.14) + 1.6 * Math.sin(u * 0.31));
+      const retreat = upper * (1.2 + 0.9 * Math.sin(u * 0.21));
+      if (w > d) pz += Math.sign(z) * retreat;
+      else px += Math.sign(x) * retreat;
+      p.setXYZ(i, px, py, pz);
+    }
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(
+      g,
+      mat(0xc7d1ca, {
+        tex: "mycelium-mossy-slab",
+        repeat: [3, 1.5],
+        roughness: 1,
+      }),
+    );
+    mesh.name = "mycelium-sculpted-rock-boundary";
+    mesh.receiveShadow = mesh.castShadow = true;
+    scene.add(mesh);
+    world.colliders.push(triangleMeshColliderFromMesh(mesh, mesh.name, true));
+  }
+  batch.flush("mycelium-grown-shelf-details");
+}
+
+function batchMyceliumShelves(scene, world) {
+  const batch = new EnvironmentBatch(scene),
+    shared = new Map(),
+    groups = [];
+  let before = 0;
+  scene.traverse((o) => {
+    if (o.name === "mycelium-shelf-fungi") groups.push(o);
+  });
+  for (const group of groups) {
+    group.updateMatrixWorld(true);
+    group.traverse((o) => {
+      if (!o.isMesh) return;
+      const source = o.geometry.index
+        ? o.geometry.toNonIndexed()
+        : o.geometry.clone();
+      source.applyMatrix4(o.matrixWorld);
+      const materials = Array.isArray(o.material) ? o.material : [o.material];
+      for (const part of source.groups.length
+        ? source.groups
+        : [
+            {
+              start: 0,
+              count: source.attributes.position.count,
+              materialIndex: 0,
+            },
+          ]) {
+        before++;
+        const material = materials[part.materialIndex],
+          key = [
+            material.color.getHex(),
+            material.emissive?.getHex(),
+            material.roughness,
+            material.map?.uuid,
+          ].join(":");
+        if (!shared.has(key)) shared.set(key, material);
+        const geometry = new THREE.BufferGeometry();
+        for (const [name, a] of Object.entries(source.attributes))
+          geometry.setAttribute(
+            name,
+            new THREE.BufferAttribute(
+              a.array.slice(
+                part.start * a.itemSize,
+                (part.start + part.count) * a.itemSize,
+              ),
+              a.itemSize,
+            ),
+          );
+        batch.add(geometry, shared.get(key));
+      }
+      source.dispose();
+    });
+    scene.remove(group);
+  }
+  batch.flush("mycelium-batched-shelf-fungi");
+  world.fungusBatchStats = { before, batches: shared.size };
 }
 
 function buildMyceliumGrove(scene) {
@@ -18712,15 +20472,6 @@ function buildMyceliumGrove(scene) {
   // not only people walking at ground level. Raise the continuous rock ring
   // above every playable canopy route and bury its foot below the safety bed so
   // there is no ledge or lower seam to slip through.
-  const boundaryWallBottom = -2;
-  const boundaryWallTop = 36;
-  const boundaryWallHeight = boundaryWallTop - boundaryWallBottom;
-  for (const [x, z, w, d] of [[0, -82, 168, 4], [0, 82, 168, 4], [-82, 0, 4, 168], [82, 0, 4, 168]]) {
-    addBox(scene, world, x, boundaryWallBottom + boundaryWallHeight / 2, z,
-      w, boundaryWallHeight, d, 0xc7d1ca, {
-        tex: 'mycelium-mossy-slab', repeat: [3, 1.5], debugName: 'mycelium-perimeter-wall',
-      });
-  }
   // Keep the new art between the north-wall shelf clusters. At this height it
   // reads from the ground and branch routes without blocking either climb.
   for (const x of [-23, 23]) addDecal(scene, 'poster-mycelium', x, 14, -79.94, 10, 0);
@@ -19052,6 +20803,7 @@ function buildMyceliumGrove(scene) {
   addVine(scene, world, -7.5, -47.54, 10.1, 20.15, 0.95, 0, 0.18, 0, -1,
     0.18, 1.35, 0x7fe6bd);
 
+  addMyceliumEnvironment(scene, world);
   addMyceliumGrassTufts(scene, world, 9000);
   addMyceliumLeafLitter(scene, world, 1100);
   addMyceliumPatch(scene, world, 118);
@@ -19066,7 +20818,7 @@ function buildMyceliumGrove(scene) {
   ]) addMyceliumLog(scene, world, x, z, w, d);
 
   world.spawns.blue.push(
-    V(-72, 0.1, 55), V(-72, 0.1, -25), V(-34.2, 7.2, -5), V(-10, 10.2, -66),
+    V(-72, 0.1, 55), V(-72, 2.3, -25), V(-34.2, 7.2, -5), V(-10, 10.2, -66),
   );
   world.spawns.red.push(
     V(72, 0.1, 55), V(72, 0.1, -25), V(34.2, 7.2, -4), V(10, 10.2, -66),
@@ -19074,7 +20826,7 @@ function buildMyceliumGrove(scene) {
   world.spawns.ffa.push(
     ...world.spawns.blue, ...world.spawns.red,
     V(0, 0.1, 63), V(0, 0.1, 18), V(3.1, 8.2, 8), V(3.1, 15.2, 8),
-    V(0, 0.25, -63), V(-52, 7.7, 43),
+    V(-4, 0.25, -66), V(-52, 10.3, 43),
   );
 
   pk(world, 'weapon', -52, 0.2, 35, { weapon: 'scatter' });
@@ -19167,6 +20919,7 @@ function buildMyceliumGrove(scene) {
     [-7.5, 10.1, -56.1, -7.5, 20, -52, true],
   );
 
+  batchMyceliumShelves(scene,world);
   mergeStatic(scene, world);
   return world;
 }
@@ -20088,12 +21841,10 @@ function buildSunkenReef(scene) {
     addReefFrondCluster(scene, world, x, reefSurfaceY(x, z) + 0.05, z,
       62000 + i * 43, 0.35 + growthRnd() * 0.72);
   }
-  world.anim.push((_dt, t) => {
-    for (const growth of world.reefGrowthClusters || []) {
-      growth.root.rotation.x = growth.baseX + Math.sin(t * 0.72 + growth.phase) * growth.sway * 0.55;
-      growth.root.rotation.z = growth.baseZ + Math.sin(t * 0.58 + growth.phase * 1.37) * growth.sway;
-    }
-  });
+  const growthBatch = batchReefGrowth(scene, world.reefGrowthClusters || [], world.anim);
+  world.reefGrowthBatchStats = { plants: growthBatch.plants, batches: growthBatch.batches };
+  world.dispose = growthBatch.dispose;
+  delete world.reefGrowthClusters;
   addReefFishLife(scene, world);
   addReefLargeSeaLife(scene, world, 120);
   addReefBoundarySharks(scene, world, 120);
@@ -20159,6 +21910,10 @@ function buildSunkenReef(scene) {
 }
 
 export const MAPS = [
+  { id: 'orrery', name: 'THE ORRERY', emoji: '⚙️',
+    desc: 'A clockwork observatory in the eye of a storm. Fight through vaulted galleries and a star archive, then ride the turning celestial deck between upper sanctuaries.',
+    thumb: 'linear-gradient(135deg,#0a2536,#427b79 52%,#d2b56e)',
+    build: scene => buildOrrery(scene,{newWorld,mat,addRamp,wp,pk,mergeStatic,triangleMeshColliderFromMesh,aiTex}) },
   { id: 'arena', name: 'BLAST COMPLEX', emoji: '🏟️',
     desc: 'Indoor labyrinth: crate maze, mezzanine, grand atrium with a floating gold platform, sunken basement.',
     thumb: 'linear-gradient(135deg,#c8461e,#d88a2b)', build: buildArena },
@@ -20178,7 +21933,7 @@ export const MAPS = [
     desc: 'A moonlit mushroom forest: bounce across living caps, climb connected tree villages, and break through a waterfall into the glowing cave behind it.',
     thumb: 'linear-gradient(135deg,#071c24,#315f55 48%,#9a55dd)', build: buildMyceliumGrove },
   { id: 'city', name: 'NEON HEIGHTS', emoji: '🌃',
-    desc: 'A Miami-synthwave skyline with two working tower lifts, rooftop sniper routes, a close-range arcade and subway, skybridges, alleys, and a rideable monorail loop.',
+    desc: 'A Miami-synthwave skyline with two working tower lifts, rooftop sniper routes, a close-range arcade and subway, skybridges, alleys, and a figure-eight monorail with three stations linking the rooftop districts.',
     thumb: 'linear-gradient(135deg,#101032,#ff3ca6 48%,#32e7ff)', build: buildCity },
   { id: 'sanctum', name: 'THE LABYRINTH', emoji: '🔮',
     desc: 'A deliberately disorienting rune maze: four deceptively identical wings fold around a crypt lift, upper gallery, roof loops, and concealed shortcuts.',

@@ -2,6 +2,7 @@
 // ellipsoids, exact closed triangle meshes, finite hollow-cylinder shells, and
 // walkable ramps (heightfield strips).
 import * as THREE from 'three';
+import { rayTriangleCandidates } from './triangle-ray-grid.js';
 
 export const rand = (a, b) => a + Math.random() * (b - a);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -203,7 +204,7 @@ export function rayHitsTriangleMesh(origin, direction, collider, maxDist = Infin
   _meshRay.set(origin, direction);
   let bestT = maxDist;
   let bestNormal = null;
-  for (const entry of collider.triangles) {
+  for (const entry of rayTriangleCandidates(collider, origin, direction, maxDist)) {
     const hit = _meshRay.intersectTriangle(
       entry.triangle.a, entry.triangle.b, entry.triangle.c, false, _meshRayPoint,
     );

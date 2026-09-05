@@ -1,0 +1,1 @@
+{"audit":{"map":"orrery","transit":null,"checks":4453,"failures":[],"rayChecks":4410,"candidates":109108,"exhaustive":460800,"candidateReductionPercent":76,"navigationComponents":[178],"blockedSpawns":[]},"stats":{"map":"orrery","calls":14,"triangles":58958,"colliders":246,"issues":0,"meshes":40}}

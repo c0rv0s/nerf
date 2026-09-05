@@ -1,0 +1,264 @@
+{
+  "canopyAfter": {
+    "stats": {
+      "map": "canopy",
+      "calls": 310,
+      "triangles": 448494,
+      "colliders": 166,
+      "issues": 0,
+      "meshes": 330
+    },
+    "audit": {
+      "map": "canopy",
+      "checks": 2045,
+      "failures": [],
+      "rayChecks": 846,
+      "candidates": 34621,
+      "exhaustive": 287640,
+      "candidateReductionPercent": 88,
+      "navigationComponents": [
+        418
+      ],
+      "blockedSpawns": []
+    }
+  },
+  "olympusBefore": {
+    "stats": {
+      "map": "olympus",
+      "calls": 392,
+      "triangles": 45617,
+      "colliders": 457,
+      "issues": 0,
+      "meshes": 383
+    },
+    "audit": {
+      "map": "olympus",
+      "checks": 1958,
+      "rayChecks": 1170,
+      "candidates": 19104,
+      "exhaustive": 79092,
+      "candidateReductionPercent": 76,
+      "navigationComponents": [
+        162
+      ],
+      "blockedSpawns": [
+        [
+          -15,
+          78.6,
+          -52
+        ],
+        [
+          15,
+          78.6,
+          -52
+        ]
+      ],
+      "newDesignChecksNotApplicableToBaseline": [
+        "Aether light court is filled",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court",
+        "Upper manual route crosses the light court"
+      ]
+    }
+  },
+  "olympusAfter": {
+    "stats": {
+      "map": "olympus",
+      "calls": 398,
+      "triangles": 66373,
+      "colliders": 465,
+      "issues": 0,
+      "meshes": 389
+    },
+    "audit": {
+      "map": "olympus",
+      "checks": 2949,
+      "failures": [],
+      "rayChecks": 1386,
+      "candidates": 44438,
+      "exhaustive": 258948,
+      "candidateReductionPercent": 83,
+      "navigationComponents": [
+        167
+      ],
+      "blockedSpawns": []
+    }
+  },
+  "reefAfter": {
+    "stats": {
+      "map": "reef",
+      "calls": 216,
+      "triangles": 81906,
+      "colliders": 231,
+      "issues": 0,
+      "meshes": 250
+    },
+    "audit": {
+      "map": "reef",
+      "checks": 2341,
+      "failures": [],
+      "rayChecks": 2088,
+      "candidates": 31382,
+      "exhaustive": 148176,
+      "candidateReductionPercent": 79,
+      "navigationComponents": [
+        5,
+        3,
+        2,
+        2,
+        2,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "blockedSpawns": [
+        [
+          -13,
+          -30.957689513709994,
+          15
+        ]
+      ]
+    },
+    "growth": {
+      "plants": 220,
+      "batches": 58
+    }
+  },
+  "reefBefore": {
+    "stats": {
+      "map": "reef",
+      "calls": 378,
+      "triangles": 81906,
+      "colliders": 231,
+      "issues": 0,
+      "meshes": 412
+    },
+    "audit": {
+      "map": "reef",
+      "checks": 2503,
+      "failures": [],
+      "rayChecks": 2088,
+      "candidates": 31387,
+      "exhaustive": 148176,
+      "candidateReductionPercent": 79,
+      "navigationComponents": [
+        3,
+        3,
+        2,
+        2,
+        2,
+        2,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "blockedSpawns": [
+        [
+          -13,
+          -30.957689513709994,
+          15
+        ]
+      ]
+    }
+  },
+  "canopyBefore": {
+    "stats": {
+      "map": "canopy",
+      "calls": 285,
+      "triangles": 362502,
+      "colliders": 232,
+      "issues": 0,
+      "meshes": 309
+    },
+    "audit": {
+      "map": "canopy",
+      "checks": 385,
+      "failures": [],
+      "rayChecks": 72,
+      "candidates": 429,
+      "exhaustive": 864,
+      "candidateReductionPercent": 50,
+      "navigationComponents": [
+        284
+      ],
+      "blockedSpawns": []
+    }
+  }
+}

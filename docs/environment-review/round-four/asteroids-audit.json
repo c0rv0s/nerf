@@ -1,0 +1,86 @@
+{
+  "stats": {
+    "map": "asteroids",
+    "calls": 58,
+    "triangles": 27012,
+    "colliders": 51,
+    "issues": 0,
+    "meshes": 60
+  },
+  "geometry": {
+    "map": "asteroids",
+    "transit": null,
+    "checks": 801,
+    "failures": [],
+    "rayChecks": 738,
+    "candidates": 37024,
+    "exhaustive": 170208,
+    "candidateReductionPercent": 78,
+    "navigationComponents": [
+      48
+    ],
+    "blockedSpawns": []
+  },
+  "integration": {
+    "map": "asteroids",
+    "checks": 60,
+    "failures": [],
+    "details": {
+      "walks": [
+        {
+          "route": 0,
+          "reverse": false,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            -1.671678540581907e-16,
+            9,
+            -11.33359999999998
+          ]
+        },
+        {
+          "route": 0,
+          "reverse": true,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            1.6015430168142007e-17,
+            9,
+            0.8335999999999814
+          ]
+        },
+        {
+          "route": 1,
+          "reverse": false,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            0.20240503235016083,
+            14.199999809265137,
+            -8.04639980916997
+          ]
+        },
+        {
+          "route": 1,
+          "reverse": true,
+          "reached": true,
+          "failedTarget": null,
+          "end": [
+            8.499636184279089,
+            9,
+            7.327271624360742
+          ]
+        }
+      ],
+      "spawnFailures": []
+    }
+  },
+  "comparisonStats": {
+    "map": "asteroids",
+    "calls": 60,
+    "triangles": 27240,
+    "colliders": 51,
+    "issues": 0,
+    "meshes": 60
+  }
+}

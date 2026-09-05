@@ -16,6 +16,7 @@ class MultiplayerClient extends EventTarget {
     this.ws = null;
     this.connected = false;
     this.playerId = null;
+    this.pendingShots = [];
     this.slotId = null;
     this.lobbyId = null;
     this.phase = null;
@@ -29,6 +30,8 @@ class MultiplayerClient extends EventTarget {
     this.lastSnapshotSeq = -1;
     this.slots = [];
     this.seq = 0;
+    this.shotSeq = 0;
+    this.pendingShots = [];
     this.name = localStorage.getItem('nerf-mp-name') || '';
     this.resumeToken = this._loadResumeToken();
     this.pendingInput = null;
@@ -128,6 +131,21 @@ class MultiplayerClient extends EventTarget {
     }
   }
 
+  recordShot(weapon, aim, up, life = 0) {
+    const shot = { seq: ++this.shotSeq, weapon, life, sampledAt: this.serverNow(),
+      aim: {x:aim.x,y:aim.y,z:aim.z}, up: {x:up.x,y:up.y,z:up.z} };
+    this.pendingShots.push(shot);
+    // Input congestion has a finite memory budget; obsolete shots will be
+    // acknowledged/rejected by authority rather than played back in a burst.
+    if (this.pendingShots.length > 64) this.pendingShots.shift();
+  }
+
+  acknowledgeShots(ack) {
+    if (!Number.isSafeInteger(ack)) return;
+    this.shotSeq = Math.max(this.shotSeq, ack);
+    this.pendingShots = this.pendingShots.filter(s => s.seq > ack);
+  }
+
   sendInput(player) {
     if (!player || !this.connected || !this.slotId) return false;
     if ((this.ws?.bufferedAmount || 0) > MAX_BUFFERED_STATE_BYTES) {
@@ -146,6 +164,10 @@ class MultiplayerClient extends EventTarget {
       up: player.up ? { x: player.up.x, y: player.up.y, z: player.up.z } : { x: 0, y: 1, z: 0 },
       aim: { x: aim.x, y: aim.y, z: aim.z },
       firing: !!player.firing,
+      warmupRemaining: player.warmupWeapon === player.weapon ? Math.max(0, player.warmupT || 0) : 0,
+      ...(this.lastSnapshot?.shotProtocol === 1 ? {shots: this.pendingShots.slice(0, 32)} : {}),
+      motionEpoch: player._bloomRecursionLevel || 0,
+      life: player.deaths || 0,
       weapon: player.weapon || 'blaster',
       jetpackActive: !!player.jetpack?.active,
       grappleAnchor: player.world?.grappleEnabled && player.grapple && player.grappleAttached && player.grappleAnchor
@@ -169,6 +191,7 @@ class MultiplayerClient extends EventTarget {
   leave() {
     this._clearReconnect();
     this.send({ type: 'leaveLobby' });
+    this.pendingShots = [];
     this.slotId = null;
     this.lobbyId = null;
     this.phase = null;
@@ -271,7 +294,7 @@ class MultiplayerClient extends EventTarget {
       this._renderPhase(msg.votes, msg.modeVotes);
       this.dispatchEvent(new CustomEvent('meta', { detail: msg }));
     } else if (msg.type === 'phaseChanged') {
-      if (msg.phase !== 'playing') this._flushPendingSnapshot();
+      if (msg.phase !== 'playing') { this._flushPendingSnapshot(); this.pendingShots = []; }
       this._acceptAuthority(msg);
       this.phase = msg.phase;
       this.mapId = msg.mapId;

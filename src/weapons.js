@@ -686,7 +686,18 @@ export class ProjectileSystem {
       const boundaryDistance = boundary?.distance ?? Infinity;
       const wallDistance = wall?.t ?? Infinity;
       const distance = Math.min(remaining, boundaryDistance, wallDistance);
-      if (!Number.isFinite(distance) || distance <= 0.001) break;
+      if (!Number.isFinite(distance)) break;
+      // A muzzle can sit exactly on a similarity boundary. Rebase that tiny
+      // segment instead of dropping the beam or letting it escape recursion.
+      if (distance <= 0.001) {
+        if (!boundary || wallDistance <= boundaryDistance || stage >= maxCrossings) break;
+        const nudge=Math.min(.001,remaining-distance);
+        pos.addScaledVector(velocity,distance+nudge).multiplyScalar(boundary.factor);
+        displayScale/=boundary.factor;
+        remaining-=distance+nudge;
+        stage++;
+        continue;
+      }
       const end = pos.clone().addScaledVector(velocity, distance);
       const widthScale = 1 + stage * (weapon.recursionSizeGain || 0);
       const colors = weapon.recursionColors || [weapon.color];

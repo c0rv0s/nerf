@@ -1,0 +1,23 @@
+{
+  "host": {
+    "shots": 1,
+    "guest": [
+      {
+        "ack": 1,
+        "life": 1,
+        "queue": 0
+      }
+    ],
+    "path": "host-real-match"
+  },
+  "guest": {
+    "pending": 0,
+    "ack": 1,
+    "protocol": 1,
+    "path": "client-renderer",
+    "buffer": 0
+  },
+  "hostErrors": [],
+  "guestErrors": [],
+  "artificialGuestInputDelayMs": 125
+}

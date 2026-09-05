@@ -41,6 +41,7 @@ import { MobileControls } from './mobile-controls.js';
 import { isStandaloneApp, setupPwaInstall } from './pwa.js';
 import {
   advanceNetworkTimer, boundedSnapshotLead, coalesceSnapshotEvents,
+  RemoteTimeline, freshInput, SHOT_MAX_AGE_MS, pendingAmmo, mergeShotRequests,
 } from './network-sync.js';
 import {
   createGrappleVisual, disposeGrappleVisual, updateGrappleVisual,
@@ -53,12 +54,7 @@ import { clearDrowningState, DROWNING_GRACE_SECONDS } from './water-movement.js'
 const MATCH_TIME = 5 * 60; // no score limit — most points when time expires wins
 const RESPAWN_TIME = 3;
 const MULTIPLAYER_PODIUM_HOLD_MS = 15000;
-const REMOTE_HUMAN_SNAP_DIST = 8;
-const REMOTE_SLOT_SNAP_DIST = 20;
 const REMOTE_HUMAN_PREDICT_LEAD = 0.055;
-const REMOTE_HUMAN_MAX_PREDICT = 0.18;
-const REMOTE_HUMAN_SMOOTH = 20;
-const REMOTE_SLOT_SMOOTH = 22;
 const MP_SNAPSHOT_HZ = 20;
 const MP_INPUT_HZ = 30;
 const MP_SNAPSHOT_STALL_MS = 2000;
@@ -1964,6 +1960,7 @@ function startMultiplayerHostMatch(
   const playerSlot = multiplayerSlotById();
   const playerTeam = multiplayerTeamForSlot(playerSlot, mode);
   G.multiplayerHost = true;
+  multiplayer.pendingShots = [];
   G.mpSnapshotT = 0;
   G.mpEvents = [];
   G.remoteInputs = new Map();
@@ -2031,7 +2028,9 @@ function applyHostHandoffSnapshot(snap) {
     ch.vel?.set(state.vel?.x || 0, state.vel?.y || 0, state.vel?.z || 0);
     ch.yaw = state.yaw || 0;
     ch.pitch = state.pitch || 0;
-    if (state.up && ch.up) ch.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
+    if (state.up && ch.up) ch.up.set(state.up.x || 0, state.up.y ?? 1, state.up.z || 0).normalize();
+    ch.shotAck = state.shotAck || 0;
+    ch._bloomRecursionLevel = state.motionEpoch || 0;
     ch.hp = state.hp;
     ch.alive = state.alive !== false;
     ch.score = state.score || 0;
@@ -2103,6 +2102,7 @@ function ensureHostRemoteHuman(slot) {
   remote.team = team;
   remote.name = slot.name || 'Player';
   remote.color = color;
+  remote.shotAck = slot.shotAck || 0;
   remote.score = slot.score || 0;
   remote.kills = slot.kills || 0;
   remote.deaths = slot.deaths || 0;
@@ -2160,11 +2160,10 @@ function addReplacementBot() {
 function makeRemoteNet(pos) {
   return {
     targetPos: pos.clone(),
-    predictedPos: pos.clone(),
+    presentation: new RemoteTimeline(),
     velocity: new THREE.Vector3(),
     lastInputPos: pos.clone(),
     lastInputAt: performance.now(),
-    sampleAge: REMOTE_HUMAN_PREDICT_LEAD,
     lastSeq: null,
   };
 }
@@ -2180,39 +2179,27 @@ function updateRemoteHumanMotion(ch, input, dt) {
   if (!input?.pos) return;
   const now = performance.now();
   const net = ch.remoteNet ||= makeRemoteNet(ch.pos);
-  const receivedAt = input.receivedAt || now;
-  const freshPacket = input.seq !== net.lastSeq;
-  if (freshPacket) {
+  const receivedAt = input.receivedAt ?? now;
+  if (input.seq !== net.lastSeq) {
     const rawPos = new THREE.Vector3(input.pos.x, input.pos.y, input.pos.z);
-    if (input.vel) {
-      net.velocity.set(input.vel.x || 0, input.vel.y || 0, input.vel.z || 0);
-    } else {
-      const sampleDt = Math.max(0.001, (receivedAt - net.lastInputAt) / 1000);
-      net.velocity.copy(rawPos).sub(net.lastInputPos).multiplyScalar(1 / sampleDt);
-    }
-    if (net.velocity.lengthSq() > 120 * 120) net.velocity.setLength(120);
+    ch._bloomRecursionLevel = input.motionEpoch || 0;
+    if (input.vel) net.velocity.set(input.vel.x || 0, input.vel.y || 0, input.vel.z || 0);
+    else net.velocity.copy(rawPos).sub(net.lastInputPos).multiplyScalar(1 / Math.max(.001,(receivedAt-net.lastInputAt)/1000));
+    if (net.velocity.lengthSq() > 120*120) net.velocity.setLength(120);
     net.targetPos.copy(rawPos);
     net.lastInputPos.copy(rawPos);
     net.lastInputAt = receivedAt;
-    net.sampleAge = multiplayer.estimateServerSampleAge(
-      input.sampledAt,
-      REMOTE_HUMAN_MAX_PREDICT,
-      REMOTE_HUMAN_PREDICT_LEAD,
-    );
     net.lastSeq = input.seq;
-    if (ch.pos.distanceToSquared(rawPos) > REMOTE_HUMAN_SNAP_DIST * REMOTE_HUMAN_SNAP_DIST) {
-      ch.pos.copy(rawPos);
-    }
+    const age = multiplayer.estimateServerSampleAge(input.sampledAt,2,REMOTE_HUMAN_PREDICT_LEAD);
+    net.presentation.push({time:now/1000-age,received:receivedAt/1000,
+      pos:{...input.pos},yaw:input.yaw || 0,
+      aim:{...(input.aim || {x:0,y:0,z:-1})},up:{...(input.up || {x:0,y:1,z:0})},
+      alive:ch.alive,epoch:`${ch.deaths || 0}:${input.motionEpoch || 0}`});
   }
-
-  const lead = Math.min(REMOTE_HUMAN_MAX_PREDICT,
-    Math.max(0, (now - net.lastInputAt) / 1000) + net.sampleAge);
-  net.predictedPos.copy(net.targetPos).addScaledVector(net.velocity, lead);
-  if (ch.pos.distanceToSquared(net.predictedPos) > REMOTE_HUMAN_SNAP_DIST * REMOTE_HUMAN_SNAP_DIST) {
-    ch.pos.copy(net.targetPos);
-  } else {
-    ch.pos.lerp(net.predictedPos, 1 - Math.exp(-REMOTE_HUMAN_SMOOTH * dt));
-  }
+  // Guest movement is already simulated and canonicalized by that client.
+  // Hit tests use the latest accepted position. Only the mesh is interpolated,
+  // so prediction cannot invent a wall crossing or undo a recursive seam.
+  ch.pos.copy(net.targetPos);
   ch.vel.copy(net.velocity);
 }
 
@@ -2220,13 +2207,23 @@ function updateRemoteHuman(ch, dt, fire) {
   const input = G.remoteInputs?.get(ch.id);
   if (!input || !ch.alive) return;
   if (input.alive === false) return;
+  if (Array.isArray(input.shots) && input.life !== (ch.deaths || 0)) {
+    // A late packet from the previous life cannot move the new spawn or fire.
+    ch.shotAck = Math.max(ch.shotAck || 0, ...input.shots.map(s=>s.seq));
+    ch._shotQueue = [];
+    return;
+  }
   updateRemoteHumanMotion(ch, input, dt);
   const turnA = 1 - Math.exp(-24 * dt);
   ch.yaw = smoothNetworkAngle(ch.yaw || 0, input.yaw || 0, turnA);
   ch.pitch += ((input.pitch || 0) - (ch.pitch || 0)) * turnA;
+  if (input.aim) {
+    ch.aim ||= new THREE.Vector3();
+    ch.aim.set(input.aim.x ?? 0,input.aim.y ?? 0,input.aim.z ?? -1).normalize();
+  }
   if (input.up) {
     ch.up ||= new THREE.Vector3(0, 1, 0);
-    ch.up.set(input.up.x || 0, input.up.y || 1, input.up.z || 0).normalize();
+    ch.up.set(input.up.x || 0, input.up.y ?? 1, input.up.z || 0).normalize();
   }
   setRemoteGrappleState(ch, input.grappleAnchor);
   if (ch.jetpack) ch.jetpack.active = !!input.jetpackActive;
@@ -2235,17 +2232,48 @@ function updateRemoteHuman(ch, dt, fire) {
     ch.weapon = input.weapon;
   }
   ch.cooldown = Math.max(0, ch.cooldown - dt);
+  const commands = Array.isArray(input.shots);
+  let shotRequest = null;
+  if (commands) {
+    ch._shotQueue = mergeShotRequests(ch._shotQueue, input.shots, ch.shotAck || 0);
+    while (ch._shotQueue.length) {
+      const request = ch._shotQueue[0];
+      const expired = multiplayer.serverNow() - request.sampledAt > SHOT_MAX_AGE_MS;
+      const validLife = request.life === (ch.deaths || 0);
+      const loaded = request.weapon === 'blaster' || (ch.weapons[request.weapon] && ch.ammo[request.weapon] > 0);
+      if (expired || !validLife || !loaded || !WEAPONS[request.weapon]) {
+        ch.shotAck = request.seq; ch._shotQueue.shift(); continue;
+      }
+      if (ch.cooldown > 0) break;
+      shotRequest = ch._shotQueue.shift(); ch.shotAck = shotRequest.seq;
+      ch.weapon = shotRequest.weapon; break;
+    }
+  }
   const w = WEAPONS[ch.weapon] || WEAPONS.blaster;
-  if (ch.weaponTriggerReady(dt, input.firing)) {
+  // Held state still animates warmup, but sequenced clients fire exactly once
+  // per accepted request. Older clients retain a bounded held-input fallback.
+  const fresh = freshInput(input, performance.now());
+  let triggerReady = false;
+  if (commands) {
+    const remaining = w.warmup && fresh && input.firing && !shotRequest
+      ? Math.max(0, Math.min(w.warmup, input.warmupRemaining || 0) -
+        multiplayer.estimateServerSampleAge(input.sampledAt, 1, 0)) : 0;
+    if (remaining > 0) {
+      ch.warmupWeapon = ch.weapon; ch.warmupT = remaining;
+      ch.warmupAudioStop ||= startWhomperWarmup(ch.pos, remaining, 1-remaining/w.warmup);
+    } else ch.cancelWeaponWarmup();
+  } else triggerReady = ch.weaponTriggerReady(dt, fresh && input.firing);
+  if (commands ? !!shotRequest : triggerReady) {
     const cp = Math.cos(ch.pitch || 0);
-    const dir = input.aim
-      ? new THREE.Vector3(input.aim.x || 0, input.aim.y || 0, input.aim.z || -1).normalize()
+    const aim = shotRequest?.aim || input.aim;
+    const dir = aim
+      ? new THREE.Vector3(aim.x ?? 0, aim.y ?? 0, aim.z ?? -1).normalize()
       : new THREE.Vector3(
         -Math.sin(ch.yaw || 0) * cp,
         Math.sin(ch.pitch || 0),
         -Math.cos(ch.yaw || 0) * cp,
       ).normalize();
-    const up = ch.up || new THREE.Vector3(0, 1, 0);
+    const up = shotRequest?.up ? new THREE.Vector3(shotRequest.up.x,shotRequest.up.y,shotRequest.up.z) : (ch.up || new THREE.Vector3(0, 1, 0));
     const visualScale = G.world.characterVisualScale?.(ch) || 1;
     const origin = ch.pos.clone()
       .addScaledVector(up, (G.world.mounted ? 2.5 + HORSE_HEIGHT_DELTA : 1.55) * visualScale)
@@ -2255,6 +2283,7 @@ function updateRemoteHuman(ch, dt, fire) {
     origin.addScaledVector(right, side * 0.22 * visualScale);
     fire(ch, origin, dir, ch.weapon || 'blaster');
     ch.finishWeaponShot(w, 0);
+    if (commands && w.warmup) ch.cooldown = w.warmup;
     if (ch.weapon !== 'blaster' && ch.ammo[ch.weapon] <= 0) {
       ch.weapon = nextLoadedWeaponAfter(ch.weapon, ch.weapons, ch.ammo);
       ch.cancelWeaponWarmup();
@@ -2264,8 +2293,10 @@ function updateRemoteHuman(ch, dt, fire) {
     ch.syncGunModel?.();
     ch.syncWeaponWarmupVisual?.();
     syncJetpackVisual(ch, dt);
-    ch.mesh.position.copy(ch.pos);
-    ch.mesh.rotation.y = ch.yaw || 0;
+    const presentation = ch.remoteNet?.presentation.sample(performance.now()/1000);
+    if (presentation) ch.mesh.position.set(presentation.pos.x,presentation.pos.y,presentation.pos.z);
+    else ch.mesh.position.copy(ch.pos);
+    orientRemoteMesh(ch, presentation);
     if (ch.horseVisual) {
       const horizontalSpeed = Math.hypot(ch.vel.x, ch.vel.z);
       if (horizontalSpeed > 0.08) ch.horseHeading = Math.atan2(ch.vel.x, ch.vel.z);
@@ -2418,6 +2449,7 @@ function ensureRemoteSlot(state) {
     snapshotReceivedAt: 0,
     snapshotAge: 0,
     hasSnapshot: false,
+    timeline: new RemoteTimeline(),
     up: new THREE.Vector3(0, 1, 0),
     mesh: group,
     jetpackVisual: jetpack,
@@ -2487,6 +2519,8 @@ function applyMultiplayerSnapshot(snap) {
       G.player.kills = state.kills || 0;
       G.player.deaths = state.deaths || 0;
       G.player.awards = state.awards || G.player.awards || {};
+      multiplayer.acknowledgeShots(state.shotAck);
+      if (!state.alive) multiplayer.pendingShots = [];
       applyMultiplayerLoadout(state);
       const hadDualBlaster = G.player.dualBlaster;
       G.player.dualBlaster = state.dualBlaster === true;
@@ -2549,7 +2583,7 @@ function applyMultiplayerSnapshot(snap) {
     remote.grapple = state.grapple === true;
     syncRemoteSlotGun(remote);
     remote.targetYaw = state.yaw || 0;
-    if (state.up) remote.up.set(state.up.x || 0, state.up.y || 1, state.up.z || 0).normalize();
+    if (state.up) remote.up.set(state.up.x || 0, state.up.y ?? 1, state.up.z || 0).normalize();
     setRemoteGrappleState(remote, state.grappleAnchor);
     setNameTag(remote, remote.name, remote.color);
     remote.snapshotPos.set(state.pos.x, state.pos.y, state.pos.z);
@@ -2558,6 +2592,13 @@ function applyMultiplayerSnapshot(snap) {
       state.alive ? (state.vel?.y || 0) : 0,
       state.alive ? (state.vel?.z || 0) : 0,
     );
+    remote.timeline.push({
+      time: snapshotReceivedAt/1000 - multiplayer.estimateServerSampleAge(snap.sampledAt,2,snapshotAge),
+      received: snapshotReceivedAt/1000, pos: {...state.pos},
+      yaw: state.yaw || 0, up: {...(state.up || {x:0,y:1,z:0})},
+      aim: {...(state.aim || {x:-Math.sin(state.yaw||0),y:0,z:-Math.cos(state.yaw||0)})},
+      alive: state.alive, epoch: `${state.deaths || 0}:${state.motionEpoch || 0}`,
+    });
     remote.snapshotReceivedAt = snapshotReceivedAt;
     remote.snapshotAge = snapshotAge;
     remote.targetPos.copy(remote.snapshotPos).addScaledVector(
@@ -2669,14 +2710,14 @@ function applyMultiplayerLoadout(state) {
     }
   }
   G.player.weapons = authoritativeWeapons;
-  G.player.ammo = authoritativeAmmo;
+  G.player.ammo = pendingAmmo(authoritativeAmmo, multiplayer.pendingShots, state.shotAck || 0);
 
   const authoritativeWeapon = WEAPONS[state.weapon] && authoritativeWeapons[state.weapon] &&
-      (state.weapon === 'blaster' || authoritativeAmmo[state.weapon] > 0)
+      (state.weapon === 'blaster' || G.player.ammo[state.weapon] > 0)
     ? state.weapon
     : 'blaster';
   const currentIsAuthoritative = authoritativeWeapons[G.player.weapon] &&
-    (G.player.weapon === 'blaster' || authoritativeAmmo[G.player.weapon] > 0);
+    (G.player.weapon === 'blaster' || G.player.ammo[G.player.weapon] > 0);
   if (!currentIsAuthoritative) {
     G.player.cancelWeaponWarmup?.();
     G.player.weapon = authoritativeWeapon;
@@ -2807,26 +2848,36 @@ function recordMultiplayerShot(owner, origin, dir, weaponId) {
   });
 }
 
+function orientRemoteMesh(ch, pose = null) {
+  const frame = ch._networkFrame ||= {up:new THREE.Vector3(),forward:new THREE.Vector3(),heading:new THREE.Vector3(),right:new THREE.Vector3(),matrix:new THREE.Matrix4()};
+  const up = pose ? frame.up.set(pose.up.x,pose.up.y,pose.up.z).normalize() : (ch.up || frame.up.set(0,1,0));
+  const forward = pose ? frame.forward.set(pose.aim.x,pose.aim.y,pose.aim.z)
+    : ch.aim || frame.forward.set(-Math.sin(ch.yaw||0),0,-Math.cos(ch.yaw||0));
+  const heading = frame.heading.copy(forward).addScaledVector(up,-forward.dot(up));
+  if (heading.lengthSq() < 1e-8) heading.set(0,0,-1).addScaledVector(up,up.z);
+  if (heading.lengthSq() < 1e-8) heading.set(1,0,0);
+  heading.normalize(); // Avatar front is local +Z.
+  const right = frame.right.crossVectors(up,heading).normalize();
+  const matrix = frame.matrix.makeBasis(right,up,heading);
+  ch.mesh.quaternion.setFromRotationMatrix(matrix);
+}
+
 function updateRemoteSlots(dt) {
   if (!G?.remoteSlots) return;
   const now = performance.now();
-  const a = 1 - Math.exp(-REMOTE_SLOT_SMOOTH * dt);
-  const turnA = 1 - Math.exp(-24 * dt);
   for (const remote of G.remoteSlots.values()) {
     const beforeX = remote.pos.x;
     const beforeZ = remote.pos.z;
-    const elapsed = remote.snapshotReceivedAt
-      ? Math.max(0, (now - remote.snapshotReceivedAt) / 1000)
-      : 0;
-    remote.targetPos.copy(remote.snapshotPos).addScaledVector(
-      remote.snapshotVel,
-      boundedSnapshotLead(remote.snapshotAge, elapsed, remote.alive),
-    );
-    if (remote.pos.distanceToSquared(remote.targetPos) > REMOTE_SLOT_SNAP_DIST ** 2) remote.pos.copy(remote.targetPos);
-    else remote.pos.lerp(remote.targetPos, a);
-    remote.yaw = smoothNetworkAngle(remote.yaw || 0, remote.targetYaw || 0, turnA);
+    const pose = remote.timeline?.sample(now/1000);
+    if (pose) {
+      remote.pos.set(pose.pos.x,pose.pos.y,pose.pos.z);
+      remote.yaw = pose.yaw;
+      remote.up.set(pose.up.x,pose.up.y,pose.up.z).normalize();
+      remote.aim ||= new THREE.Vector3();
+      remote.aim.set(pose.aim.x,pose.aim.y,pose.aim.z).normalize();
+    }
     remote.mesh.position.copy(remote.pos);
-    remote.mesh.rotation.y = remote.yaw || 0;
+    orientRemoteMesh(remote);
     if (remote.horseVisual) {
       const dx = remote.pos.x - beforeX;
       const dz = remote.pos.z - beforeZ;
@@ -3258,6 +3309,9 @@ function respawnCharacter(ch, initial = false) {
   }
   if (ch.remoteHuman) {
     ch.remoteNet = makeRemoteNet(ch.pos);
+    const last = G.remoteInputs?.get(ch.id);
+    ch.shotAck = Math.max(ch.shotAck || 0, ...(ch._shotQueue || []).map(s=>s.seq), ...(last?.shots || []).map(s=>s.seq));
+    ch._shotQueue = [];
     G.remoteInputs?.delete(ch.id);
   }
   if (ch.isPlayer && !initial) hud.showRespawn(false);
@@ -6390,7 +6444,7 @@ function step(dt) {
       if (moveHook) previousCharacterPos.copy(ch.pos);
       if (ch.remoteHuman) updateRemoteHuman(ch, dt, fire);
       else ch.update(dt, G.characters, fire);
-      if (moveHook) moveHook(ch, previousCharacterPos);
+      if (moveHook && !(ch.remoteHuman && G.world.recursiveVisual)) moveHook(ch, previousCharacterPos);
     }
   }
   updateMyceliumToadEffects(dt);
@@ -6520,12 +6574,19 @@ function serializeCharacter(ch, i) {
   const ammo = Object.fromEntries(weapons
     .filter(id => id !== 'blaster')
     .map(id => [id, Math.max(0, Math.floor(Number(ch.ammo?.[id]) || 0))]));
+  const aim = ch.isPlayer ? ch.camera.getWorldDirection(new THREE.Vector3())
+    : ch.remoteHuman && ch.aim ? ch.aim
+    : ch.mesh ? new THREE.Vector3(0,0,1).applyQuaternion(ch.mesh.quaternion)
+    : new THREE.Vector3(0,0,-1);
   return {
     id: ch.id || (ch.isPlayer ? multiplayer.slotId : `bot-${i}`),
     name: ch.isPlayer ? (multiplayer.name || ch.name || 'YOU') : ch.name,
     human: !!(ch.isPlayer || ch.remoteHuman),
     team: ch.team || ch.id || `bot-${i}`,
     color: ch.color || '#ffffff',
+    shotAck: ch.shotAck || 0,
+    motionEpoch: ch._bloomRecursionLevel || 0,
+    aim: {x:aim.x,y:aim.y,z:aim.z},
     pos: { x: ch.pos.x, y: ch.pos.y, z: ch.pos.z },
     vel: ch.vel ? { x: ch.vel.x, y: ch.vel.y, z: ch.vel.z } : { x: 0, y: 0, z: 0 },
     yaw: ch.yaw ?? ch.aimYaw ?? 0,
@@ -6594,6 +6655,7 @@ function sendHostSnapshot(dt) {
   const players = G.characters.map((ch, i) => serializeCharacter(ch, i));
   const events = G.mpEvents?.slice(0, 32) || [];
   const sent = multiplayer.sendHostSnapshot({
+    shotProtocol: 1,
     players,
     worldTime: G.world?._t || 0,
     scores: G.scores,
@@ -6615,7 +6677,10 @@ function stepMultiplayer(dt) {
   updateImpactPickupPops(dt);
   G.world.updateDoors?.(G.characters, dt);
   updateStormAudio();
-  const fire = (owner, origin, dir, weaponId) => G.projectiles.fire(owner, origin, dir, weaponId);
+  const fire = (owner, origin, dir, weaponId) => {
+    if (multiplayer.lastSnapshot?.shotProtocol === 1) multiplayer.recordShot(weaponId, dir, owner.up, owner.deaths || 0);
+    G.projectiles.fire(owner, origin, dir, weaponId);
+  };
   const moveHook = G.world.postCharacterMove;
   if (moveHook) previousCharacterPos.copy(G.player.pos);
   G.player.update(dt, fire);
