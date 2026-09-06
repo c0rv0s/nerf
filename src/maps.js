@@ -11692,12 +11692,12 @@ export function buildAtrium(scene) {
   addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
   addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
 
-  // Gate bays. The long side walls hold the eight arenas; the axial gates are
-  // reserved for the Hall of Fame ahead and multiplayer behind the spawn.
+  // Gate bays. The long side walls hold the eight arenas. Keep the Hall of
+  // Fame frontage clear, with the Orrery beside multiplayer on the rear wall.
   world.portals = [];
   const bays = [
     ['hall', 'HALL OF FAME', 0xffd45a, 'n', 0, 'hall'],
-    ['orrery', 'THE ORRERY', 0xc3e3c1, 'n', 22, 'map'],
+    ['orrery', 'THE ORRERY', 0xc3e3c1, 's', 22, 'map'],
     ['fortress', 'FORTRESS FALLS', 0x9a6fe0, 'w', 36, 'map'],
     ['oldwest', 'RED ROCK RANGE', 0xd46a32, 'w', 12, 'map'],
     ['sanctum', 'THE LABYRINTH', 0x8a5fff, 'w', -12, 'map'],
@@ -11760,7 +11760,7 @@ export function buildAtrium(scene) {
   world.setModeSign = makeSign(scene, 11, 3.6, 36.8, 9, '#30e0ff', 'MODE: FREE FOR ALL', 0, true);
 
   addDecal(scene, 'poster1', -24, 6, -47.94, 8, 0);
-  // The north-east wall bay now holds the Orrery gate.
+  addDecal(scene, 'target', 27, 6, -47.94, 8, 0);
   // Mount the north-wall glow strips above the poster line, close to the wall,
   // so they frame the Hall of Fame without washing across either poster.
   for (const [x, z, c] of [[-19, -47.78, 0xff40a0], [19, -47.78, 0x30e0ff]]) {

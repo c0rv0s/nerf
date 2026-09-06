@@ -1,6 +1,6 @@
 # The Orrery
 
-A playable clockwork observatory suspended inside a storm. Enter THE ORRERY through the north Atrium gate, or select it in multiplayer voting. The local map studio is at http://localhost:3000/tools/map-studio.html?map=orrery.
+A playable clockwork observatory suspended inside a storm. Enter THE ORRERY through the rear Atrium gate beside Multiplayer, or select it in multiplayer voting. The local map studio is at http://localhost:3000/tools/map-studio.html?map=orrery.
 
 The lower cloister and four bridges stay connected. Curved stairs lead to the pavilion roofs; two sanctuary stairs reach the central gallery. A rotating ring and opposed bridges connect the upper galleries, pause for six seconds, and turn ninety degrees over twelve seconds. Grounded riders move with the deck; jumping releases them. The bridge indicators show the boarding windows. Rotation uses the shared world clock for multiplayer.
 

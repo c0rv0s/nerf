@@ -82,10 +82,13 @@ function prism(outline, holes, y, depth) {
   const shape = new THREE.Shape(
     outline.map(([x, z]) => new THREE.Vector2(x, -z)),
   );
-  for (const points of holes)
-    shape.holes.push(
-      new THREE.Path(points.map(([x, z]) => new THREE.Vector2(x, -z))),
-    );
+  for (const points of holes) {
+    const contour = points.map(([x, z]) => new THREE.Vector2(x, -z));
+    // Hole walls must face into the opening. ExtrudeGeometry does not fix
+    // hole winding when the outer contour is already clockwise.
+    if (THREE.ShapeUtils.isClockWise(contour)) contour.reverse();
+    shape.holes.push(new THREE.Path(contour));
+  }
   const g = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: false,
@@ -342,12 +345,12 @@ export function buildOrrery(scene, kit) {
     [-8, 9],
     [-12, 9],
   ];
-  solid(prism(octagon, [upperHole], 10, 0.8), floor, "orrery-upper-gallery");
+  solid(prism(octagon, [upperHole], 10, 1.2), floor, "orrery-upper-gallery");
   // Four axial thresholds continue out of the octagonal gallery to the moving deck.
   for (let k = 0; k < 4; k++) {
     const a = (k * Math.PI) / 2,
-      p = polar(18, a, 9.6);
-    box(p.x, p.y, p.z, 4, 0.8, 6, brass, true, -a);
+      p = polar(18, a, 9.4);
+    box(p.x, p.y, p.z, 4, 1.2, 6, brass, true, -a);
     const bridgeCenter = polar(29.5, a, -0.65);
     box(
       bridgeCenter.x,
@@ -588,8 +591,10 @@ export function buildOrrery(scene, kit) {
         const angle = a + 0.94 - t * 0.64,
           y = t * 10;
         return {
-          left: polar(47.5, angle, y).toArray(),
-          right: polar(53.5, angle, y).toArray(),
+          // This sweep runs clockwise, opposite the annular floors. Reverse
+          // its edges so the closed slab faces outward instead of inside out.
+          left: polar(53.5, angle, y).toArray(),
+          right: polar(47.5, angle, y).toArray(),
         };
       },
       40,
@@ -636,7 +641,9 @@ export function buildOrrery(scene, kit) {
     // Structural counterweights and ribs continue far below the occupied deck.
     for (const da of [-0.21, 0.21]) {
       const p = polar(55, a + da, -8);
-      cylinder(p.x, -15, p.z, 2, 15, dark, 1.1);
+      // Bury the cap inside the two-unit floor slab. Ending at y=0 makes
+      // all eight dark caps coplanar with the visible cloister floor.
+      cylinder(p.x, -15, p.z, 2, 14, dark, 1.1);
       const g = new THREE.ConeGeometry(3.4, 8, 8);
       g.translate(p.x, -19, p.z);
       batch.add(g, brass);

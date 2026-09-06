@@ -3,6 +3,61 @@ import { Player } from "../src/player.js";
 import { pointHitsWorld, moveCharacter } from "../src/engine.js";
 import { orreryPose } from "../src/orrery-motion.js";
 const V = (...p) => new THREE.Vector3(...p);
+export function auditOrreryGallerySlab(scene) {
+  scene.updateMatrixWorld(true);
+  const probes = [
+    // Opening walls, including both notches beside the ramp landings.
+    [[0, 9.4, 0], [1, 0, 0], 12],
+    [[0, 9.4, 0], [-1, 0, 0], 12],
+    [[0, 9.4, 0], [0, 0, -1], 10],
+    [[0, 9.4, 0], [0, 0, 1], 10],
+    [[10, 9.4, 8], [0, 0, 1], 1],
+    [[-10, 9.4, 8], [0, 0, 1], 1],
+    [[7, 9.4, 9.5], [1, 0, 0], 1],
+    [[-7, 9.4, 9.5], [-1, 0, 0], 1],
+    // Upper and lower faces, and the outside edge of the 1.2-unit slab.
+    [[13, 10.5, 0], [0, -1, 0], 0.5],
+    [[13, 8.3, 0], [0, 1, 0], 0.5],
+    [[17, 9.4, 5], [-1, 0, 0], 1],
+  ];
+  const failures = [];
+  for (const [origin, direction, distance] of probes) {
+    const ray = new THREE.Raycaster(V(...origin), V(...direction), 0, distance + 0.05);
+    const hit = ray.intersectObjects(scene.children, true)
+      .find(h => h.object.material.color?.getHex() === 0x687f7a);
+    if (!hit || Math.abs(hit.distance - distance) > 0.01)
+      failures.push({ origin, direction, expected: distance, actual: hit?.distance });
+  }
+  return { checks: probes.length, failures, passed: failures.length === 0 };
+}
+// Collision is double-sided, so traversal alone cannot catch inside-out slabs.
+// Probe the rendered stone from above and below with normal backface culling.
+export function auditOrreryStairFaces(scene) {
+  scene.updateMatrixWorld(true);
+  const failures = [];
+  let checks = 0;
+  for (let k = 0; k < 4; k++) {
+    for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+      const angle = k * Math.PI / 2 + 0.94 - t * 0.64;
+      for (const radius of [48, 50.5, 53]) {
+        for (const underside of [false, true]) {
+          const y = t * 10 - (underside ? 0.5 : 0);
+          const direction = underside ? 1 : -1;
+          const ray = new THREE.Raycaster(
+            V(radius * Math.cos(angle), y - direction * 0.2, radius * Math.sin(angle)),
+            V(0, direction, 0), 0, 0.4,
+          );
+          const hits = ray.intersectObjects(scene.children, true);
+          const stone = hits.find(h => h.object.material.color?.getHex() === 0xc5cabe);
+          checks++;
+          if (!stone || Math.abs(stone.point.y - y) > 0.025)
+            failures.push({ stair: k, t, radius, underside });
+        }
+      }
+    }
+  }
+  return { checks, failures, passed: failures.length === 0 };
+}
 function actor(world) {
   const p = Object.create(Player.prototype);
   Object.assign(p, {
