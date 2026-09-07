@@ -329,14 +329,13 @@ export class Player {
       this.detachGrapple();
       return false;
     }
+    if (this.vrActive && !this.xrGrappleAim) return false;
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
     const origin = this.camera.position.clone();
-    if (this.xrAim) {
-      direction.copy(this.xrAim.dir);
-      origin.copy(this.pos).addScaledVector(this.up,
-        this.eyeHeight * (this.world.characterVisualScale?.(this) || 1));
-      origin.add(new THREE.Vector3(this.xrAim.muzzle.x, this.xrAim.muzzle.y, this.xrAim.muzzle.z));
+    if (this.xrGrappleAim) {
+      direction.copy(this.xrGrappleAim.dir);
+      origin.copy(this.xrGrappleAim.origin);
     }
     const hit = findGrappleAnchor(this.world, origin, direction);
     if (!hit) return false;
@@ -357,10 +356,8 @@ export class Player {
   _syncGrappleVisual() {
     if (!this.grappleVisual) return;
     const start = new THREE.Vector3();
-    if (this.xrAim) {
-      start.copy(this.pos).addScaledVector(this.up,
-        this.eyeHeight * (this.world.characterVisualScale?.(this) || 1));
-      start.add(new THREE.Vector3(this.xrAim.muzzle.x, this.xrAim.muzzle.y, this.xrAim.muzzle.z));
+    if (this.xrGrappleAim) {
+      start.copy(this.pos).add(this.xrGrappleAim.offset);
     } else if (this.grappleMuzzle) this.grappleMuzzle.getWorldPosition(start);
     else start.copy(this.camera.position);
     updateGrappleVisual(

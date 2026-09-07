@@ -825,6 +825,17 @@ let G = null; // current match state (or the lobby)
 const vr = new VRControls({
   renderer,
   getGame: () => G,
+  getAwards: () => hud.activeAwards(),
+  isPaused: () => !!G && (vr.active ? vr.paused || G.paused :
+    !mapLoadInProgress && (G.paused || mobilePauseOpen || (!usesMobileControls() && document.pointerLockElement !== canvas))),
+  onPause: paused => {
+    if (G) {
+      G.paused = !!G.mpConnectionPaused || (paused && !G.over && !(G.multiplayer || G.multiplayerHost));
+      G.lastT = performance.now();
+    }
+    setStyle(clickcatch, 'display', 'none');
+  },
+  onAtrium: () => quitBtn.click(),
   canEnter: () => !mapLoadInProgress && !openingMultiplayer &&
     !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
   onEnter: () => {
@@ -5035,6 +5046,7 @@ function enterFullscreen() {
 
 document.addEventListener('keydown', (e) => {
   if (!G) return;
+  if (vr.active && e.code === 'Escape') { e.preventDefault(); vr.setPaused(!vr.paused); return; }
   if (multiplayer.isChatOpen()) return;
   if (e.code === 'KeyT' && multiplayer.openChat()) {
     e.preventDefault();
@@ -5324,6 +5336,7 @@ multiplayer.addEventListener('disconnect', () => {
 
 /* ---------------- main loop ---------------- */
 function tick(_presentationTime, xrFrame) {
+  vr.syncButton();
   if (!G || (renderer.xr.isPresenting && !xrFrame)) return;
   // XR timestamps predict display time. Simulation and the host fallback must
   // share the same monotonic wall clock, including after loading/session changes.
@@ -5331,6 +5344,7 @@ function tick(_presentationTime, xrFrame) {
   mobileControls.sync();
   vr.beforeFrame(xrFrame, renderPass.scene, mapLoadInProgress || !mapLoadingScreen?.hidden || openingMultiplayer ||
     !!(multiplayer.overlay && !multiplayer.overlay.hidden) || multiplayer.isChatOpen());
+  if (!G) return; // A headset menu action may have returned to the Atrium.
   if (mapLoadInProgress || !mapLoadingScreen?.hidden) {
     if (vr.active) vr.render(renderPass.scene);
     G.lastT = now;
@@ -6791,6 +6805,8 @@ function stepMultiplayer(dt) {
 // Debug handles: inspect state / fast-forward the sim headlessly
 if (Object.isExtensible(window)) {
 window.__game = () => G;
+window.__vr = () => ({ active: vr.active, paused: vr.paused, rig: vr.rig, camera: vr.camera,
+  ui: vr.ui, grappleGun: vr.grappleGun, podium: vr.podium, award: (...args) => hud.award(...args) });
 window.__mp = () => ({
   isHost: multiplayer.isHost,
   shouldHost: multiplayer.shouldHost(),

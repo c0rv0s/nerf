@@ -46,18 +46,24 @@ VR support. A failed session request shows the browser's error beside the button
 | Right trigger | Fire the tracked blaster |
 | A | Jump; hold for swimming or jetpack thrust |
 | X | Next available weapon |
-| Right grip | Toggle grapple when equipped |
+| Left trigger | Toggle the independently aimed left-hand grapple when equipped |
 | Left grip | Gallop on mounted maps |
 | Y | Recenter seated/standing position |
-| B | Exit VR to use desktop menus |
+| B | Pause / resume; opens the headset menu |
 
 After entering VR, changing maps, or regaining headset tracking, release the
 sticks and trigger before moving again. This prevents held input from carrying
 you straight into another gate.
 
-Health, shield, weapon, ammo and round status appear inside the headset. Walk
+Health, shield, weapon, ammo, awards, and round status appear inside the headset.
+Low health and low ammo turn red; health has the same orange/gold bar as desktop.
+B pauses solo play and opens a headset scoreboard with Resume, Back to Atrium,
+and Exit VR buttons. Point the right controller and pull its trigger, or use
+right-stick up/down and A. Online matches continue while your menu is open.
+The results panel appears beside the visible podium at the end of a round.
+The desktop VR setup/entry/exit button only appears while paused. Walk
 through an Atrium gate to enter an arena. Multiplayer lobby, voting, settings,
-and name-entry menus still use the desktop; press B to use them, then re-enter.
+and name-entry menus still use the desktop; select Exit VR from the B menu to use them, then re-enter.
 VR uses a dedicated low-detail profile at 80% headset render scale, without
 dynamic shadows or desktop resolution changes during a session. Desktop quality
 is restored on exit. VR uses direct stereo rendering without the desktop bloom compositor, camera

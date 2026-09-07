@@ -36,6 +36,7 @@ const CORE_ASSETS = [
   './src/pickups.js',
   './src/player.js',
   './src/vr.js',
+  './src/vr-ui.js',
   './src/vr-input.js',
   './src/pwa.js',
   './src/secret-maps.js',

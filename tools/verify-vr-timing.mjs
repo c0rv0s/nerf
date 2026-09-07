@@ -27,7 +27,9 @@ if(process.env.REPRO_OLD==='1') await page.route('**/src/main.js*',async route=>
 });
 await page.goto(new URL('?quality=high', process.env.NERF_TEST_URL || 'http://localhost:3000').href,{waitUntil:'domcontentloaded'});
 await page.waitForFunction(()=>window.__game?.()?.player&&document.getElementById('maploading').hidden,{timeout:120000});
-await page.evaluate(()=>document.querySelector('#vr-entry button').click());
+await page.evaluate(()=>document.exitPointerLock?.());
+await page.waitForFunction(()=>getComputedStyle(document.querySelector('#vr-entry')).display!=='none');
+await page.locator('#vr-entry button').click();
 await page.waitForFunction(()=>__game().player.vrActive,{timeout:15000});
 await page.waitForTimeout(200);
 const atriumTiming=await page.evaluate(async()=>{
@@ -58,6 +60,8 @@ await page.evaluate(()=>xrDevice.controllers.left.updateAxes('thumbstick',0,-1))
 assert.equal(await page.evaluate(()=>__game().player.moveInput.forward),1);
 console.log('held-stick map interlock passed');
 await page.evaluate(()=>xrDevice.controllers.right.updateButtonValue('b-button',1));
+await page.waitForFunction(()=>__vr().paused,{timeout:15000});
+await page.evaluate(()=>document.querySelector('#vr-entry button').click());
 await page.waitForFunction(()=>!__game().player.vrActive,{timeout:15000});
 assert.deepEqual(errors,[]);console.log('desktop restored',await page.evaluate(()=>({pixelRatio:__perf().pixelRatio,shadows:__perf().shadows,paused:__game().paused})));console.log('PASS');
 }finally{await browser.close();}

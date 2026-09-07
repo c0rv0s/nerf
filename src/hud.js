@@ -17,6 +17,8 @@ export class HUD {
       eliminationDetail: byId('eliminationdetail'),
       board: byId('scoreboard'),
     };
+    this.awardEvents = [];
+    this.awardSequence = 0;
     this.msgTimer = 0;
     this.hitTimer = 0;
     this.vigTimer = 0;
@@ -218,6 +220,9 @@ export class HUD {
   }
 
   award(text, sub = '', color = '#ffd23c') {
+    this.awardEvents = this.activeAwards();
+    this.awardEvents.push({id: ++this.awardSequence, text, sub, color, expiresAt: performance.now() + 2600});
+    this.awardEvents = this.awardEvents.slice(-4);
     const div = document.createElement('div');
     div.className = 'awardtoast';
     div.style.borderColor = color;
@@ -236,7 +241,12 @@ export class HUD {
     setTimeout(() => div.remove(), 2600);
   }
 
+  activeAwards() {
+    return this.awardEvents.filter(event => event.expiresAt > performance.now());
+  }
+
   clearAwards() {
+    this.awardEvents = [];
     this.els.awards.textContent = '';
   }
 

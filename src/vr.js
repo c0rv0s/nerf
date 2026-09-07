@@ -1,12 +1,14 @@
 import * as THREE from 'three';
+import { VRUI } from './vr-ui.js';
 import { buildBlaster, WEAPONS, updateWeaponWarmupVisual } from './weapons.js';
 import { vrStick, readVRButtons, snapTurn, boundedVRMuzzle, vrControlsNeutral } from './vr-input.js';
 
 // The simulation camera stays independent: headset poses never feed recoil or
 // death-camera animation back into the user's physical head orientation.
 export class VRControls {
-  constructor({ renderer, getGame, onEnter, onExit, canEnter }) {
-    Object.assign(this, { renderer, getGame, onEnter, onExit, canEnter });
+  constructor({ renderer, getGame, onEnter, onExit, canEnter, onPause, onAtrium, getAwards, isPaused }) {
+    Object.assign(this, { renderer, getGame, onEnter, onExit, canEnter, onPause, onAtrium, getAwards, isPaused });
+    this.paused = false;
     this.rig = new THREE.Group();
     this.camera = new THREE.PerspectiveCamera(75, 1, 0.1, 900);
     this.rig.add(this.camera);
@@ -31,23 +33,16 @@ export class VRControls {
     this.gun.position.set(0, -0.025, -0.12);
     this.gun.scale.setScalar(0.42);
     this.models = {};
-    this.hudCanvas = document.createElement('canvas');
-    this.hudCanvas.width = 1024;
-    this.hudCanvas.height = 256;
-    this.hudContext = this.hudCanvas.getContext('2d');
-    this.hudTexture = new THREE.CanvasTexture(this.hudCanvas);
-    this.hudTexture.colorSpace = THREE.SRGBColorSpace;
-    this.hud = new THREE.Mesh(new THREE.PlaneGeometry(1.25, 0.3125), new THREE.MeshBasicMaterial({
-      map: this.hudTexture, transparent: true, depthTest: false, depthWrite: false,
-    }));
-    this.hud.position.set(0, -0.48, -1.65);
-    this.hud.renderOrder = 10000;
-    this.camera.add(this.hud);
+    this.grappleGun = new THREE.Group();
+    this.grappleGun.position.set(0, -0.025, -0.12);
+    this.grappleGun.scale.setScalar(0.42);
+    this.ui = new VRUI(this.camera);
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local-floor');
     renderer.xr.setFramebufferScaleFactor(0.8);
     renderer.xr.addEventListener('sessionstart', () => {
       this.player = null;
+      this.paused = false;
       this.previous = {};
       this.turnLatched = false;
       this.onEnter();
@@ -56,7 +51,9 @@ export class VRControls {
     renderer.xr.addEventListener('sessionend', () => {
       this.releasePlayer();
       this.rig.removeFromParent();
+      this.paused = false;
       this.onExit();
+      this.syncButton();
       this.button.textContent = 'ENTER VR';
     });
     this.createButton();
@@ -70,6 +67,7 @@ export class VRControls {
     document.head.appendChild(style);
     const root = document.createElement('div');
     root.id = 'vr-entry';
+    root.style.display = 'none';
     this.root = root;
     this.status = document.createElement('div');
     this.status.id = 'vr-status';
@@ -81,7 +79,7 @@ export class VRControls {
     document.body.appendChild(root);
     this.button.addEventListener('click', async () => {
       if (this.active) { await this.exit(); return; }
-      if (!this.supported) return;
+      if (!this.supported || !this.isPaused()) return;
       if (!this.getGame() || !this.canEnter()) {
         this.status.textContent = 'Enter the lobby or an arena and close any menus, then select ENTER VR.';
         return;
@@ -128,11 +126,37 @@ export class VRControls {
     this.player.wantJump = false;
     this.player.jumpBuffer = 0;
     this.player.xrAim = null;
+    this.player.xrGrappleAim = null;
     this.player.vrActive = false;
     this.player.camera.visible = true;
     this.player.cancelWeaponWarmup?.();
     this.player.detachGrapple?.();
+    this.grappleGun.removeFromParent();
+    this.grappleGun.clear();
+    this.grappleMuzzle = null;
+    this.podium = null;
+    this.ui.resultsAnchor.removeFromParent();
     this.player = null;
+  }
+
+  syncButton() {
+    this.root.style.display = this.isPaused() ? 'flex' : 'none';
+  }
+
+  setPaused(value) {
+    this.paused = !!value;
+    this.needsNeutral = true;
+    const player = this.getGame()?.player;
+    if (player) {
+      player.firing = false;
+      player.setMoveInput(0, 0);
+      player.keys = {};
+      player.wantJump = false;
+      player.cancelWeaponWarmup?.();
+      player.detachGrapple?.();
+    }
+    this.onPause(this.paused);
+    this.syncButton();
   }
 
   async exit() {
@@ -144,8 +168,12 @@ export class VRControls {
     this.rig.rotation.set(0, this.heading, 0);
     const scale = player.world.characterVisualScale?.(player) || 1;
     this.rig.position.copy(this.center).applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.heading).negate();
-    this.rig.position.add(player.pos);
-    this.rig.position.y += player.eyeHeight * scale;
+    if (this.podium) {
+      this.rig.position.add(this.podium.anchor || new THREE.Vector3()).add(new THREE.Vector3(0,4.15,11.5));
+    } else {
+      this.rig.position.add(player.pos);
+      this.rig.position.y += player.eyeHeight * scale;
+    }
     this.rig.updateMatrixWorld(true);
   }
 
@@ -161,6 +189,8 @@ export class VRControls {
       player.setMoveInput(0, 0);
       player.firing = false;
       player.xrAim = null;
+      player.xrGrappleAim = null;
+      player.detachGrapple?.();
       player.keys.Space = false;
       player.keys.ShiftLeft = false;
       player.cancelWeaponWarmup?.();
@@ -174,6 +204,7 @@ export class VRControls {
     if (this.player !== player) {
       this.releasePlayer();
       this.player = player;
+      this.paused = false;
       this.heading = player.yaw - headYaw;
       this.center.copy(this.head);
       this.previous = {};
@@ -189,20 +220,30 @@ export class VRControls {
     const left = this.controllers.find(c => c.userData.source?.handedness === 'left');
     const rb = readVRButtons(right?.userData.source?.gamepad);
     const lb = readVRButtons(left?.userData.source?.gamepad);
-    if (rb.secondary && !this.previous.exit) this.exit();
+    if (rb.secondary && !this.previous.pause) this.setPaused(!this.paused);
     if (lb.secondary && !this.previous.center) this.center.copy(this.head);
     const stick = vrStick(left?.userData.source?.gamepad);
     const rightStick = vrStick(right?.userData.source?.gamepad);
     if (blocked) this.needsNeutral = true;
-    if (!blocked && vrControlsNeutral(stick, rightStick, rb)) this.needsNeutral = false;
-    const turn = snapTurn(this.needsNeutral ? 0 : rightStick.x, this.turnLatched);
+    if (!blocked && !this.paused && !lb.fire && vrControlsNeutral(stick, rightStick, rb)) this.needsNeutral = false;
+    const turn = snapTurn(this.needsNeutral || this.paused || game.over ? 0 : rightStick.x, this.turnLatched);
     this.turnLatched = turn.latched;
     this.heading += turn.radians;
+    const podium = game.over ? game.scene?.userData?.end : null;
+    if (podium && this.podium !== podium) {
+      this.podium = podium;
+      this.center.copy(this.head);
+      const view = (podium.anchor || new THREE.Vector3()).clone().add(new THREE.Vector3(0,4.15,11.5));
+      const target = podium.lookAt || podium.anchor || new THREE.Vector3();
+      this.heading = Math.atan2(view.x-target.x,view.z-target.z) - headYaw;
+      this.ui.anchorResults(this.rig, this.center, headYaw);
+    }
     this.syncRig(player);
+    this.renderer.xr.updateCamera(this.camera);
     player.yaw = this.heading + headYaw;
     player.pitch = Math.asin(THREE.MathUtils.clamp(headForward.y, -1, 1));
     player.frameFwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-    const enabled = !this.needsNeutral && !blocked && !game.paused && !game.over && player.alive;
+    const enabled = !this.needsNeutral && !this.paused && !blocked && !game.paused && !game.over && player.alive;
     player.setMoveInput(enabled ? stick.x : 0, enabled ? -stick.y : 0);
     player.keys.Space = enabled && rb.jump;
     player.keys.ShiftLeft = enabled && lb.grip;
@@ -219,8 +260,26 @@ export class VRControls {
       eye.y += player.eyeHeight * (player.world.characterVisualScale?.(player) || 1);
       player.xrAim = { dir: this.direction.clone(), muzzle: boundedVRMuzzle(origin.sub(eye)) };
     }
-    if (enabled && rb.grip && !this.previous.grapple) player.toggleGrapple();
-    this.gun.visible = !!right?.visible && player.alive;
+    player.xrGrappleAim = null;
+    if (left?.visible && player.grapple && player.grappleLauncher && !game.over) {
+      if (!this.grappleMuzzle) {
+        const model = player.grappleLauncher.clone(true);
+        this.grappleGun.add(model);
+        this.grappleMuzzle = model.getObjectByName('canopy-grapple-muzzle');
+      }
+      if (this.grappleGun.parent !== left) left.add(this.grappleGun);
+      this.grappleGun.updateWorldMatrix(true,true);
+      const muzzleOrigin = this.grappleMuzzle.getWorldPosition(new THREE.Vector3());
+      player.xrGrappleAim = {
+        offset: muzzleOrigin.clone().sub(player.pos),
+        dir: new THREE.Vector3(0,0,-1).transformDirection(left.matrixWorld),
+        origin: muzzleOrigin,
+      };
+    }
+    this.grappleGun.visible = !!player.xrGrappleAim && !this.paused && player.alive;
+    if (!player.xrGrappleAim) player.detachGrapple?.();
+    if (enabled && player.xrGrappleAim && lb.fire && !this.previous.grapple) player.toggleGrapple();
+    this.gun.visible = !!right?.visible && player.alive && !this.paused && !game.over;
     this.gun.position.z = -0.12 + player.recoil * 0.025;
     this.gun.rotation.x = player.recoil * 0.05;
     if (!this.models[player.weapon]) {
@@ -231,34 +290,19 @@ export class VRControls {
     updateWeaponWarmupVisual(this.models.whomper,
       player.warmupWeapon === 'whomper' ? 1 - player.warmupT / WEAPONS.whomper.warmup : -1,
       performance.now() / 1000);
-    this.previous = { jump: rb.jump, weapon: lb.jump, grapple: rb.grip, exit: rb.secondary, center: lb.secondary };
-    this.drawHUD(game, blocked);
-  }
-
-  drawHUD(game, blocked) {
-    const player = game.player;
-    const ammo = player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] || 0;
-    const state = this.needsNeutral && !blocked ? 'Release the sticks and trigger to continue' : blocked ? 'MENU OPEN · B: return to desktop' : game.over ? 'ROUND OVER · B: return to menus' : !player.alive ? 'TAGGED · waiting to respawn' : game.paused ? 'PAUSED · B: return to desktop' : game.atrium ? 'Walk through a gate to choose an arena' : `${Math.ceil(game.timeLeft || 0)}s remaining`;
-    const label = `${Math.ceil(player.hp)} HP   ${Math.ceil(player.shield)} SHIELD   ${WEAPONS[player.weapon]?.name || player.weapon}   ${ammo}`;
-    const key = label + state;
-    if (key === this.hudKey) return;
-    this.hudKey = key;
-    const ctx = this.hudContext;
-    ctx.clearRect(0, 0, 1024, 256);
-    ctx.fillStyle = 'rgba(8,18,30,.82)';
-    ctx.fillRect(0, 0, 1024, 256);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 34px Arial';
-    ctx.fillText(label, 512, 58, 980);
-    ctx.fillStyle = '#83eeff';
-    ctx.font = '28px Arial';
-    ctx.fillText(state, 512, 111, 980);
-    ctx.fillStyle = '#dddddd';
-    ctx.font = '24px Arial';
-    ctx.fillText('L stick: move · R stick: turn · Trigger: fire · A: jump', 512, 164);
-    ctx.fillText('X: weapon · Y: recenter · R grip: grapple · B: exit VR', 512, 211);
-    this.hudTexture.needsUpdate = true;
+    this.ui.update(game, { paused: this.paused, blocked, needsNeutral: this.needsNeutral, awards: this.getAwards() });
+    const action = this.ui.interact(right, {
+      trigger: rb.fire && !this.previous.fire,
+      confirm: rb.jump && !this.previous.jump,
+      axis: rightStick.y,
+    });
+    this.previous = { jump: rb.jump, fire: rb.fire, weapon: lb.jump, grapple: lb.fire, pause: rb.secondary, center: lb.secondary };
+    if (action === 'resume') this.setPaused(false);
+    if (action === 'exit') this.exit();
+    if (action === 'atrium') {
+      this.setPaused(false);
+      this.onAtrium();
+    }
   }
 
   render(scene) {

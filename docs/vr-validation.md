@@ -35,3 +35,15 @@ simulation updates for 120 XR callbacks. The fixed path advanced 1.998 simulated
 seconds in 2.001 real seconds, with 120 updates for 120 XR callbacks.
 These are emulation regression measurements; Rift frame rate and comfort still
 require a hardware playtest.
+
+## Headset controls and UI
+
+With the same temporary dependencies and server, run `tools/verify-vr-ui.mjs`
+instead of the timing script. It checks pause-only visibility of the desktop
+VR button, B pause/resume without ending the session, paused solo-match time,
+right-controller ray selection, left-hand grapple aiming and attachment while
+firing the right-hand gun, award appearance/expiry, podium placement and scores,
+and returning to the Atrium before explicitly exiting VR from the menu.
+It writes HUD, awards, results, and stereo screenshots under `/tmp/nerf-vr-*`.
+The results panel is anchored beside the podium so turning toward it reveals
+the whole panel; B also brings the menu into the center of the view.
