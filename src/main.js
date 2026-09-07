@@ -603,6 +603,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 function resize() {
+  if (renderer.xr.isPresenting) return;
   renderer.setSize(innerWidth, innerHeight, false);
   composer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
@@ -662,6 +663,7 @@ function finishInGameAutoGraphicsTest() {
 }
 
 function presentationTier() {
+  if (renderer.xr.isPresenting) return 'low';
   const preset = GRAPHICS_PRESETS[graphicsMode];
   if (preset) return preset.tier;
   if (adaptiveRender.scale < 0.76) return 'low';
@@ -676,6 +678,11 @@ function syncWorldVisualQuality() {
 }
 
 function applyAdaptiveRenderScale() {
+  if (renderer.xr.isPresenting) {
+    syncWorldVisualQuality();
+    syncRenderQuality();
+    return;
+  }
   const preset = GRAPHICS_PRESETS[graphicsMode];
   const ratioCap = preset?.pixelRatioCap ?? performanceProfile.pixelRatioCap * adaptiveRender.scale;
   const ratio = Math.min(devicePixelRatio, ratioCap);
@@ -781,12 +788,17 @@ function updateAdaptiveRenderScale(frameMs, workMs) {
 }
 
 function usesLightRenderPath() {
+  if (renderer.xr.isPresenting) return true;
   const preset = GRAPHICS_PRESETS[graphicsMode];
   if (preset) return !preset.postprocessing;
   return presentationTier() === 'low';
 }
 
 function syncRenderQuality() {
+  if (renderer.xr.isPresenting) {
+    renderer.shadowMap.enabled = false;
+    return;
+  }
   const preset = GRAPHICS_PRESETS[graphicsMode];
   const tier = presentationTier();
   const presetShadows = preset?.shadows ?? tier !== 'low';
@@ -816,13 +828,18 @@ const vr = new VRControls({
   canEnter: () => !mapLoadInProgress && !openingMultiplayer &&
     !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
   onEnter: () => {
+    perfTelemetry.frameMs.length = perfTelemetry.workMs.length = 0;
     document.exitPointerLock?.();
     mobileControls.reset();
+    syncWorldVisualQuality();
+    syncRenderQuality();
     if (G) { G.paused = !!G.mpConnectionPaused; G.lastT = performance.now(); }
     setStyle(clickcatch, 'display', 'none');
     updatePauseMenuExtras(false);
   },
   onExit: () => {
+    perfTelemetry.frameMs.length = perfTelemetry.workMs.length = 0;
+    applyAdaptiveRenderScale();
     if (G) {
       G.paused = !!G.mpConnectionPaused || !(G.multiplayer || G.multiplayerHost);
       G.lastT = performance.now();
@@ -831,7 +848,14 @@ const vr = new VRControls({
     updatePauseMenuExtras(!!G && !G.atrium);
   },
 });
-function startGameLoop() { renderer.setAnimationLoop(tick); }
+// In Three r160, calling setAnimationLoop again starts the page loop even
+// during XR. Register once; Three switches clocks on session start/end.
+let gameLoopStarted = false;
+function startGameLoop() {
+  if (gameLoopStarted) return;
+  gameLoopStarted = true;
+  renderer.setAnimationLoop(tick);
+}
 let mapLoadInProgress = false;
 let sharedFxPool = null;
 let selectedMode = 'ffa';
@@ -5299,8 +5323,11 @@ multiplayer.addEventListener('disconnect', () => {
 });
 
 /* ---------------- main loop ---------------- */
-function tick(now, xrFrame) {
-  if (!G) return;
+function tick(_presentationTime, xrFrame) {
+  if (!G || (renderer.xr.isPresenting && !xrFrame)) return;
+  // XR timestamps predict display time. Simulation and the host fallback must
+  // share the same monotonic wall clock, including after loading/session changes.
+  const now = performance.now();
   mobileControls.sync();
   vr.beforeFrame(xrFrame, renderPass.scene, mapLoadInProgress || !mapLoadingScreen?.hidden || openingMultiplayer ||
     !!(multiplayer.overlay && !multiplayer.overlay.hidden) || multiplayer.isChatOpen());
@@ -5335,9 +5362,9 @@ function tick(now, xrFrame) {
   updateHallucinationFx(dt);
   renderFrame();
   const workMs = performance.now() - workStartedAt;
-  if (!vr.active && !G.paused && !G.over) {
+  if (!G.paused && !G.over) {
     recordPerformanceSample(frameMs, workMs);
-    updateAdaptiveRenderScale(frameMs, workMs);
+    if (!vr.active) updateAdaptiveRenderScale(frameMs, workMs);
   }
   if (G.pendingHall) {
     startHallOfFame();
@@ -6808,6 +6835,8 @@ window.__perf = () => {
     ? perfTelemetry.frameMs.reduce((sum, value) => sum + value, 0) / perfTelemetry.frameMs.length
     : null;
   return {
+    vr: renderer.xr.isPresenting,
+    shadows: renderer.shadowMap.enabled,
     targetFps: TARGET_FPS,
     hardFloorFps: FPS_FLOOR,
     sampledFps: averageFrameMs ? +(1000 / averageFrameMs).toFixed(1) : null,

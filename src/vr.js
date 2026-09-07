@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildBlaster, WEAPONS, updateWeaponWarmupVisual } from './weapons.js';
-import { vrStick, readVRButtons, snapTurn, boundedVRMuzzle } from './vr-input.js';
+import { vrStick, readVRButtons, snapTurn, boundedVRMuzzle, vrControlsNeutral } from './vr-input.js';
 
 // The simulation camera stays independent: headset poses never feed recoil or
 // death-camera animation back into the user's physical head orientation.
@@ -45,6 +45,7 @@ export class VRControls {
     this.camera.add(this.hud);
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local-floor');
+    renderer.xr.setFramebufferScaleFactor(0.8);
     renderer.xr.addEventListener('sessionstart', () => {
       this.player = null;
       this.previous = {};
@@ -163,6 +164,7 @@ export class VRControls {
       player.keys.Space = false;
       player.keys.ShiftLeft = false;
       player.cancelWeaponWarmup?.();
+      this.needsNeutral = true;
       return;
     }
     this.head.copy(pose.transform.position);
@@ -176,6 +178,8 @@ export class VRControls {
       this.center.copy(this.head);
       this.previous = {};
       this.turnLatched = false;
+      this.needsNeutral = true;
+      player.vel.set(0, 0, 0);
       player.keys = {};
     }
     if (this.rig.parent !== scene) scene.add(this.rig);
@@ -187,15 +191,18 @@ export class VRControls {
     const lb = readVRButtons(left?.userData.source?.gamepad);
     if (rb.secondary && !this.previous.exit) this.exit();
     if (lb.secondary && !this.previous.center) this.center.copy(this.head);
-    const turn = snapTurn(vrStick(right?.userData.source?.gamepad).x, this.turnLatched);
+    const stick = vrStick(left?.userData.source?.gamepad);
+    const rightStick = vrStick(right?.userData.source?.gamepad);
+    if (blocked) this.needsNeutral = true;
+    if (!blocked && vrControlsNeutral(stick, rightStick, rb)) this.needsNeutral = false;
+    const turn = snapTurn(this.needsNeutral ? 0 : rightStick.x, this.turnLatched);
     this.turnLatched = turn.latched;
     this.heading += turn.radians;
     this.syncRig(player);
     player.yaw = this.heading + headYaw;
     player.pitch = Math.asin(THREE.MathUtils.clamp(headForward.y, -1, 1));
     player.frameFwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-    const enabled = !blocked && !game.paused && !game.over && player.alive;
-    const stick = vrStick(left?.userData.source?.gamepad);
+    const enabled = !this.needsNeutral && !blocked && !game.paused && !game.over && player.alive;
     player.setMoveInput(enabled ? stick.x : 0, enabled ? -stick.y : 0);
     player.keys.Space = enabled && rb.jump;
     player.keys.ShiftLeft = enabled && lb.grip;
@@ -231,7 +238,7 @@ export class VRControls {
   drawHUD(game, blocked) {
     const player = game.player;
     const ammo = player.weapon === 'blaster' ? '∞' : player.ammo[player.weapon] || 0;
-    const state = blocked ? 'MENU OPEN · B: return to desktop' : game.over ? 'ROUND OVER · B: return to menus' : !player.alive ? 'TAGGED · waiting to respawn' : game.paused ? 'PAUSED · B: return to desktop' : game.atrium ? 'Walk through a gate to choose an arena' : `${Math.ceil(game.timeLeft || 0)}s remaining`;
+    const state = this.needsNeutral && !blocked ? 'Release the sticks and trigger to continue' : blocked ? 'MENU OPEN · B: return to desktop' : game.over ? 'ROUND OVER · B: return to menus' : !player.alive ? 'TAGGED · waiting to respawn' : game.paused ? 'PAUSED · B: return to desktop' : game.atrium ? 'Walk through a gate to choose an arena' : `${Math.ceil(game.timeLeft || 0)}s remaining`;
     const label = `${Math.ceil(player.hp)} HP   ${Math.ceil(player.shield)} SHIELD   ${WEAPONS[player.weapon]?.name || player.weapon}   ${ammo}`;
     const key = label + state;
     if (key === this.hudKey) return;

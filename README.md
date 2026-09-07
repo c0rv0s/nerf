@@ -51,10 +51,16 @@ VR support. A failed session request shows the browser's error beside the button
 | Y | Recenter seated/standing position |
 | B | Exit VR to use desktop menus |
 
+After entering VR, changing maps, or regaining headset tracking, release the
+sticks and trigger before moving again. This prevents held input from carrying
+you straight into another gate.
+
 Health, shield, weapon, ammo and round status appear inside the headset. Walk
 through an Atrium gate to enter an arena. Multiplayer lobby, voting, settings,
 and name-entry menus still use the desktop; press B to use them, then re-enter.
-VR uses direct stereo rendering without the desktop bloom compositor, camera
+VR uses a dedicated low-detail profile at 80% headset render scale, without
+dynamic shadows or desktop resolution changes during a session. Desktop quality
+is restored on exit. VR uses direct stereo rendering without the desktop bloom compositor, camera
 shake, recoil rotation or animated death camera. Existing physics still apply,
 including jumping, vehicles and unusual gravity maps. Start with a normal arena.
 This is seated/standing controller locomotion: physical leaning moves the view,
@@ -65,6 +71,7 @@ Multiplayer keeps the existing shot protocol and includes an optional bounded
 controller muzzle offset. Older hosts can still receive shots but use their
 normal muzzle position. Controller poses are not yet shown on remote avatars.
 Hardware tracking, frame rate and comfort require a real Rift playtest.
+See [VR regression checks](docs/vr-validation.md) for the reproducible timing test.
 
 ## Hall of Fame database
 

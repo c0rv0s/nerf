@@ -24,3 +24,8 @@ export function boundedVRMuzzle(value) {
   const scale = Math.min(1, 1.5 / (Math.hypot(value.x, value.y, value.z) || 1));
   return { x: value.x * scale, y: value.y * scale, z: value.z * scale };
 }
+
+export function vrControlsNeutral(stick, turn, buttons) {
+  return stick.x === 0 && stick.y === 0 && turn.x === 0 && turn.y === 0 &&
+    !buttons.fire && !buttons.jump && !buttons.grip;
+}

@@ -34,3 +34,12 @@ test('multiplayer VR muzzle rejects malformed input and bounds physical reach', 
   const clamped = boundedVRMuzzle({x:30,y:40,z:0});
   assert.ok(Math.abs(Math.hypot(clamped.x,clamped.y,clamped.z)-1.5)<1e-10);
 });
+
+test('map transition interlock requires centered sticks and released trigger', async () => {
+  const { vrControlsNeutral } = await import('../src/vr-input.js');
+  const zero = {x:0,y:0};
+  assert.equal(vrControlsNeutral(zero,zero,{}),true);
+  assert.equal(vrControlsNeutral({x:0,y:-0.3},zero,{}),false);
+  assert.equal(vrControlsNeutral(zero,{x:1,y:0},{}),false);
+  assert.equal(vrControlsNeutral(zero,zero,{fire:true}),false);
+});
