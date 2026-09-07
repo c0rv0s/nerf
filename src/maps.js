@@ -17,13 +17,14 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rand, pointInZoneXZ, pointHitsWorld, triangleMeshSurfaceY, sphereHitsTriangleMesh } from './engine.js';
 import { advanceNetworkClock } from './network-sync.js';
 import { shuffledToadPersonalities } from './toad-effects.js';
+import { artGeometry, artMaterial, artMesh, fishSwimMaterial, addUnderstoryArt, addAmbientCritter } from './map-art.js';
 import { buildBlueWhale } from './blue-whale.js';
 import { buildTidebreakerShark } from './tidebreaker-shark.js';
 import { addTidebreakerWhaleBehavior } from './tidebreaker-whale-behavior.js';
 import { EnvironmentBatch, asteroidBodyGeometry, livingLimbGeometry, roundedDeckGeometry, ribbonSolid, timberSpan, livingTrunkGeometry, canopyBankSection, canopyRiverOffset, batchReefGrowth, olympusMountainGeometry, martianHorizonGeometry } from './environment-design.js';
 import { bloomScale, bloomCrossing, bloomRayBoundary } from './bloom-seams.js';
 import { buildOrrery } from './orrery-map.js';
-import { createTransitSchedule } from './neon-transit.js';
+import { createTransitSchedule, NEON_TRANSIT_CONTROLS, NEON_TRANSIT_STATIONS } from './neon-transit.js';
 import { RED_ROCK_RANGE_BOUNDS } from './map-rules.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -6973,6 +6974,7 @@ function buildCanopy(scene) {
     }
   }
   addCanopyVillageStructure(scene, world);
+  addUnderstoryArt(scene,world,'canopy');
   for(const z of [0,22,40,60,72])wp(world,70,0,z);
   mergeStatic(scene, world);
   return world;
@@ -7078,7 +7080,7 @@ function addCityPresentation(scene, world) {
   };
   for (const palm of [
     // Rooftops: bases exactly match their supporting roof heights.
-    [70, 10, 26, 0.85, 0.07], [-73, 16, 26, 0.8, -0.06], [39, 28, -30, 0.9, 0.08],
+    [70, 10, 26, 0.85, 0.07], [-73, 16, 26, 0.8, -0.06], [42, 28, -29, 0.9, 0.08],
     // Ground-level sidewalk rhythm, kept outside primary firing lanes.
     [-73, 0, -10, 0.9, -0.05], [-73, 0, 12, 1.0, 0.06], [-73, 0, 51, 0.82, -0.04],
     [73, 0, -13, 0.88, 0.05], [73, 0, 14, 0.96, -0.06], [73, 0, 55, 0.84, 0.04],
@@ -7101,29 +7103,10 @@ function addCityPresentation(scene, world) {
   world.setVisualQuality('high');
 }
 
-// Three parallel platforms form the transfer level. The high diagonal crosses
-// above Central, so the figure eight never intersects itself or leaves the city.
+// Central is the sole street station. The other two stops sit on the landmark
+// roofs; the high diagonal passes above Central on the return through the city.
 function addNeonTransit(scene, world) {
-  const controls = [
-    [0, 10, 0],
-    [-26, 10, 0],
-    [-53, 10, 0],
-    [-74, 10, 0],
-    [-76, 21, 16],
-    [-70, 32, 30],
-    [-57, 39, 51],
-    [-35, 43, 54],
-    [-16, 43, 32],
-    [0, 42, 0],
-    [16, 39, -32],
-    [35, 35, -54],
-    [60, 33, -52],
-    [72, 27, -32],
-    [76, 21, -16],
-    [74, 10, 0],
-    [53, 10, 0],
-    [26, 10, 0],
-  ];
+  const controls = NEON_TRANSIT_CONTROLS;
   const curve = new THREE.CatmullRomCurve3(
     controls.map((p) => V(...p)),
     true,
@@ -7132,14 +7115,21 @@ function addNeonTransit(scene, world) {
   const count = controls.length * 24;
   const points = Array.from({ length: count + 1 }, (_, i) => {
     const p = curve.getPoint(i / count).toArray();
-    if (i <= 3 * 24 || i >= 15 * 24) {
+    if (i <= 3 * 24 || i >= 18 * 24) {
       p[1] = 10;
       p[2] = 0;
+    }
+    // A complete cab length on either side of each rooftop stop is level and
+    // straight. The platform edge and open door stay parallel during boarding.
+    for (const station of NEON_TRANSIT_STATIONS.slice(1)) {
+      if (i >= (station.controlIndex-1)*24 && i <= (station.controlIndex+1)*24) {
+        p[0]=station.x; p[1]=station.y;
+      }
     }
     return p;
   });
   const railPoint = (t) => V(...points[Math.min(count, Math.round(t * count))]);
-  const schedule = createTransitSchedule(points, [0, 2 * 24, 16 * 24], 22, 5);
+  const schedule = createTransitSchedule(points, NEON_TRANSIT_STATIONS.map(s=>s.controlIndex*24), 22, 5);
   const batch = new EnvironmentBatch(scene);
   const concrete = mat(0x3f4868, { roughness: 0.8 });
   const pink = new THREE.MeshBasicMaterial({
@@ -7191,129 +7181,59 @@ function addNeonTransit(scene, world) {
       );
   }
   world.cityStationStairs = [];
-  const stations = [
-    [-53, "ARCADE", 0xff438e],
-    [0, "CENTRAL", 0xffc36d],
-    [53, "PALMS", 0x42eced],
-  ];
-  world.transitStations = stations.map(([x, name]) => ({
-    x,
-    y: 10,
-    z: 0,
-    name,
-  }));
-  for (const [x, name, color] of stations) {
-    for (const z of [-5.3, 5.3]) {
-      addBox(scene, world, x, 9.7, z, 24, 0.6, 5, 0x4c506a, {
-        tex: "panel",
-        repeat: [5, 1],
-      });
-      batch.box(
-        x,
-        10.025,
-        z - Math.sign(z) * 2.18,
-        23,
-        0.035,
-        0.25,
-        Math.sign(z) > 0 ? pink : cyan,
-      );
-      // Cantilever roofs shelter the platforms, leaving the train and exits open.
-      batch.box(x, 14.25, z, 23, 0.25, 4.8, concrete);
-      batch.box(
-        x,
-        14.05,
-        z + Math.sign(z) * 2.25,
-        23,
-        0.14,
-        0.18,
-        Math.sign(z) > 0 ? pink : cyan,
-      );
-      for (const dx of [-10.8, 10.8]) {
-        addBox(
-          scene,
-          world,
-          x + dx,
-          7,
-          z + Math.sign(z) * 1.9,
-          0.35,
-          14,
-          0.35,
-          0x3f4868,
-        );
+  world.transitStations = NEON_TRANSIT_STATIONS.map(station=>({...station}));
+  for (const station of world.transitStations) {
+    const {x,y,z,yaw,roofY,name,color}=station;
+    const rooftop=roofY>0, length=rooftop?18:24;
+    const pos=(lx,ly,lz)=>V(x+Math.cos(yaw)*lx+Math.sin(yaw)*lz,ly,z-Math.sin(yaw)*lx+Math.cos(yaw)*lz);
+    const box=(lx,ly,lz,w,h,d,c,options={})=>{
+      const p=pos(lx,ly,lz);
+      addBox(scene,world,p.x,p.y,p.z,rooftop?d:w,h,rooftop?w:d,c,options);
+    };
+    for (const side of [-1,1]) {
+      const offset=side*5.3;
+      box(0,y-.3,offset,length,.6,5,0x4c506a,{tex:'panel',repeat:[5,1],debugName:`neon-station-${name}`});
+      const edge=pos(0,y+.025,offset-side*2.18);
+      batch.box(edge.x,edge.y,edge.z,rooftop?.25:length-1,.035,rooftop?length-1:.25,side>0?pink:cyan);
+      const canopy=pos(0,y+4.25,offset);
+      batch.box(canopy.x,canopy.y,canopy.z,rooftop?4.8:length-1,.25,rooftop?length-1:4.8,concrete);
+      const trim=pos(0,y+4.05,offset+side*2.25);
+      batch.box(trim.x,trim.y,trim.z,rooftop?.18:length-1,.14,rooftop?length-1:.18,side>0?pink:cyan);
+      for (const dx of [-(length/2-1.2),length/2-1.2]) {
+        box(dx,(roofY+y+4)/2,offset+side*1.9,.35,y+4-roofY,.35,0x3f4868);
       }
-      addArenaSign(
-        scene,
-        name,
-        x,
-        12.5,
-        z + Math.sign(z) * 2.3,
-        9,
-        1.2,
-        z < 0 ? 0 : Math.PI,
-        "#" + color.toString(16),
-        "neon",
-        true,
-      );
-      for (const dx of [-8, 0, 8]) wp(world, x + dx, 10, z);
+      const sign=pos(0,y+2.5,offset+side*2.3);
+      addArenaSign(scene,name,sign.x,sign.y,sign.z,rooftop?15:9,1.2,
+        yaw+(side<0?0:Math.PI),'#'+color.toString(16),'neon',true);
+      for(const dx of [-8,0,8]) wp(world,...pos(dx,y,offset).toArray());
+      if(rooftop) {
+        // Both ends step down onto the existing roof, outside the central
+        // hatch and elevator landings. The platform and ramp share an edge.
+        for(const end of [-1,1]) {
+          const a=pos(end*9,y,offset),b=pos(end*(roofY===28?12:13),roofY,offset);
+          const minZ=Math.min(a.z,b.z),maxZ=Math.max(a.z,b.z);
+          addRamp(scene,world,{axis:'z',minX:a.x-2.5,maxX:a.x+2.5,minZ,maxZ,
+            h0:a.z<b.z?y:roofY,h1:a.z<b.z?roofY:y,color:0x4c506a});
+          const route=[pos(end*8,y,offset).toArray(),a.toArray(),b.toArray()];
+          world.cityStationStairs.push(route);
+          for(const p of route)wp(world,...p);
+          for(let i=1;i<route.length;i++)world.manualLinks.push([...route[i-1],...route[i]]);
+        }
+      }
     }
-    // Each platform has its own street stair: no need to cross the live track.
-    const sx = x === 0 ? 12 : x === -53 ? x - 8 : x + 8;
-    addRamp(scene, world, {
-      axis: "z",
-      minX: sx - 2.6,
-      maxX: sx + 2.6,
-      minZ: 7.8,
-      maxZ: 20,
-      h0: 10,
-      h1: 0,
-      color: 0x4c506a,
-    });
-    const nx = x === 0 ? -8 : x - 8;
-    addRamp(scene, world, {
-      axis: "z",
-      minX: nx - 2.6,
-      maxX: nx + 2.6,
-      minZ: -21,
-      maxZ: -7.8,
-      h0: 0,
-      h1: 10,
-      color: 0x4c506a,
-    });
-    for (const [rx, z0, z1, h0, h1] of [
-      [sx, 7.8, 20, 10, 0],
-      [nx, -21, -7.8, 0, 10],
-    ]) {
-      const nodes = [];
-      world.cityStationStairs.push([
-        [rx, h0, z0],
-        [rx, h1, z1],
-      ]);
-      for (let i = 0; i <= 6; i++) {
-        const t = i / 6,
-          p = [rx, h0 + (h1 - h0) * t, z0 + (z1 - z0) * t];
-        wp(world, ...p);
-        nodes.push(p);
+    if(!rooftop) {
+      // The original Central street stairs stay in their original positions.
+      for(const [rx,z0,z1,h0,h1] of [[12,7.8,20,10,0],[-8,-21,-7.8,0,10]]) {
+        addRamp(scene,world,{axis:'z',minX:rx-2.6,maxX:rx+2.6,minZ:z0,maxZ:z1,h0,h1,color:0x4c506a});
+        const nodes=[];
+        for(let i=0;i<=6;i++) {const t=i/6,p=[rx,h0+(h1-h0)*t,z0+(z1-z0)*t];wp(world,...p);nodes.push(p);}
+        world.cityStationStairs.push(nodes);
+        for(let i=1;i<nodes.length;i++)world.manualLinks.push([...nodes[i-1],...nodes[i]]);
+        const top=h0===10?nodes[0]:nodes.at(-1);
+        world.manualLinks.push([...top,rx,10,h0===10?5.3:-5.3]);
       }
-      for (let i = 1; i < nodes.length; i++)
-        world.manualLinks.push([...nodes[i - 1], ...nodes[i]]);
-      const top = h0 === 10 ? nodes[0] : nodes.at(-1);
-      world.manualLinks.push([...top, rx, 10, h0 === 10 ? 5.3 : -5.3]);
     }
   }
-  // West arrival feeds the tower interior and the nearby Whomper ledge.
-  addBox(scene, world, -43, 9.7, -13.8, 4, 0.6, 12, 0x4c506a, { tex: "panel" });
-  addRamp(scene, world, {
-    axis: "x",
-    minX: -56,
-    maxX: -45,
-    minZ: -19.8,
-    maxZ: -15.8,
-    h0: 13.145,
-    h1: 10,
-    color: 0x4c506a,
-  });
-  addBox(scene, world, -40, 9.7, 13.9, 5, 0.6, 4.2, 0x4c506a, { tex: "panel" });
-  addBox(scene, world, -43, 9.7, 9.8, 6, 0.6, 4, 0x4c506a, { tex: "panel" });
   // Central feeds the arcade's upper window and the Galleria's gallery.
   addRamp(scene, world, {
     axis: "z",
@@ -7336,64 +7256,15 @@ function addNeonTransit(scene, world) {
     color: 0x4c506a,
   });
   addBox(scene, world, 4.75, 15.7, 32, 8.5, 0.6, 4, 0x4c506a, { tex: "panel" });
-  // Palms arrives at two roof routes, with a lower street loop below them.
-  addRamp(scene, world, {
-    axis: "z",
-    minX: 54,
-    maxX: 58,
-    minZ: -23,
-    maxZ: -7.8,
-    h0: 16,
-    h1: 10,
-    color: 0x4c506a,
-  });
-  addBox(scene, world, 66.5, 9.7, 10.3, 9, 0.6, 5, 0x4c506a, { tex: "panel" });
-  addBox(scene, world, 70.5, 9.7, 17.4, 3, 0.6, 9.2, 0x4c506a, {
-    tex: "panel",
-  });
+  // Ordinary west fire escape preserves street access to the hotel roof
+  // after removing the former Arcade street station and its approach decks.
+  addRamp(scene,world,{axis:'z',minX:-71.9,maxX:-68.9,minZ:-22,maxZ:6,h0:12,h1:0,color:0x596478});
   const routes = [
-    [
-      [-45, 10, -5.3],
-      [-43, 10, -12],
-      [-43, 10, -17.8],
-      [-50.5, 11.5725, -17.8],
-      [-58, 13.145, -17.8],
-      [-58, 12, -22],
-      [-58, 12, -35],
-    ],
-    [
-      [-45, 10, 5.3],
-      [-43, 10, 9.8],
-      [-40, 10, 13.9],
-      [-40, 10, 20],
-    ],
-    [
-      [-12, 10, -5.3],
-      [-12, 8.5, -16],
-      [-12, 6.5, -26],
-      [-12, 6.5, -32],
-    ],
-    [
-      [7.5, 10, 5.3],
-      [7.5, 13, 19],
-      [7.5, 16, 32],
-      [-3, 16, 32],
-      [-3, 16, 44],
-    ],
-    [
-      [56, 10, -5.3],
-      [56, 13, -15.4],
-      [56, 16, -23],
-      [62, 16, -32],
-    ],
-    [
-      [61, 10, 5.3],
-      [63, 10, 10.3],
-      [70.5, 10, 10.3],
-      [70.5, 10, 18],
-      [70.5, 10, 26],
-      [64, 10, 30],
-    ],
+    [[-12,10,-5.3],[-12,8.5,-16],[-12,6.5,-26],[-12,6.5,-32]],
+    [[7.5,10,5.3],[7.5,13,19],[7.5,16,32],[-3,16,32],[-3,16,44]],
+    [[-70.4,0,6],[-70.4,6,-8],[-70.4,12,-22],[-68,12,-25],[-58,12,-35]],
+    [[32,23,0],[30.5,25.5555556,-11],[30.5,28,-22],[30.5,28,-24],
+      [26.7,28,-23],[26.7,29.2,-26],[26.7,29.2,-35]],
   ];
   world.cityTransferRoutes = routes;
   for (const route of routes) {
@@ -7455,6 +7326,11 @@ function addNeonDistricts(scene, world) {
       );
     }
     // Low parapets provide roof cover without blocking the existing launch pads.
+    if (h===34 || (x===32 && h===28)) {
+      // Rooftop station ramps have open landings; cover hugs the opposite edge.
+      for(const dz of [-w*.3,w*.3]) addBox(scene,world,x-w/2+.5,h+.6,z+dz,.7,1.2,4,0x45516d);
+      continue;
+    }
     for (const dx of [-w * 0.32, w * 0.32])
       addBox(
         scene,
@@ -7481,7 +7357,7 @@ function addNeonDistricts(scene, world) {
       }
   }
   // Structural piers land on the highest supporting roof beneath the viaduct.
-  for (const index of [6, 7, 8, 10, 11, 12, 13]) {
+  for (const index of [6, 7, 15, 16]) {
     const p = world.transit.schedule.points[index * 24],
       x = p[0],
       z = p[2],
@@ -7676,7 +7552,7 @@ function buildCity(scene) {
   for (const [bx, bz, s, h, c] of buildings) {
     addBox(scene, world, bx, h / 2, bz, s, h, s, c, { tex: 'neonwall', repeat: [Math.round(s / 4), Math.round(h / 4)] });
   }
-  // Arcade station feeds this low hotel roof and its north-south skybridge.
+  // The west fire escape feeds this hotel roof and its north-south skybridge.
   // The former 1.2m-high mezzanine could not fit a standing player capsule.
   addBox(scene,world,-58,6,-35,26,12,26,0x51607a,{tex:'neonwall',repeat:[6,3]});
   // Extra ground-level pathway texture so the city reads less like open asphalt.
@@ -7802,9 +7678,9 @@ function buildCity(scene) {
     addBox(scene, world, x, y, z, w, h, d, c, { collide: false, shadow: false, emissive: c, emissiveIntensity: 1.6 });
   }
   addBox(scene, world, -20, 35.5, 30, 3, 3, 3, 0x2a3040, { tex: 'panel' });  // AC units
-  addBox(scene, world, 38, 29.5, -40, 3, 3, 3, 0x2a3040, { tex: 'panel' });
-  addBox(scene, world, -12, 37, 44, 1, 6, 1, 0x8892a8, { collide: false });
-  addBox(scene, world, -12, 40.5, 44, 1.8, 0.6, 1.8, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
+  addBox(scene, world, 22, 29.5, -43, 3, 3, 3, 0x2a3040, { tex: 'panel' });
+  addBox(scene, world, -23, 37, 44, 1, 6, 1, 0x8892a8, { collide: false });
+  addBox(scene, world, -23, 40.5, 44, 1.8, 0.6, 1.8, 0xff3050, { collide: false, shadow: false, emissive: 0xff3050, emissiveIntensity: 2 });
   // lava pit in the SE corner — mind the glow, and mind the edge
   addLava(scene, world, 56, -50, 8, 8, -0.85);
   // ground variety: galleria plaza, crosswalk bands
@@ -7846,7 +7722,7 @@ function buildCity(scene) {
   // Fire escapes: street → B4 roof (two flights), street → A1 (wall ramp + landing)
   addRamp(scene, world, { axis: 'x', minX: 40, maxX: 56, minZ: 19, maxZ: 22, h0: 0, h1: 5, color: 0x596478 });
   addRamp(scene, world, { axis: 'x', minX: 56, maxX: 72, minZ: 19, maxZ: 22, h0: 5, h1: 10, color: 0x596478 });
-  // West street access now uses Arcade station, avoiding the old stair buried in the boundary tower.
+  // West street access uses the hotel fire escape beside the boundary tower.
 
   // Roof-hop pads (one-way up the skyline)
   addJumpPad(scene, world, -48, 12, -36, 26, 15.8, -0.6, 0x30e0ff);  // A1 → A2
@@ -7873,7 +7749,7 @@ function buildCity(scene) {
   for (const dz of [-38, -20, 0, 20, 56]) world.spawns.red.push(V(78, 0.1, dz));
   for (const [x, y, z] of [[-58, 12.2, -35], [32, 18.2, 34], [64, 10.2, 30], [0, 0.1, -56],
                            [0, 0.1, 56], [-40, 0.1, 0], [52, 0.1, 0], [-18, 20.2, -42],
-                           [-21, 8.2, 32], [-64, 24.2, 39], [8, 10.2, 5.3], [24, 28.2, -43]]) {
+                           [-21, 8.2, 32], [-64, 24.2, 39], [8, 10.2, 5.3], [22.5, 28.2, -38]]) {
     world.spawns.ffa.push(V(x, y, z));
   }
 
@@ -7881,8 +7757,8 @@ function buildCity(scene) {
   pk(world, 'shield', -12, 20.2, -32);                   // A2 rooftop
   pk(world, 'speed', -56, 0.2, -55);                     // back alley mid
   pk(world, 'djump', -20, 0.2, 10);                      // galleria plaza edge
-  pk(world, 'gold', -12, 34.2, 36);                        // tallest roof
-  pk(world, 'silver', 32, 28.2, -35);
+  pk(world, 'gold', -13.3, 35.4, 36);                        // tallest roof
+  pk(world, 'silver', 37.3, 29.4, -35);
   pk(world, 'weapon', -6, -5.8, 7, { weapon: 'whomper' }); // subway lava island
   pk(world, 'weapon', -58, 24.2, 33, { weapon: 'sidewinder' });
   pk(world, 'weapon', -12, 20.2, -38, { weapon: 'hyper' });
@@ -7939,8 +7815,8 @@ function buildCity(scene) {
   }
   const wps = [
     // roofs
-    [-58, 12, -35], [-12, 20, -38], [32, 28, -35], [32, 28, -26], [62, 16, -32],
-    [-58, 24, 33], [-12, 34, 36], [32, 18, 34], [32, 18, 26], [64, 10, 30],
+    [-58, 12, -35], [-12, 20, -38], [37.3, 29.2, -35], [30.5, 28, -24], [62, 16, -32],
+    [-58, 24, 33], [-12, 35.2, 36], [32, 18, 34], [32, 18, 26], [64, 10, 30],
     // skybridges (with mid points so the climb stays within link tolerance)
     [-58, 15, -11], [-58, 18, 0], [-58, 21, 11], [-58, 23.5, 19],
     [32, 25.5, -11], [32, 23, 0], [32, 20.5, 11],
@@ -7982,16 +7858,16 @@ function buildCity(scene) {
     [-12, 12, 46.75, -3, 16, 44, false],
     [-11, 19.3, 25.25, -14, 24, 27, false],
     [-20.75, 3, -43, -19, 6.5, -30, false],
-    [-22, 24, 36, -12, 34, 36, true],     // chamber hatch pad → roof
+    [-22, 24, 36, -12, 35.2, 36, true],     // chamber hatch pad → roof
     [-48, 12, -36, -12, 20, -38, true],   // pad hops
-    [-3, 20, -36, 32, 28, -35, true],
-    [55, 16, -33, 32, 28, -26, true],
-    [-49, 24, 34, -12, 34, 36, true],
-    [23, 18, 33, -12, 34, 36, true],
+    [-3, 20, -36, 37.3, 29.2, -35, true],
+    [55, 16, -33, 30.5, 28, -24, true],
+    [-49, 24, 34, -12, 35.2, 36, true],
+    [23, 18, 33, -12, 35.2, 36, true],
     [58, 10, 30, 32, 18, 26, true],
     [62, 0, -14, 62, 16, -32, true],      // street pad → A4 roof
-    [-12, 34, 36, -58, 24, 33, true],     // step-off descents
-    [32, 28, -35, -12, 20, -38, true],
+    [-12, 35.2, 36, -58, 24, 33, true],     // step-off descents
+    [37.3, 29.2, -35, -12, 20, -38, true],
     [-12, 20, -38, -12, 0, -56, true],
     [64, 10, 30, 64, 0, 57, true],
     [62, 16, -32, 62, 0, -14, true],
@@ -12842,141 +12718,22 @@ function flushOlympusColumns(scene, world) {
 }
 
 function addOlympusStatues(scene, world) {
-  const ivory = new THREE.MeshStandardMaterial({ color: 0xc4a878, roughness: 0.58, metalness: 0.02 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0xd4a83f, emissive: 0x493008, emissiveIntensity: 0.12, roughness: 0.28, metalness: 0.62 });
-  const bronze = new THREE.MeshStandardMaterial({ color: 0x7c4b29, roughness: 0.42, metalness: 0.52 });
-  const weaponGold = new THREE.MeshBasicMaterial({ color: 0xffd66a });
-  const visor = new THREE.MeshStandardMaterial({ color: 0x28303a, emissive: 0xd4a83f, emissiveIntensity: 0.38, roughness: 0.3, metalness: 0.48 });
-  const parts = {
-    // These first three geometries exactly mirror buildBotMesh. Their shared
-    // proportions make the pantheon unmistakably the same pill people as the
-    // combatants, simply monumental and cast in ivory stone.
-    body: [new THREE.CapsuleGeometry(0.42, 0.8, 4, 10), ivory],
-    head: [new THREE.SphereGeometry(0.3, 12, 10), ivory],
-    visor: [new THREE.BoxGeometry(0.42, 0.14, 0.2), visor],
-    crown: [new THREE.CylinderGeometry(0.42, 0.31, 0.24, 8), gold],
-    halo: [new THREE.TorusGeometry(0.55, 0.065, 6, 20), gold],
-    wing: [new THREE.ConeGeometry(0.36, 1.25, 5), gold],
-    plume: [new THREE.ConeGeometry(0.22, 1.2, 5), gold],
-    ray: [new THREE.BoxGeometry(0.11, 0.72, 0.12), gold],
-    staff: [new THREE.CylinderGeometry(0.045, 0.055, 1, 6), bronze],
-    blade: [new THREE.BoxGeometry(0.3, 1, 0.14), weaponGold],
-    guard: [new THREE.BoxGeometry(0.95, 0.12, 0.2), bronze],
-    point: [new THREE.ConeGeometry(0.14, 0.42, 6), gold],
-    shield: [new THREE.CylinderGeometry(0.56, 0.56, 0.12, 12), gold],
-    bolt: [new THREE.BoxGeometry(0.16, 0.72, 0.16), gold],
-  };
   const placements = [
-    [-18, 60.5, 43.5, 0, 'hermes'], [18, 60.5, 43.5, 0, 'sun'],
-    [-14, 78.5, -52, Math.PI, 'guardian'], [14, 78.5, -52, Math.PI, 'trident'],
-    [-25, 90.5, 17, Math.PI / 2, 'winged'], [25, 90.5, 17, -Math.PI / 2, 'thunder'],
+    [-18,60.5,43.5,0,'hermes'], [18,60.5,43.5,0,'sun'],
+    [-14,78.5,-52,Math.PI,'guardian'], [14,78.5,-52,Math.PI,'trident'],
+    [-25,90.5,17,Math.PI/2,'winged'], [25,90.5,17,-Math.PI/2,'thunder'],
   ];
-  const transforms = Object.fromEntries(Object.keys(parts).map(key => [key, []]));
-  const addPart = (kind, x, y, z, yaw, lx, ly, lz, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0) => {
-    const cos = Math.cos(yaw), sin = Math.sin(yaw);
-    const position = V(x + lx * cos + lz * sin, y + ly, z - lx * sin + lz * cos);
-    const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, yaw, rz));
-    transforms[kind].push({ position, quaternion, scale: V(sx, sy, sz) });
-  };
-  for (const [x, y, z, yaw, myth] of placements) {
-    addBox(scene, world, x, y + 0.35, z, 2.3, 0.7, 2.3, 0xc3973d, {
-      tex: 'olympus-palace', repeat: [1, 1], metalness: 0.38, roughness: 0.34,
+  for (const [x,y,z,yaw,myth] of placements) {
+    // Preserve the two established pedestal collision volumes.
+    addBox(scene,world,x,y+.35,z,2.3,.7,2.3,0xc3973d,{
+      tex:'olympus-palace',repeat:[1,1],metalness:.38,roughness:.34,
     });
-    addBox(scene, world, x, y + 0.83, z, 1.75, 0.26, 1.75, 0xf0d6aa, {
-      tex: 'olympus-aether', repeat: [1, 1], roughness: 0.5,
+    addBox(scene,world,x,y+.83,z,1.75,.26,1.75,0xf0d6aa,{
+      tex:'olympus-aether',repeat:[1,1],roughness:.5,
     });
-    const rootY = y + 0.96;
-    const scale = 2.45;
-    addPart('body', x, rootY, z, yaw, 0, 0.85 * scale, 0, scale, scale, scale);
-    addPart('head', x, rootY, z, yaw, 0, 1.62 * scale, 0, scale, scale, scale);
-    addPart('visor', x, rootY, z, yaw, 0, 1.66 * scale, 0.22 * scale, scale, scale, scale);
-
-    const addWingPair = (small = false) => {
-      const wingScale = small ? 0.72 : 1;
-      addPart('wing', x, rootY, z, yaw, -0.67, 2.8, -0.54, 0.75 * wingScale, 1.45 * wingScale, 0.34, 0, -0.82);
-      addPart('wing', x, rootY, z, yaw, 0.67, 2.8, -0.54, 0.75 * wingScale, 1.45 * wingScale, 0.34, 0, 0.82);
-    };
-    const addCrest = (spread = 1) => {
-      // The crown now clears the pill head and carries a broad three-pronged
-      // crest. At arena distance this reads as a headdress, not a tiny hat.
-      addPart('crown', x, rootY, z, yaw, 0, 4.66, -0.03, 1.95 * spread, 1.6, 1.95 * spread);
-      addPart('plume', x, rootY, z, yaw, -0.52 * spread, 5.2, -0.03, 1.15, 1.05, 1.15, 0, -0.17);
-      addPart('plume', x, rootY, z, yaw, 0, 5.34, -0.03, 1.28, 1.34, 1.28);
-      addPart('plume', x, rootY, z, yaw, 0.52 * spread, 5.2, -0.03, 1.15, 1.05, 1.15, 0, 0.17);
-    };
-    const addStaff = (trident = false) => {
-      // Weapons float well beside the body, as though held by the same
-      // invisible hands as the pill combatants. Their silhouette intentionally
-      // reaches beyond the statue so it remains legible across the arena.
-      addPart('staff', x, rootY, z, yaw, 1.48, 2.72, 0.04, 2.4, 5.45, 2.4);
-      addPart('point', x, rootY, z, yaw, 1.48, 5.68, 0.04, 1.55, 1.55, 1.55);
-      if (trident) {
-        addPart('staff', x, rootY, z, yaw, 1.08, 5.32, 0.04, 2.1, 1.26, 2.1, 0, -0.38);
-        addPart('staff', x, rootY, z, yaw, 1.88, 5.32, 0.04, 2.1, 1.26, 2.1, 0, 0.38);
-        addPart('point', x, rootY, z, yaw, 0.91, 5.91, 0.04, 1.38, 1.38, 1.38);
-        addPart('point', x, rootY, z, yaw, 2.05, 5.91, 0.04, 1.38, 1.38, 1.38);
-      }
-    };
-    const addSword = () => {
-      const swordX = 1.95;
-      const swordTilt = -0.1;
-      addPart('staff', x, rootY, z, yaw, swordX, 0.78, 0.62, 2.25, 1.05, 2.25, 0, swordTilt);
-      addPart('guard', x, rootY, z, yaw, swordX, 1.27, 0.62, 1.5, 1.45, 1.5, 0, swordTilt);
-      addPart('blade', x, rootY, z, yaw, swordX, 3.18, 0.62, 2.1, 3.95, 1.7, 0, swordTilt);
-      // Continue along the tilted blade axis. The old x offset leaned opposite
-      // the blade and left this cone floating between the crown and sword.
-      const pointAxisDistance = 3.95 / 2 + (0.42 * 1.32) / 2;
-      addPart('point', x, rootY, z, yaw,
-        swordX - Math.sin(swordTilt) * pointAxisDistance,
-        3.18 + Math.cos(swordTilt) * pointAxisDistance,
-        0.62, 1.42, 1.32, 1.42, 0, swordTilt);
-    };
-
-    if (myth === 'hermes') {
-      addWingPair(true);
-      addPart('wing', x, rootY, z, yaw, -0.62, 4.62, -0.06, 0.72, 1.28, 0.34, 0, -0.9);
-      addPart('wing', x, rootY, z, yaw, 0.62, 4.62, -0.06, 0.72, 1.28, 0.34, 0, 0.9);
-    } else if (myth === 'sun') {
-      addPart('halo', x, rootY, z, yaw, 0, 4.18, -0.16, 2.05, 2.05, 2.05);
-      for (let i = 0; i < 8; i++) {
-        const a = i * Math.PI / 4;
-        addPart('ray', x, rootY, z, yaw, Math.sin(a) * 1.18, 4.18 + Math.cos(a) * 1.18, -0.16,
-          1.35, 1.25, 1.35, 0, -a);
-      }
-      addCrest(0.9);
-    } else if (myth === 'guardian') {
-      addSword();
-      addPart('shield', x, rootY, z, yaw, -1.05, 2.3, 0.35, 1.4, 1.4, 1.4, Math.PI / 2, 0);
-      addCrest(1.05);
-    } else if (myth === 'trident') {
-      addStaff(true);
-      addCrest(1.15);
-    } else if (myth === 'winged') {
-      addWingPair(false);
-      addPart('halo', x, rootY, z, yaw, 0, 4.18, -0.16, 1.9, 1.9, 1.9);
-      addPart('wing', x, rootY, z, yaw, -0.58, 4.62, -0.06, 0.62, 1.12, 0.32, 0, -0.84);
-      addPart('wing', x, rootY, z, yaw, 0.58, 4.62, -0.06, 0.62, 1.12, 0.32, 0, 0.84);
-    } else {
-      addCrest(1.1);
-      // Three angled segments form an unmistakable lightning bolt without a
-      // large translucent effect or another light source.
-      addPart('bolt', x, rootY, z, yaw, 1.35, 3.48, 0.34, 1.7, 1.75, 1.7, 0, 0.55);
-      addPart('bolt', x, rootY, z, yaw, 1.02, 2.5, 0.34, 1.7, 1.75, 1.7, 0, -0.48);
-      addPart('point', x, rootY, z, yaw, 0.7, 1.65, 0.34, 1.55, 1.9, 1.55, 0, 0.5);
-    }
-  }
-  const matrix = new THREE.Matrix4();
-  for (const [kind, instances] of Object.entries(transforms)) {
-    const [geometry, material] = parts[kind];
-    const mesh = new THREE.InstancedMesh(geometry, material, instances.length);
-    instances.forEach((inst, i) => {
-      matrix.compose(inst.position, inst.quaternion, inst.scale);
-      mesh.setMatrixAt(i, matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.castShadow = true;
-    mesh.receiveShadow = false;
-    scene.add(mesh);
+    const statue=artMesh(`statue_${myth}`,{roughness:.58,metalness:.12});
+    statue.position.set(x,y+.96,z); statue.rotation.y=yaw;
+    statue.castShadow=true; scene.add(statue);
   }
 }
 
@@ -13123,7 +12880,7 @@ function flushOlympusConservatoryFoliage(scene, world) {
     pot: [new THREE.CylinderGeometry(0.72, 0.54, 0.96, 8), { roughness: 0.52, metalness: 0.12 }],
     chain: [new THREE.CylinderGeometry(0.045, 0.045, 1, 5), { roughness: 0.34, metalness: 0.7 }],
     stem: [new THREE.CylinderGeometry(0.1, 0.16, 1, 6), { roughness: 0.94 }],
-    leaf: [new THREE.ConeGeometry(0.36, 1, 5), { roughness: 0.88, flatShading: true }],
+    leaf: [artGeometry('conservatory_leaf'), { roughness: 0.88, side: THREE.DoubleSide }],
     trunk: [new THREE.CylinderGeometry(0.2, 0.34, 1, 7), { roughness: 0.98 }],
     canopy: [new THREE.IcosahedronGeometry(1, 1), { roughness: 0.94, flatShading: true }],
     vine: [new THREE.CylinderGeometry(0.035, 0.055, 1, 5), { roughness: 0.96 }],
@@ -13792,168 +13549,7 @@ function buildTidebreaker(scene) {
   // Three low-poly sharks patrol below the swell. Only one commits to a
   // swimmer at a time; after biting it breaks away briefly, making the exact
   // two-second damage cooldown readable rather than looking like contact DPS.
-  const SHARK_TOP = 0x4d5354;
-  const SHARK_UPPER_SIDE = 0x707676;
-  const SHARK_BELLY = 0xf1eee5;
-  const SHARK_FIN_EDGE = 0x454a4a;
-  const sharkMat = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.82, metalness: 0.025,
-    flatShading: true, side: THREE.DoubleSide,
-  });
-  const sharkDetailMat = new THREE.MeshBasicMaterial({
-    vertexColors: true, side: THREE.DoubleSide, toneMapped: false,
-  });
-  const pushSharkTri = (positions, colors, a, b, c, color) => {
-    positions.push(...a, ...b, ...c);
-    const r = ((color >> 16) & 255) / 255;
-    const g = ((color >> 8) & 255) / 255;
-    const bl = (color & 255) / 255;
-    for (let n = 0; n < 3; n++) colors.push(r, g, bl);
-  };
-  const sharkMeshFromTris = (positions, colors) => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
-    return new THREE.Mesh(geo, sharkMat);
-  };
-  const buildSharkBody = () => {
-    const positions = [];
-    const colors = [];
-    // Broad, blunt head and a hard taper into the tail reproduce the reference's
-    // unmistakable low-poly great-white silhouette. +X is forward.
-    const stations = [
-      [3.35, 0.42, 0.34, -0.30],
-      [3.02, 0.82, 0.62, -0.58],
-      [2.30, 0.98, 0.78, -0.72],
-      [1.10, 1.04, 0.86, -0.78],
-      [-0.25, 0.94, 0.82, -0.70],
-      [-1.35, 0.68, 0.61, -0.50],
-      [-2.15, 0.38, 0.36, -0.30],
-      [-2.75, 0.18, 0.18, -0.15],
-    ];
-    const ring = (x, halfW, topY, botY) => {
-      const midY = (topY + botY) * 0.5;
-      return [
-        [x, topY, 0],
-        [x, topY * 0.70 + midY * 0.30, halfW * 0.72],
-        [x, midY * 0.12, halfW],
-        [x, botY * 0.68 + midY * 0.32, halfW * 0.78],
-        [x, botY, 0],
-        [x, botY * 0.68 + midY * 0.32, -halfW * 0.78],
-        [x, midY * 0.12, -halfW],
-        [x, topY * 0.70 + midY * 0.30, -halfW * 0.72],
-      ];
-    };
-    const rings = stations.map(([x, w, ty, by]) => ring(x, w, ty, by));
-    const panelColors = [
-      SHARK_TOP, SHARK_UPPER_SIDE, SHARK_BELLY, SHARK_BELLY,
-      SHARK_BELLY, SHARK_BELLY, SHARK_UPPER_SIDE, SHARK_TOP,
-    ];
-    for (let s = 0; s < rings.length - 1; s++) {
-      const a = rings[s], b = rings[s + 1];
-      for (let i = 0; i < 8; i++) {
-        const j = (i + 1) % 8;
-        const color = panelColors[i];
-        pushSharkTri(positions, colors, a[i], a[j], b[j], color);
-        pushSharkTri(positions, colors, a[i], b[j], b[i], color);
-      }
-    }
-    // Faceted end caps keep the snout broad instead of capsule-round.
-    for (const [ringVerts, center, reverse] of [
-      [rings[0], [stations[0][0] + 0.08, 0.01, 0], false],
-      [rings[rings.length - 1], [stations[stations.length - 1][0], 0.01, 0], true],
-    ]) {
-      for (let i = 0; i < 8; i++) {
-        const j = (i + 1) % 8;
-        const color = panelColors[i];
-        if (reverse) pushSharkTri(positions, colors, center, ringVerts[j], ringVerts[i], color);
-        else pushSharkTri(positions, colors, center, ringVerts[i], ringVerts[j], color);
-      }
-    }
-    return sharkMeshFromTris(positions, colors);
-  };
-  const buildSharkBlade = (points, offset, faceColor, backColor = faceColor) => {
-    const positions = [];
-    const colors = [];
-    const front = points.map(p => [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]);
-    const back = points.map(p => [p[0] - offset[0], p[1] - offset[1], p[2] - offset[2]]);
-    for (let i = 1; i < points.length - 1; i++) {
-      pushSharkTri(positions, colors, front[0], front[i], front[i + 1], faceColor);
-      pushSharkTri(positions, colors, back[0], back[i + 1], back[i], backColor);
-    }
-    for (let i = 0; i < points.length; i++) {
-      const j = (i + 1) % points.length;
-      pushSharkTri(positions, colors, front[i], back[i], back[j], SHARK_FIN_EDGE);
-      pushSharkTri(positions, colors, front[i], back[j], front[j], SHARK_FIN_EDGE);
-    }
-    return sharkMeshFromTris(positions, colors);
-  };
-  const sharkEyeGeometry = new THREE.SphereGeometry(0.07, 6, 4);
-  const sharkEyeMaterial = new THREE.MeshBasicMaterial({ color: 0x050708 });
-  const buildShark = () => {
-    const group = new THREE.Group();
-    const body = buildSharkBody();
-    const dorsal = buildSharkBlade([
-      [0.65, 0.72, 0], [-0.25, 1.90, 0], [-0.82, 0.66, 0],
-    ], [0, 0, 0.055], SHARK_TOP);
-    // Each propulsive/control surface has its pivot at the body joint so the
-    // animation bends the fin rather than orbiting it around the shark's center.
-    const leftPec = new THREE.Group();
-    leftPec.name = 'shark-left-pectoral-pivot';
-    leftPec.position.set(1.05, -0.22, 0.62);
-    leftPec.add(buildSharkBlade([
-      [0, 0, 0], [-1.23, -0.02, 1.43], [-2.23, 0.02, 1.93], [-1.77, 0.04, 0.03],
-    ], [0, 0.045, 0], SHARK_UPPER_SIDE, SHARK_BELLY));
-    const rightPec = new THREE.Group();
-    rightPec.name = 'shark-right-pectoral-pivot';
-    rightPec.position.set(1.05, -0.22, -0.62);
-    rightPec.add(buildSharkBlade([
-      [0, 0, 0], [-1.77, 0.04, -0.03], [-2.23, 0.02, -1.93], [-1.23, -0.02, -1.43],
-    ], [0, 0.045, 0], SHARK_UPPER_SIDE, SHARK_BELLY));
-    const tail = new THREE.Group();
-    tail.name = 'shark-tail-pivot';
-    tail.position.set(-2.62, 0, 0);
-    tail.add(buildSharkBlade([
-      [0, 0, 0], [-0.80, 1.58, 0], [-1.10, 1.78, 0], [-0.83, 0.24, 0],
-      [-1.08, 0, 0], [-0.83, -0.24, 0], [-1.10, -1.48, 0], [-0.80, -1.28, 0],
-    ], [0, 0, 0.065], SHARK_TOP, SHARK_UPPER_SIDE));
-    group.add(body, dorsal, leftPec, rightPec, tail);
-    group.userData.animParts = { tail, leftPec, rightPec };
-    for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(sharkEyeGeometry, sharkEyeMaterial);
-      eye.position.set(2.42, 0.28, side * 0.84);
-      group.add(eye);
-
-      // Dark inset mouth, little triangular teeth, and four swept gill cuts.
-      const detailPositions = [];
-      const detailColors = [];
-      pushSharkTri(detailPositions, detailColors,
-        [2.90, -0.20, side * 0.83], [1.72, -0.34, side * 0.95], [2.42, -0.39, side * 0.87], 0x242b2d);
-      pushSharkTri(detailPositions, detailColors,
-        [2.90, -0.20, side * 0.83], [2.42, -0.39, side * 0.87], [3.02, -0.28, side * 0.79], 0x242b2d);
-      for (let tooth = 0; tooth < 3; tooth++) {
-        const x = 2.15 + tooth * 0.27;
-        const toothZ = side * (1.02 - (x - 1.65) * 0.12);
-        pushSharkTri(detailPositions, detailColors,
-          [x, -0.34, toothZ],
-          [x + 0.12, -0.36, toothZ],
-          [x + 0.065, -0.46, toothZ], 0xf4efe2);
-      }
-      for (let gill = 0; gill < 4; gill++) {
-        const x = 1.47 - gill * 0.17;
-        pushSharkTri(detailPositions, detailColors,
-          [x + 0.08, 0.28, side * 1.035], [x, -0.36, side * 1.035], [x - 0.055, -0.34, side * 1.035], 0x36474d);
-        pushSharkTri(detailPositions, detailColors,
-          [x + 0.08, 0.28, side * 1.035], [x - 0.055, -0.34, side * 1.035], [x + 0.025, 0.29, side * 1.035], 0x36474d);
-      }
-      const details = sharkMeshFromTris(detailPositions, detailColors);
-      details.material = sharkDetailMat;
-      group.add(details);
-    }
-    group.scale.setScalar(0.92);
-    return group;
-  };
+  const buildShark = buildTidebreakerShark;
   const sharkStates = [0, 1, 2].map(i => {
     const group = buildShark();
     const angle = i * Math.PI * 2 / 3 + 0.45;
@@ -14303,287 +13899,6 @@ function buildTidebreaker(scene) {
 
   // One huge low-poly blue whale — mottled slate-blue dorsal surface, cooler
   // flanks and a muted pale underside. Scenic only.
-  const WHALE_BLUE = 0x315f78;
-  const WHALE_BLUE_LIGHT = 0x4d7f95;
-  const WHALE_SIDE = 0x294f68;
-  const WHALE_WHITE = 0x729cac;
-  const WHALE_JAW = 0x86aeba;
-  const WHALE_GROOVE = 0x4f7889;
-  const whaleDorsalMottle = [0x315f78, 0x3f7188, 0x4d7f95, 0x2b536b];
-  const whaleUpperMottle = [0x2e5870, 0x3b6a82, 0x46778d, 0x294f66];
-  const whaleFlankMottle = [0x294f68, 0x315d75, 0x22445b, 0x3d6a7e];
-  const whaleBellyMottle = [0x729cac, 0x82aab6, 0x648e9f, 0x8db2bd];
-  const whaleMat = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.78,
-    metalness: 0.04,
-    emissive: 0x0d2938,
-    emissiveIntensity: 0.22,
-    envMapIntensity: 0.72,
-    flatShading: true,
-    side: THREE.DoubleSide,
-  });
-  const pushWhaleTri = (positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz, color) => {
-    positions.push(ax, ay, az, bx, by, bz, cx, cy, cz);
-    const r = ((color >> 16) & 255) / 255;
-    const g = ((color >> 8) & 255) / 255;
-    const b = (color & 255) / 255;
-    for (let n = 0; n < 3; n++) colors.push(r, g, b);
-  };
-  const meshFromTris = (positions, colors) => {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
-    return new THREE.Mesh(geo, whaleMat);
-  };
-  const buildPectoralMesh = (side) => {
-    const positions = [];
-    const colors = [];
-    // Local space: root at origin, fin extends along +Z for side=+1.
-    // Built flat in XY so rotation.x lifts the tip like a wing.
-    const root = [0, 0, 0];
-    const aft = [-1.8, -0.38, side * 1.0];
-    const mid = [-2.8, -0.52, side * 5.2];
-    const tip = [-5.4, -0.92, side * 10.0];
-    const lead = [0.25, 0.04, side * 3.35];
-    // Blue topside
-    pushWhaleTri(positions, colors,
-      root[0], 0.1, root[2], aft[0], 0.08, aft[2], lead[0], 0.12, lead[2], WHALE_BLUE);
-    pushWhaleTri(positions, colors,
-      aft[0], 0.08, aft[2], tip[0], 0.05, tip[2], mid[0], 0.08, mid[2], WHALE_BLUE);
-    pushWhaleTri(positions, colors,
-      lead[0], 0.12, lead[2], aft[0], 0.08, aft[2], mid[0], 0.08, mid[2], WHALE_BLUE);
-    pushWhaleTri(positions, colors,
-      lead[0], 0.12, lead[2], mid[0], 0.08, mid[2], tip[0], 0.05, tip[2], WHALE_BLUE);
-    // White underside
-    pushWhaleTri(positions, colors,
-      root[0], -0.1, root[2], lead[0], -0.08, lead[2], aft[0], -0.08, aft[2], WHALE_WHITE);
-    pushWhaleTri(positions, colors,
-      aft[0], -0.08, aft[2], mid[0], -0.08, mid[2], tip[0], -0.05, tip[2], WHALE_WHITE);
-    pushWhaleTri(positions, colors,
-      lead[0], -0.08, lead[2], mid[0], -0.08, mid[2], aft[0], -0.08, aft[2], WHALE_WHITE);
-    pushWhaleTri(positions, colors,
-      lead[0], -0.08, lead[2], tip[0], -0.05, tip[2], mid[0], -0.08, mid[2], WHALE_WHITE);
-    return meshFromTris(positions, colors);
-  };
-  const buildBlueWhale = () => {
-    const positions = [];
-    const colors = [];
-    const flukePositions = [];
-    const flukeColors = [];
-    let flukePivotX = 0;
-    let flukePivotY = 0;
-    // Low-poly loft: broad squared snout (+X) → narrow fluke (−X). The
-    // reference's long, almost level back replaces the old bulbous body.
-    const stations = [
-      [14.15, 2.15, 0.72, -1.45],
-      [13.55, 3.32, 1.02, -1.92],
-      [12.15, 3.62, 1.28, -2.18],
-      [9.55, 3.55, 1.58, -2.35],
-      [6.25, 3.32, 1.88, -2.45],
-      [2.65, 3.00, 2.02, -2.38],
-      [-0.85, 2.66, 1.92, -2.15],
-      [-4.15, 2.25, 1.66, -1.78],
-      [-7.10, 1.68, 1.28, -1.28],
-      [-9.55, 1.06, 0.82, -0.78],
-      [-11.45, 0.48, 0.40, -0.36],
-      [-12.35, 0.20, 0.18, -0.16],
-    ];
-    const ring = (x, halfW, topY, botY) => {
-      const midY = (topY + botY) * 0.5;
-      return [
-        [x, topY, 0],
-        [x, topY * 0.72 + midY * 0.28, halfW * 0.72],
-        [x, midY * 0.15, halfW],
-        [x, botY * 0.55 + midY * 0.45, halfW * 0.78],
-        [x, botY, 0],
-        [x, botY * 0.55 + midY * 0.45, -halfW * 0.78],
-        [x, midY * 0.15, -halfW],
-        [x, topY * 0.72 + midY * 0.28, -halfW * 0.72],
-      ];
-    };
-    const rings = stations.map(([x, w, ty, by]) => ring(x, w, ty, by));
-    const colorAt = (y, topY, botY) => {
-      const tt = (y - botY) / Math.max(0.001, topY - botY);
-      if (tt >= 0.74) return WHALE_BLUE;
-      if (tt >= 0.43) return WHALE_SIDE;
-      return WHALE_WHITE;
-    };
-    const facetColor = (station, panel, triangle) => {
-      const palette = panel === 0 || panel === 7 ? whaleDorsalMottle
-        : panel === 1 || panel === 6 ? whaleUpperMottle
-          : panel === 2 || panel === 5 ? whaleFlankMottle : whaleBellyMottle;
-      // Deterministic variation keeps every whale identical while breaking the
-      // body into the irregular blue-gray mottling characteristic of the species.
-      return palette[(station * 5 + panel * 3 + triangle * 2) % palette.length];
-    };
-    for (let s = 0; s < rings.length - 1; s++) {
-      const ra = rings[s], rb = rings[s + 1];
-      for (let i = 0; i < 8; i++) {
-        const j = (i + 1) % 8;
-        const [ax, ay, az] = ra[i], [bx, by, bz] = ra[j];
-        const [cx, cy, cz] = rb[j], [dx, dy, dz] = rb[i];
-        pushWhaleTri(positions, colors, ax, ay, az, bx, by, bz, cx, cy, cz,
-          facetColor(s, i, 0));
-        pushWhaleTri(positions, colors, ax, ay, az, cx, cy, cz, dx, dy, dz,
-          facetColor(s, i, 1));
-      }
-    }
-    const nose = rings[0];
-    // A tiny forward bevel leaves a broad, flat rostrum instead of a pointed
-    // fish-like nose.
-    const tip = [stations[0][0] + 0.10, -0.32, 0];
-    for (let i = 0; i < 8; i++) {
-      const j = (i + 1) % 8;
-      const col = colorAt((nose[i][1] + nose[j][1] + tip[1]) / 3, stations[0][2], stations[0][3]);
-      pushWhaleTri(positions, colors,
-        tip[0], tip[1], tip[2],
-        nose[i][0], nose[i][1], nose[i][2],
-        nose[j][0], nose[j][1], nose[j][2], col);
-    }
-    // Small swept dorsal bump, matching the understated fin in the reference.
-    pushWhaleTri(positions, colors, -3.15, 1.72, 0, -5.05, 2.72, 0, -5.92, 1.46, 0, WHALE_BLUE);
-    pushWhaleTri(positions, colors, -3.15, 1.72, 0, -5.92, 1.46, 0, -5.05, 2.72, 0, WHALE_BLUE);
-    // Long, darker throat pleats are one of a blue whale's clearest markings.
-    for (let i = -2; i <= 2; i++) {
-      const gz = i * 0.48;
-      pushWhaleTri(positions, colors,
-        13.2, -1.72, gz - 0.06, 6.1, -2.28, gz - 0.06, 6.1, -2.35, gz + 0.06, WHALE_GROOVE);
-      pushWhaleTri(positions, colors,
-        13.2, -1.72, gz - 0.06, 6.1, -2.35, gz + 0.06, 13.2, -1.79, gz + 0.06, WHALE_GROOVE);
-    }
-
-    // Solid fluke welded to the peduncle — no floating sheets / see-through slits.
-    {
-      const last = stations[stations.length - 1];
-      const ped = rings[rings.length - 1];
-      const px = last[0];
-      const midY = (last[2] + last[3]) * 0.5;
-      flukePivotX = px;
-      flukePivotY = midY;
-      // Cap the open loft end so the body doesn't leave a hole behind the fluke.
-      for (let i = 0; i < 8; i++) {
-        const j = (i + 1) % 8;
-        const col = colorAt((ped[i][1] + ped[j][1] + midY) / 3, last[2], last[3]);
-        pushWhaleTri(positions, colors,
-          px, midY, 0,
-          ped[i][0], ped[i][1], ped[i][2],
-          ped[j][0], ped[j][1], ped[j][2], col);
-      }
-      // Fluke outline in the horizontal plane (root → left tip → notch → right tip).
-      // Shared verts for top/bottom so the edge walls seal the volume.
-      const ht = 0.34; // half-thickness
-      const outline = [
-        [px - 0.05, midY, 0],
-        [px - 1.15, midY + 0.08, 2.55],
-        [px - 2.55, midY + 0.22, 5.55],
-        [px - 3.35, midY + 0.32, 0.55],
-        [px - 3.75, midY + 0.38, 0],
-        [px - 3.35, midY + 0.32, -0.55],
-        [px - 2.55, midY + 0.22, -5.55],
-        [px - 1.15, midY + 0.08, -2.55],
-      ];
-      const top = outline.map(([x, y, z]) => [x, y + ht, z]);
-      const bot = outline.map(([x, y, z]) => [x, y - ht, z]);
-      // Mottled blue-gray top face — fan from root.
-      for (let i = 1; i < outline.length - 1; i++) {
-        pushWhaleTri(flukePositions, flukeColors,
-          top[0][0], top[0][1], top[0][2],
-          top[i][0], top[i][1], top[i][2],
-          top[i + 1][0], top[i + 1][1], top[i + 1][2],
-          whaleDorsalMottle[i % whaleDorsalMottle.length]);
-      }
-      // Pale, irregular underside.
-      for (let i = 1; i < outline.length - 1; i++) {
-        pushWhaleTri(flukePositions, flukeColors,
-          bot[0][0], bot[0][1], bot[0][2],
-          bot[i + 1][0], bot[i + 1][1], bot[i + 1][2],
-          bot[i][0], bot[i][1], bot[i][2],
-          whaleBellyMottle[(i * 3) % whaleBellyMottle.length]);
-      }
-      // Edge ribbon seals top to bottom all the way around.
-      for (let i = 0; i < outline.length; i++) {
-        const j = (i + 1) % outline.length;
-        const edgeCol = Math.abs(outline[i][2]) + Math.abs(outline[j][2]) > 0.8 ? WHALE_BLUE : WHALE_WHITE;
-        pushWhaleTri(flukePositions, flukeColors,
-          top[i][0], top[i][1], top[i][2],
-          top[j][0], top[j][1], top[j][2],
-          bot[j][0], bot[j][1], bot[j][2], edgeCol);
-        pushWhaleTri(flukePositions, flukeColors,
-          top[i][0], top[i][1], top[i][2],
-          bot[j][0], bot[j][1], bot[j][2],
-          bot[i][0], bot[i][1], bot[i][2], edgeCol);
-      }
-      // Weld fluke root into the peduncle cap (fills the body→tail joint).
-      for (let i = 0; i < 8; i++) {
-        const j = (i + 1) % 8;
-        const col = colorAt((ped[i][1] + ped[j][1] + midY) / 3, last[2], last[3]);
-        pushWhaleTri(flukePositions, flukeColors,
-          ped[i][0], ped[i][1], ped[i][2],
-          ped[j][0], ped[j][1], ped[j][2],
-          top[0][0], top[0][1], top[0][2], col);
-        pushWhaleTri(flukePositions, flukeColors,
-          ped[i][0], ped[i][1], ped[i][2],
-          top[0][0], top[0][1], top[0][2],
-          bot[0][0], bot[0][1], bot[0][2], col);
-      }
-    }
-
-    const group = new THREE.Group();
-    const body = meshFromTris(positions, colors);
-    group.add(body);
-    const fluke = new THREE.Group();
-    fluke.name = 'whale-fluke-pivot';
-    fluke.position.set(flukePivotX, flukePivotY, 0);
-    const flukeMesh = meshFromTris(flukePositions, flukeColors);
-    flukeMesh.position.set(-flukePivotX, -flukePivotY, 0);
-    fluke.add(flukeMesh);
-    group.add(fluke);
-    // Pale jawline and tiny eyes are the two high-contrast details that make
-    // the faceted head read like the supplied whale at gameplay distance.
-    const markingPositions = [];
-    const markingColors = [];
-    for (const side of [-1, 1]) {
-      const z0 = side * 2.13;
-      const z1 = side * 3.34;
-      const z2 = side * 3.58;
-      const z3 = side * 3.30;
-      pushWhaleTri(markingPositions, markingColors,
-        14.18, -0.45, z0, 13.45, -0.18, z1, 9.45, -0.04, z2, WHALE_JAW);
-      pushWhaleTri(markingPositions, markingColors,
-        14.18, -0.45, z0, 9.45, -0.04, z2, 6.2, -0.27, z3, WHALE_JAW);
-    }
-    group.add(meshFromTris(markingPositions, markingColors));
-    const whaleEyeGeo = new THREE.SphereGeometry(0.13, 6, 4);
-    const whaleEyeMat = new THREE.MeshBasicMaterial({ color: 0x11141b });
-    for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(whaleEyeGeo, whaleEyeMat);
-      eye.position.set(8.35, 0.34, side * 3.36);
-      group.add(eye);
-    }
-    const blowholeGeo = new THREE.SphereGeometry(0.16, 6, 3);
-    const blowholeMat = new THREE.MeshBasicMaterial({ color: 0x263b43 });
-    for (const side of [-1, 1]) {
-      const blowhole = new THREE.Mesh(blowholeGeo, blowholeMat);
-      blowhole.position.set(9.35, 1.61, side * 0.19);
-      blowhole.scale.set(1.05, 0.16, 0.52);
-      group.add(blowhole);
-    }
-    const leftPec = new THREE.Group();
-    leftPec.name = 'whale-left-pectoral-pivot';
-    leftPec.position.set(3.6, -0.35, 2.55);
-    leftPec.add(buildPectoralMesh(1));
-    const rightPec = new THREE.Group();
-    rightPec.name = 'whale-right-pectoral-pivot';
-    rightPec.position.set(3.6, -0.35, -2.55);
-    rightPec.add(buildPectoralMesh(-1));
-    group.add(leftPec, rightPec);
-    // A mature blue whale should feel enormous beside the rig and human-scale
-    // combatants, while still fitting its wide offshore cruise/breach path.
-    group.scale.setScalar(2.35);
-    return { group, body, fluke, leftPec, rightPec };
-  };
   const whaleParts = buildBlueWhale();
   const whale = whaleParts.group;
   whale.position.set(145, oceanSurfaceY - 18, -55);
@@ -19278,6 +18593,14 @@ function addPlatformMushroom(
     new THREE.LatheGeometry(profile.reverse(), 24),
     capMaterial,
   );
+  const capVertices=cap.geometry.attributes.position;
+  for (let i=0;i<capVertices.count;i++) {
+    const y=capVertices.getY(i), x0=capVertices.getX(i), z0=capVertices.getZ(i);
+    const angle=Math.atan2(z0,x0), below=THREE.MathUtils.smoothstep(-y,.05,.55);
+    const ripple=1+below*.035*Math.sin(angle*5+seed);
+    capVertices.setXYZ(i,x0*ripple,y-below*.055*(.5+.5*Math.sin(angle*3+seed)),z0*ripple);
+  }
+  cap.geometry.computeVertexNormals();
   cap.position.set(x, topY, z);
   cap.castShadow = cap.receiveShadow = true;
   const p = stem.geometry.attributes.position;
@@ -20919,6 +20242,7 @@ function buildMyceliumGrove(scene) {
     [-7.5, 10.1, -56.1, -7.5, 20, -52, true],
   );
 
+  addUnderstoryArt(scene,world,'mycelium');
   batchMyceliumShelves(scene,world);
   mergeStatic(scene, world);
   return world;
@@ -20976,56 +20300,24 @@ function reefCoralTexture(color, requested = null) {
 }
 
 const reefGrowthMaterials = [
-  mat(0x2e8f62, { roughness: 0.9, side: THREE.DoubleSide }),
-  mat(0x52b16f, { roughness: 0.88, side: THREE.DoubleSide }),
-  mat(0x7a9e42, { roughness: 0.92, side: THREE.DoubleSide }),
-  mat(0x279488, { roughness: 0.86, side: THREE.DoubleSide }),
+  artMaterial({color:0xffffff,roughness:.9}),
+  artMaterial({color:0xc6edcf,roughness:.88}),
+  artMaterial({color:0xe2d9ab,roughness:.92}),
+  artMaterial({color:0xa8e1d8,roughness:.86}),
 ];
 
 function addReefFrondCluster(scene, world, x, y, z, seed, scale = 1, tilt = 0) {
-  const rnd = seededRandom(seed);
   const root = new THREE.Group();
-  root.position.set(x, y, z);
-  root.rotation.z = tilt;
-  const frondCount = 3 + Math.floor(rnd() * 4);
-  const geometries = [];
-  for (let i = 0; i < frondCount; i++) {
-    const height = scale * (1.1 + rnd() * 2.5);
-    const leanX = (rnd() - 0.5) * height * 0.42;
-    const leanZ = (rnd() - 0.5) * height * 0.42;
-    const baseX = (rnd() - 0.5) * scale * 0.75;
-    const baseZ = (rnd() - 0.5) * scale * 0.75;
-    const curve = new THREE.CatmullRomCurve3([
-      V(baseX, 0, baseZ),
-      V(baseX + leanX * 0.18, height * 0.34, baseZ + leanZ * 0.12),
-      V(baseX - leanX * 0.12, height * 0.68, baseZ + leanZ * 0.66),
-      V(baseX + leanX, height, baseZ + leanZ),
-    ]);
-    geometries.push(new THREE.TubeGeometry(
-      curve, 7, scale * (0.055 + rnd() * 0.055), 4, false,
-    ));
-    // A small fork makes each cluster read as leafy reef growth rather than a
-    // bundle of smooth drinking straws.
-    if (i % 2 === 0) {
-      const fork = new THREE.ConeGeometry(scale * 0.12, height * 0.34, 4);
-      fork.rotateZ((rnd() - 0.5) * 0.9);
-      fork.translate(baseX + leanX * 0.25, height * 0.6, baseZ + leanZ * 0.3);
-      geometries.push(fork);
-    }
-  }
-  const merged = mergeGeometries(geometries, false);
-  const growthMesh = new THREE.Mesh(
-    merged,
-    reefGrowthMaterials[Math.floor(Math.abs(seed)) % reefGrowthMaterials.length],
-  );
-  growthMesh.castShadow = true;
-  root.add(growthMesh);
-  geometries.forEach(geometry => geometry.dispose());
-  scene.add(root);
-  (world.reefGrowthClusters ||= []).push({
-    root, baseX: root.rotation.x, baseZ: root.rotation.z,
-    phase: rnd() * Math.PI * 2, sway: 0.018 + rnd() * 0.025,
-  });
+  root.position.set(x,y,z); root.rotation.set(0,seed*2.399,tilt);
+  root.scale.setScalar(scale);
+  const indexed=artGeometry('kelp');
+  const geometry=indexed.toNonIndexed();
+  indexed.dispose();
+  const growthMesh = new THREE.Mesh(geometry,reefGrowthMaterials[Math.abs(seed)%reefGrowthMaterials.length]);
+  growthMesh.castShadow = false;
+  root.add(growthMesh); scene.add(root);
+  (world.reefGrowthClusters ||= []).push({root,baseX:root.rotation.x,baseZ:root.rotation.z,
+    phase:seed*1.37,sway:.018+(Math.abs(seed)%5)*.005});
   return root;
 }
 
@@ -21255,6 +20547,7 @@ function addReefPlateCoral(scene, x, y, z, color, seed, scale = 1) {
 }
 
 function createReefFishGeometry(kind, colors) {
+  if (kind !== 'minnow') return artGeometry(`fish_${kind}`);
   const proportions = {
     minnow: [1.45, 0.48, 0.48], tang: [1.05, 0.85, 0.3], butterfly: [0.9, 1.05, 0.28],
     parrot: [1.3, 0.62, 0.48], angel: [0.78, 1.22, 0.25],
@@ -21303,6 +20596,7 @@ function createReefFishGeometry(kind, colors) {
 
 function addReefFishLife(scene, world) {
   const schools = [];
+  const fishTime = {value:0};
   const species = [
     { kind: 'minnow', colors: [0x9fd7c5, 0x69ab9f], count: 18, center: [-42, -8, -5], radius: 15, size: 0.42 },
     { kind: 'minnow', colors: [0xffc95c, 0xff744d], count: 13, center: [38, -18, 31], radius: 12, size: 0.55 },
@@ -21316,10 +20610,8 @@ function addReefFishLife(scene, world) {
   let seed = 0;
   for (const spec of species) {
     const geometry = createReefFishGeometry(spec.kind, spec.colors);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xffffff, vertexColors: true, roughness: 0.5,
-      metalness: 0.04, flatShading: true, side: THREE.DoubleSide,
-    });
+    const material = spec.kind === 'minnow'
+      ? artMaterial({roughness:.5,flatShading:true}) : fishSwimMaterial(fishTime);
     const school = new THREE.InstancedMesh(geometry, material, spec.count);
     school.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     school.frustumCulled = false;
@@ -21340,6 +20632,7 @@ function addReefFishLife(scene, world) {
   }
   const dummy = new THREE.Object3D();
   const updateSchools = (t) => {
+    fishTime.value=t;
     for (const { school, spec, members } of schools) {
       const [cx, cy, cz] = spec.center;
       for (let i = 0; i < members.length; i++) {
@@ -21845,6 +21138,11 @@ function buildSunkenReef(scene) {
   world.reefGrowthBatchStats = { plants: growthBatch.plants, batches: growthBatch.batches };
   world.dispose = growthBatch.dispose;
   delete world.reefGrowthClusters;
+  const crabSeabed=world.colliders.find(c=>c.debugName==='sunken-reef-heightfield');
+  for (const [i,[x,z]] of [[-38,49],[40,-49],[-52,-24],[32,54]].entries()) {
+    addAmbientCritter(scene,world,'crab',x,z,
+      (cx,cz)=>triangleMeshSurfaceY(crabSeabed,cx,cz),i);
+  }
   addReefFishLife(scene, world);
   addReefLargeSeaLife(scene, world, 120);
   addReefBoundarySharks(scene, world, 120);

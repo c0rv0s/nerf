@@ -14,6 +14,7 @@ const character = (position) => ({
 // direction, without weapon/HUD timing affecting deterministic geometry checks.
 export function auditNeonTransit(world) {
   const failures = [],
+    intersections = [],
     boarding = [],
     walking = [];
   let checks = 0,
@@ -41,22 +42,28 @@ export function auditNeonTransit(world) {
             Math.abs(p.x) < 84.9 && Math.abs(p.z) < 63.9,
             "Train leaves city boundary",
           );
-          check(
-            !pointHitsWorld(p, 0.08, staticWorld),
-            "Train intersects static city geometry",
-          );
+          const blocked=pointHitsWorld(p,0.08,staticWorld);
+          if(blocked && intersections.length<16) {
+            const collider=staticWorld.colliders.find(c=>pointHitsWorld(p,.08,{...staticWorld,colliders:[c]}));
+            intersections.push({t,point:p.toArray(),name:collider?.debugName,min:collider?.min,max:collider?.max});
+          }
+          check(!blocked,"Train intersects static city geometry");
         }
   }
   for (let i = 0; i < 3; i++) {
     const t = schedule.stops[i] / schedule.speed + i * schedule.dwell + 2;
     transit.update(0, t, []);
-    const ch = character([transit.pose.position[0], 10, 5.3]);
+    const start=V(0,0,5.3).applyMatrix4(transit.group.matrixWorld);
+    const direction=V(0,0,-1).transformDirection(transit.group.matrixWorld).multiplyScalar(4);
+    const stationInverse=transit.group.matrixWorld.clone().invert();
+    const ch = character(start.toArray());
     for (let n = 0; n < 160; n++) {
       transit.update(0, t, [ch]);
-      ch.vel.set(0, ch.vel.y, -4);
+      ch.vel.set(direction.x,ch.vel.y,direction.z);
       ch.grounded = moveCharacter(ch, world, 1 / 60);
     }
-    const passed = ch.pos.z < -4.5 && Math.abs(ch.pos.y - 10) < 0.1;
+    const localEnd=ch.pos.clone().applyMatrix4(stationInverse);
+    const passed = localEnd.z < -4.5 && Math.abs(localEnd.y) < 0.1;
     boarding.push({ station: i, end: ch.pos.toArray(), passed });
     check(passed, "Station boarding passage blocked");
   }
@@ -110,6 +117,7 @@ export function auditNeonTransit(world) {
     checks,
     failures,
     boarding,
+    intersections,
     walking,
     maxRiderDrift,
     cycleSeconds: schedule.cycle,

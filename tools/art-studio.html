@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nerf Blender art studio</title>
+<style>body{margin:0;background:#17212a;color:#f0e8d4;font:15px system-ui}header{padding:14px 22px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}h1{font-size:18px;margin:0}button,a{color:inherit;background:#30424c;border:1px solid #617077;padding:8px 12px;border-radius:5px;text-decoration:none}button[aria-pressed=true]{background:#bca775;color:#101b22}#gallery{position:relative;height:calc(100vh - 115px);min-height:400px}canvas{display:block;width:100%;height:100%}#labels{position:absolute;inset:0;display:grid;grid-template-columns:repeat(3,1fr);pointer-events:none}#labels div{padding:14px 20px}footer{padding:10px 22px;color:#b4c4c9;font-size:13px} @media(max-width:600px){header{padding:8px;gap:6px}h1{width:100%}button,a{padding:5px 8px}#labels div{padding:6px;font-size:11px}}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script></head>
+<body><header><h1>Blender map art</h1><button data-set="Statues">Statues</button><button data-set="Fish">Fish</button><button data-set="Wildlife">Wildlife</button><button data-set="Understory">Understory</button><a href="/tools/map-studio.html?map=olympus">View maps</a></header><main id="gallery"><div id="labels"></div></main><footer id="status">Loading models…</footer>
+<script type="module">
+import * as THREE from 'three';
+import {artMesh,fishSwimMaterial} from '/src/map-art.js';
+import {buildBlueWhale} from '/src/blue-whale.js';
+import {buildTidebreakerShark} from '/src/tidebreaker-shark.js';
+const sets={Statues:['statue_hermes','statue_sun','statue_guardian','statue_trident','statue_winged','statue_thunder'],Fish:['fish_tang','fish_butterfly','fish_parrot','fish_angel'],Wildlife:['whale','shark','snail','beetle','crab'],Understory:['fern','broadleaf','kelp','mushrooms_0','mushrooms_1','root_cluster']};
+const host=document.querySelector('#gallery'),labels=document.querySelector('#labels');
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+renderer.setPixelRatio(1); renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.25;host.prepend(renderer.domElement);
+let cards=[],selected='';const time={value:0};
+function load(set){
+ for(const c of cards)c.scene.traverse(o=>{o.geometry?.dispose();o.material?.dispose?.()});
+ selected=set; cards=[];labels.replaceChildren();
+ for(const name of sets[set]){
+  const scene=new THREE.Scene();scene.background=new THREE.Color(0x1e2b34);
+  scene.add(new THREE.HemisphereLight(0xdaf1ff,0x5b5847,2.4));
+  const light=new THREE.DirectionalLight(0xffe4bc,3.1);light.position.set(3,7,6);scene.add(light);
+  const rim=new THREE.DirectionalLight(0x8ccce6,1.8);rim.position.set(-4,4,-2);scene.add(rim);
+  const parts=name==='whale'?buildBlueWhale():null;
+  const model=parts?parts.group:name==='shark'?buildTidebreakerShark():artMesh(name);
+  if(name.startsWith('fish'))model.material=fishSwimMaterial(time);
+  const bounds=new THREE.Box3().setFromObject(model),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+  const root=new THREE.Group();root.add(model);model.position.sub(center);
+  root.scale.setScalar(2.7/Math.max(size.x,size.y,size.z));scene.add(root);
+  const camera=new THREE.PerspectiveCamera(34,1,.01,100);camera.position.set(name.startsWith('statue')?2.1:2.8,1.6,6.5);camera.lookAt(0,0,0);
+  const label=document.createElement('div');label.textContent=name.replaceAll('_',' ');labels.append(label);
+  cards.push({scene,camera,root,model,parts,name});
+ }
+ labels.style.gridTemplateRows=`repeat(${Math.ceil(cards.length/3)},1fr)`;
+ document.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.set===set));
+}
+for(const b of document.querySelectorAll('button'))b.onclick=()=>load(b.dataset.set);
+load(new URLSearchParams(location.search).get('set')||'Statues');
+function draw(ms){
+ time.value=ms*.001;const w=host.clientWidth,h=host.clientHeight;
+ if(renderer.domElement.width!==w||renderer.domElement.height!==h)renderer.setSize(w,h,false);
+ const rows=Math.ceil(cards.length/3),cw=w/3,ch=h/rows;
+ renderer.setScissorTest(true);
+ cards.forEach((c,i)=>{
+  const x=i%3*cw,y=h-(Math.floor(i/3)+1)*ch;
+  renderer.setViewport(x,y,cw,ch);renderer.setScissor(x+2,y+2,cw-4,ch-4);
+  c.camera.aspect=cw/ch;c.camera.updateProjectionMatrix();
+  if(c.parts){c.parts.fluke.rotation.z=Math.sin(time.value*1.6)*.07;c.parts.leftPec.rotation.x=Math.sin(time.value)*.08;c.parts.rightPec.rotation.x=-Math.sin(time.value)*.08;}
+  if(c.name==='shark')c.model.userData.animParts.tail.rotation.y=Math.sin(time.value*3)*.14;
+  renderer.render(c.scene,c.camera);
+ });
+ document.querySelector('#status').textContent=`${selected} · ${cards.length} Blender models · same exported geometry and materials used in-game`;
+ requestAnimationFrame(draw);
+}requestAnimationFrame(draw);
+</script></body></html>

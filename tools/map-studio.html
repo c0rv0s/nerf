@@ -42,6 +42,11 @@
       #stats {
         font-variant-numeric: tabular-nums;
       }
+      @media (max-width:600px) {
+        aside {left:8px;right:8px;top:8px;padding:8px;max-width:none;}
+        button,select {font-size:12px;padding:4px;}
+        aside p:not(#stats) {display:none;}
+      }
     </style>
     <script type="importmap">
       {
@@ -58,6 +63,7 @@
         <option value="canopy">Canopy</option>
         <option value="olympus">Olympus Mons</option>
         <option value="reef">Sunken Reef</option>
+        <option value="tidebreaker">Tidebreaker</option>
         <option value="mycelium">Mycelium Grove</option>
         <option value="arena">Blast Complex</option>
         <option value="fortress">Fortress Falls</option>
@@ -94,6 +100,7 @@
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       const views = {
+        tidebreaker: {Overview: [[80,44,80],[0,0,0]], Ocean: [[120,20,40],[145,0,-55]]},
         orrery: {
           Overview: [[91,58,93],[0,16,0]],
           Arrival: [[5,2.2,52],[0,28,0]],
@@ -163,6 +170,8 @@
           ],
         },
         city: {
+          Galleria: [[12,47,55],[-8,35,36]],
+          Palms: [[53,42,-17],[32,29,-35]],
           Circuit: [
             [0, 175, 100],
             [0, 0, 0],
@@ -207,6 +216,7 @@
           ],
         },
         mycelium: {
+          Understory: [[-22,6.4,69],[-25,4.3,64]],
           Overview: [
             [64, 34, 66],
             [0, 11, 0],
@@ -243,6 +253,7 @@
           ],
         },
         canopy: {
+          Understory: [[-42,2,-63],[-45,.6,-66]],
           Tunnel: [
             [54, 2.5, 34],
             [54, -0.8, 44],
@@ -265,6 +276,8 @@
           ],
         },
         olympus: {
+          Guardian: [[-20,82,-60],[-14,82,-52]],
+          Hermes: [[-12,64,51],[-18,64,43.5]],
           Lava: [
             [153, 3, 94],
             [270, -1, 94],
@@ -295,6 +308,7 @@
           ],
         },
         reef: {
+          Crab: [[42,-34.5,-52],[40,-35.8,-49]],
           Overview: [
             [102, 20, 120],
             [0, -17, 0],

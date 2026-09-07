@@ -35,3 +35,26 @@ test("transit is continuous, closed and frame-rate independent across the whole 
   }
   assert.deepEqual(rail.sample(0), rail.sample(rail.cycle));
 });
+
+test('Neon Heights stops in order at Central, Vice Galleria roof and Laser Palms roof', async()=>{
+  const {NEON_TRANSIT_CONTROLS:controls,NEON_TRANSIT_STATIONS:stations}=await import('../src/neon-transit.js');
+  assert.deepEqual(stations.map(s=>s.name),['CENTRAL','VICE GALLERIA','LASER PALMS']);
+  assert.deepEqual(stations.filter(s=>s.roofY===0).map(s=>[s.x,s.y,s.z]),[[0,10,0]]);
+  assert.deepEqual(stations.slice(1).map(s=>s.roofY),[34,28]);
+  const schedule=createTransitSchedule(controls,stations.map(s=>s.controlIndex));
+  stations.forEach((station,i)=>{
+    const t=schedule.stops[i]/schedule.speed+i*schedule.dwell+2;
+    const pose=schedule.sample(t);
+    assert.equal(pose.station,i);
+    assert.equal(pose.doors,1);
+    assert.ok(Math.hypot(...pose.position.map((v,a)=>v-[station.x,station.y,station.z][a]))<1e-8);
+    if(i>0){
+      assert.ok(Math.abs(station.y-station.roofY-1.2)<1e-8);
+      for(const index of [station.controlIndex-1,station.controlIndex+1]){
+        assert.equal(controls[index][0],station.x);
+        assert.equal(controls[index][1],station.y);
+        assert.ok(Math.abs(controls[index][2]-station.z)>=16);
+      }
+    }
+  });
+});

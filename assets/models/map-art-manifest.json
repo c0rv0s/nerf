@@ -1,0 +1,121 @@
+{
+  "generator": "Blender 5.2.1 LTS",
+  "assets": {
+    "statue_hermes": {
+      "vertices": 1435,
+      "triangles": 1814
+    },
+    "statue_sun": {
+      "vertices": 1219,
+      "triangles": 2062
+    },
+    "statue_guardian": {
+      "vertices": 1457,
+      "triangles": 2198
+    },
+    "statue_trident": {
+      "vertices": 1123,
+      "triangles": 1610
+    },
+    "statue_winged": {
+      "vertices": 1507,
+      "triangles": 2062
+    },
+    "statue_thunder": {
+      "vertices": 1069,
+      "triangles": 1534
+    },
+    "fish_tang": {
+      "vertices": 322,
+      "triangles": 488
+    },
+    "fish_butterfly": {
+      "vertices": 362,
+      "triangles": 560
+    },
+    "fish_parrot": {
+      "vertices": 322,
+      "triangles": 488
+    },
+    "fish_angel": {
+      "vertices": 362,
+      "triangles": 560
+    },
+    "fern": {
+      "vertices": 1939,
+      "triangles": 2338
+    },
+    "broadleaf": {
+      "vertices": 264,
+      "triangles": 352
+    },
+    "conservatory_leaf": {
+      "vertices": 21,
+      "triangles": 24
+    },
+    "kelp": {
+      "vertices": 208,
+      "triangles": 256
+    },
+    "mushrooms_0": {
+      "vertices": 978,
+      "triangles": 1644
+    },
+    "mushrooms_1": {
+      "vertices": 978,
+      "triangles": 1644
+    },
+    "mushrooms_2": {
+      "vertices": 978,
+      "triangles": 1644
+    },
+    "root_cluster": {
+      "vertices": 140,
+      "triangles": 260
+    },
+    "snail": {
+      "vertices": 916,
+      "triangles": 1796
+    },
+    "beetle": {
+      "vertices": 464,
+      "triangles": 880
+    },
+    "crab": {
+      "vertices": 582,
+      "triangles": 1080
+    },
+    "whale_body": {
+      "vertices": 760,
+      "triangles": 1324
+    },
+    "whale_fluke": {
+      "vertices": 84,
+      "triangles": 48
+    },
+    "whale_left_pec": {
+      "vertices": 42,
+      "triangles": 24
+    },
+    "whale_right_pec": {
+      "vertices": 42,
+      "triangles": 24
+    },
+    "shark_body": {
+      "vertices": 596,
+      "triangles": 804
+    },
+    "shark_tail": {
+      "vertices": 48,
+      "triangles": 28
+    },
+    "shark_left_pec": {
+      "vertices": 30,
+      "triangles": 16
+    },
+    "shark_right_pec": {
+      "vertices": 30,
+      "triangles": 16
+    }
+  }
+}
