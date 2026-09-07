@@ -331,7 +331,14 @@ export class Player {
     }
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
-    const hit = findGrappleAnchor(this.world, this.camera.position, direction);
+    const origin = this.camera.position.clone();
+    if (this.xrAim) {
+      direction.copy(this.xrAim.dir);
+      origin.copy(this.pos).addScaledVector(this.up,
+        this.eyeHeight * (this.world.characterVisualScale?.(this) || 1));
+      origin.add(new THREE.Vector3(this.xrAim.muzzle.x, this.xrAim.muzzle.y, this.xrAim.muzzle.z));
+    }
+    const hit = findGrappleAnchor(this.world, origin, direction);
     if (!hit) return false;
     this.grappleAttached = true;
     this.grappleAnchor = hit.point;
@@ -350,7 +357,11 @@ export class Player {
   _syncGrappleVisual() {
     if (!this.grappleVisual) return;
     const start = new THREE.Vector3();
-    if (this.grappleMuzzle) this.grappleMuzzle.getWorldPosition(start);
+    if (this.xrAim) {
+      start.copy(this.pos).addScaledVector(this.up,
+        this.eyeHeight * (this.world.characterVisualScale?.(this) || 1));
+      start.add(new THREE.Vector3(this.xrAim.muzzle.x, this.xrAim.muzzle.y, this.xrAim.muzzle.z));
+    } else if (this.grappleMuzzle) this.grappleMuzzle.getWorldPosition(start);
     else start.copy(this.camera.position);
     updateGrappleVisual(
       this.grappleVisual,
@@ -412,6 +423,11 @@ export class Player {
       .addScaledVector(dir, 1.1 * visualScale)
       .addScaledVector(right, handSide * 0.18 * visualScale)
       .addScaledVector(this.camera.up, -0.22 * visualScale);
+    if (this.xrAim) {
+      dir.copy(this.xrAim.dir);
+      origin.copy(this.pos).addScaledVector(this.up, this.eyeHeight * visualScale);
+      origin.add(new THREE.Vector3(this.xrAim.muzzle.x, this.xrAim.muzzle.y, this.xrAim.muzzle.z));
+    }
     fire(this, origin, dir, this.weapon);
     if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
     // Warmup weapons pay their entire firing delay before the shot releases.
@@ -546,7 +562,7 @@ export class Player {
         Math.cos(now * 0.009) * moving * 0.006,
       );
     }
-    this.camera.rotateX(this.cameraKick);
+    if (!this.vrActive) this.camera.rotateX(this.cameraKick);
 
     this.muzzleT = Math.max(0, this.muzzleT - dt);
     const flash = this.muzzleT > 0 ? this.muzzleT / 0.065 : 0;

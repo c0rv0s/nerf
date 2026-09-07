@@ -741,6 +741,12 @@ test('shot requests, life and seam frames survive relay and acknowledgements sur
   guest.send({type:'input',authorityEpoch:playing.authorityEpoch,seq:1,pos:{x:20,y:0,z:0},vel:{x:0,y:0,z:0},firing:false,shots:[request],life:0,motionEpoch:3});
   const input=(await host.waitFor(m=>m.type==='remoteInput'&&m.input.seq===1)).input;
   assert.equal(input.firing,false);assert.deepEqual(input.shots,[request]);assert.equal(input.motionEpoch,3);
+  const vrRequest = {...request, seq:2, vrMuzzle:{x:30,y:40,z:0}};
+  guest.send({type:'input',authorityEpoch:playing.authorityEpoch,seq:2,pos:{x:20,y:0,z:0},vel:{x:0,y:0,z:0},shots:[vrRequest],life:0});
+  const vrInput=(await host.waitFor(m=>m.type==='remoteInput'&&m.input.seq===2)).input;
+  assert.ok(Math.abs(Math.hypot(...Object.values(vrInput.shots[0].vrMuzzle))-1.5)<1e-10);
+  assert.deepEqual(vrInput.shots[0].aim,request.aim);
+
   host.send({type:'hostSnapshot',authorityEpoch:playing.authorityEpoch,seq:2,snapshot:{shotProtocol:1,players:[player(h.slotId),{...player(g.slotId),shotAck:1,motionEpoch:3,aim:{x:1,y:0,z:0},up:{x:1,y:0,z:0},ammo:{scatter:4}}],events:[],drops:[]}});
   const snap=await guest.waitFor(m=>m.type==='snapshot'&&m.seq===2);
   assert.equal(snap.shotProtocol,1);

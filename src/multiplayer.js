@@ -1,3 +1,4 @@
+import { boundedVRMuzzle } from './vr-input.js';
 import { MAPS } from './maps.js';
 import * as THREE from 'three';
 import { canVoteForMap } from './secret-maps.js';
@@ -131,9 +132,11 @@ class MultiplayerClient extends EventTarget {
     }
   }
 
-  recordShot(weapon, aim, up, life = 0) {
+  recordShot(weapon, aim, up, life = 0, vrMuzzle = null) {
     const shot = { seq: ++this.shotSeq, weapon, life, sampledAt: this.serverNow(),
       aim: {x:aim.x,y:aim.y,z:aim.z}, up: {x:up.x,y:up.y,z:up.z} };
+    const muzzle = boundedVRMuzzle(vrMuzzle);
+    if (muzzle) shot.vrMuzzle = muzzle;
     this.pendingShots.push(shot);
     // Input congestion has a finite memory budget; obsolete shots will be
     // acknowledged/rejected by authority rather than played back in a burst.
@@ -154,6 +157,7 @@ class MultiplayerClient extends EventTarget {
     }
     const aim = new THREE.Vector3(0, 0, -1);
     player.camera?.getWorldDirection?.(aim);
+    if (player.xrAim) aim.copy(player.xrAim.dir);
     this.seq++;
     return this.send({
       type: 'input',

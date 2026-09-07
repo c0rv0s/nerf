@@ -1,3 +1,4 @@
+import { boundedVRMuzzle } from '../src/vr-input.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -582,6 +583,7 @@ function handleMessage(conn, msg) {
           sampledAt: Math.max(now-10000,Math.min(now+100,finite(s.sampledAt,now))),
           aim:sanitizeUnitVec(s.aim,{x:0,y:0,z:-1}),
           up:sanitizeUnitVec(s.up,{x:0,y:1,z:0}),
+          ...(boundedVRMuzzle(s.vrMuzzle) ? {vrMuzzle: boundedVRMuzzle(s.vrMuzzle)} : {}),
         })) } : {}),
       yaw: finite(msg.yaw, slot.yaw),
       pitch: Math.max(-1.55, Math.min(1.55, finite(msg.pitch, slot.pitch))),

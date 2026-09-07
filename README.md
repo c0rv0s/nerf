@@ -28,6 +28,44 @@ The Node server serves the same static files, hosts `/ws` for continuous
 multiplayer lobbies, and exposes the Hall of Fame API at `/api/leaderboard`.
 Railway uses `npm start` via `railway.json`.
 
+## Oculus Rift / Touch VR
+
+On the Windows PC connected to the Rift, start the headset runtime and use a
+WebXR-capable browser such as Chrome or Edge. The PC must have an active OpenXR
+runtime that can see the Rift. Open the game over HTTPS, or run `npm start` on
+that PC and open `http://localhost:3000`. Plain HTTP on a LAN IP cannot start VR.
+
+Enter the lobby or an arena, close any menus, then click **ENTER VR** at the
+bottom right. Press Esc first if the mouse is captured. **VR SETUP** means the browser cannot currently detect immersive
+VR support. A failed session request shows the browser's error beside the button.
+
+| Touch control | Action |
+| --- | --- |
+| Left stick | Move in the direction you are looking |
+| Right stick left/right | Turn 30 degrees; release to turn again |
+| Right trigger | Fire the tracked blaster |
+| A | Jump; hold for swimming or jetpack thrust |
+| X | Next available weapon |
+| Right grip | Toggle grapple when equipped |
+| Left grip | Gallop on mounted maps |
+| Y | Recenter seated/standing position |
+| B | Exit VR to use desktop menus |
+
+Health, shield, weapon, ammo and round status appear inside the headset. Walk
+through an Atrium gate to enter an arena. Multiplayer lobby, voting, settings,
+and name-entry menus still use the desktop; press B to use them, then re-enter.
+VR uses direct stereo rendering without the desktop bloom compositor, camera
+shake, recoil rotation or animated death camera. Existing physics still apply,
+including jumping, vehicles and unusual gravity maps. Start with a normal arena.
+This is seated/standing controller locomotion: physical leaning moves the view,
+but room-scale walking does not move the collision capsule. Touch controllers
+are required for this control scheme; hand tracking is not implemented.
+
+Multiplayer keeps the existing shot protocol and includes an optional bounded
+controller muzzle offset. Older hosts can still receive shots but use their
+normal muzzle position. Controller poses are not yet shown on remote avatars.
+Hardware tracking, frame rate and comfort require a real Rift playtest.
+
 ## Hall of Fame database
 
 The Hall of Fame uses PostgreSQL whenever `DATABASE_URL` is present. On

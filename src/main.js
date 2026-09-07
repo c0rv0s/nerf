@@ -16,6 +16,8 @@ import {
   sphereHitsCylinderShell, sphereHitsEllipsoid, sphereHitsTriangleMesh, triangleMeshSurfaceY,
 } from './engine.js';
 import { Player } from './player.js';
+import { VRControls } from './vr.js';
+import { boundedVRMuzzle } from './vr-input.js';
 import { Bot, BOT_NAMES, buildBotMesh, syncJetpackVisual } from './bots.js';
 import {
   ProjectileSystem, FXPool, WEAPONS, WEAPON_ORDER, buildBlaster,
@@ -428,13 +430,34 @@ function finishMapLoading(token = mapLoadingToken) {
   setMapLoadingProgress(100, 'Arena ready', token);
   // Keep the cover through the first completed game frame. That prevents a
   // flash of an unrendered scene after the synchronous arena build finishes.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  requestPresentationFrame(() => requestPresentationFrame(() => {
     if (token === mapLoadingToken) mapLoadingScreen.hidden = true;
   }));
 }
 
+// Page RAF can stop while a headset owns presentation. Loading and podium
+// transitions must follow the same presentation clock as the game.
+function requestPresentationFrame(callback) {
+  const session = renderer.xr.getSession();
+  if (!session) return requestAnimationFrame(callback);
+  let done = false;
+  let xrId;
+  const finish = time => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(pageId);
+    session.cancelAnimationFrame(xrId);
+    callback(time);
+  };
+  // The page callback also lets an in-flight load finish if VR exits before
+  // its next headset frame. Only the first presentation callback does work.
+  const pageId = requestAnimationFrame(finish);
+  xrId = session.requestAnimationFrame(finish);
+  return pageId;
+}
+
 function paintLoadingStage() {
-  return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  return new Promise(resolve => requestPresentationFrame(() => setTimeout(resolve, 0)));
 }
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -551,14 +574,14 @@ function playSecretTransit(direction, onTransfer) {
     const fadeIn = smooth(0, 0.08, p);
     const fadeOut = 1 - smooth(0.82, 1, p);
     secretTransitCanvas.style.opacity = String(fadeIn * fadeOut);
-    if (p < 1) requestAnimationFrame(frame);
+    if (p < 1) requestPresentationFrame(frame);
     else {
       if (!transferred) onTransfer?.();
       secretTransitCanvas.style.display = 'none';
       secretTransitCanvas.style.opacity = '0';
     }
   };
-  requestAnimationFrame(frame);
+  requestPresentationFrame(frame);
 }
 
 // Post-processing: MSAA render target → bloom on emissives → tonemap/output
@@ -787,7 +810,28 @@ const foliageFx = document.getElementById('foliageFx');
 const hallucinationFx = document.getElementById('hallucinationFx');
 const hallucinationSpiral = document.getElementById('hallucinationSpiral');
 let G = null; // current match state (or the lobby)
-let rafId = 0;
+const vr = new VRControls({
+  renderer,
+  getGame: () => G,
+  canEnter: () => !mapLoadInProgress && !openingMultiplayer &&
+    !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
+  onEnter: () => {
+    document.exitPointerLock?.();
+    mobileControls.reset();
+    if (G) { G.paused = !!G.mpConnectionPaused; G.lastT = performance.now(); }
+    setStyle(clickcatch, 'display', 'none');
+    updatePauseMenuExtras(false);
+  },
+  onExit: () => {
+    if (G) {
+      G.paused = !!G.mpConnectionPaused || !(G.multiplayer || G.multiplayerHost);
+      G.lastT = performance.now();
+    }
+    setStyle(clickcatch, 'display', gameplayOverlayDisplay());
+    updatePauseMenuExtras(!!G && !G.atrium);
+  },
+});
+function startGameLoop() { renderer.setAnimationLoop(tick); }
 let mapLoadInProgress = false;
 let sharedFxPool = null;
 let selectedMode = 'ffa';
@@ -811,11 +855,11 @@ function usesMobileControls() {
 }
 
 function startsPausedForPointerLock() {
-  return !usesMobileControls() && document.pointerLockElement !== canvas;
+  return !vr.active && !usesMobileControls() && document.pointerLockElement !== canvas;
 }
 
 function gameplayOverlayDisplay() {
-  return usesMobileControls() || document.pointerLockElement === canvas ? 'none' : 'flex';
+  return vr.active || usesMobileControls() || document.pointerLockElement === canvas ? 'none' : 'flex';
 }
 
 function hierarchyPairs(source, copy) {
@@ -1003,6 +1047,7 @@ function clearMatchDrowningState(game = G) {
 function teardown() {
   clearVictoryPresentationUI();
   if (!G) return;
+  vr.releasePlayer();
   clearMatchDrowningState(G);
   mobilePauseOpen = false;
   mobileControls.reset();
@@ -1439,8 +1484,7 @@ async function startAtrium(existingLoadingToken = null) {
   requestPointerLock();
   hud.message('WALK INTO A GATE TO ENTER AN ARENA', '#ffd23c');
   G.lastT = performance.now();
-  cancelAnimationFrame(rafId);
-  rafId = requestAnimationFrame(tick);
+  startGameLoop();
   finishMapLoading(loadingToken);
 }
 
@@ -1530,8 +1574,7 @@ function startHallOfFame() {
   setStyle(clickcatch, 'display', gameplayOverlayDisplay());
   requestPointerLock();
   refreshHallLeaderboard(world);
-  cancelAnimationFrame(rafId);
-  rafId = requestAnimationFrame(tick);
+  startGameLoop();
 }
 
 function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken, freshMusic = true) {
@@ -1733,8 +1776,7 @@ function* createMatchStages(mapDef, mode = 'ffa', loadingToken = mapLoadingToken
   // Loading/compilation time is not a gameplay frame and must not influence
   // Auto's frame sampler when the first requestAnimationFrame arrives.
   G.lastT = performance.now();
-  cancelAnimationFrame(rafId);
-  rafId = requestAnimationFrame(tick);
+  startGameLoop();
   finishMapLoading(loadingToken);
 }
 
@@ -1940,8 +1982,7 @@ function startMultiplayerMatch(mapDef, mode = multiplayer.mode || 'ffa', freshMu
   if (freshMusic) startMatchMusic();
   else musicPlay();
   G.lastT = performance.now();
-  cancelAnimationFrame(rafId);
-  rafId = requestAnimationFrame(tick);
+  startGameLoop();
   finishMapLoading(loadingToken);
 }
 
@@ -2281,6 +2322,12 @@ function updateRemoteHuman(ch, dt, fire) {
     const side = ch.shotHandSide?.() || 1;
     const right = new THREE.Vector3().crossVectors(dir, up).normalize();
     origin.addScaledVector(right, side * 0.22 * visualScale);
+    const vrMuzzle = boundedVRMuzzle(shotRequest?.vrMuzzle);
+    if (vrMuzzle) {
+      origin.copy(ch.pos).addScaledVector(up,
+        (G.world.mounted ? 2.48 + HORSE_HEIGHT_DELTA : 1.6) * visualScale);
+      origin.add(new THREE.Vector3(vrMuzzle.x, vrMuzzle.y, vrMuzzle.z));
+    }
     fire(ch, origin, dir, ch.weapon || 'blaster');
     ch.finishWeaponShot(w, 0);
     if (commands && w.warmup) ch.cooldown = w.warmup;
@@ -3959,7 +4006,7 @@ function revealVictoryScreen(game) {
   const transition = game.victoryTransition;
   applyVictoryResultUI(transition.result);
   setStyle(endScreen, 'display', 'flex');
-  requestAnimationFrame(() => {
+  requestPresentationFrame(() => {
     if (G !== game || !game.podiumTransitioning) return;
     endScreen?.classList.add('visible');
     matchTransition?.classList.add('leaving');
@@ -4067,7 +4114,7 @@ function showVictoryPodium(result) {
   // Return to the browser first so the final action frame and the lightweight
   // letterbox can paint. Build the podium on the following frame instead of
   // making the clock-expiry tick do every piece of end-state work at once.
-  requestAnimationFrame(() => requestAnimationFrame(() => finishVictoryPodiumSetup(game)));
+  requestPresentationFrame(() => requestPresentationFrame(() => finishVictoryPodiumSetup(game)));
 }
 
 function updateVictoryPodium(dt) {
@@ -4735,7 +4782,7 @@ function setPauseScoreboardLayer(on) {
 }
 
 function requestPointerLock() {
-  if (usesMobileControls()) return;
+  if (vr.active || usesMobileControls()) return;
   if (!canvas.requestPointerLock) return;
   try {
     const request = canvas.requestPointerLock({ unadjustedMovement: true });
@@ -4823,7 +4870,7 @@ const mobileControls = new MobileControls({
   },
   onPause: openMobilePause,
   onEngage: enterMobileImmersiveMode,
-  shouldShow: () => !!G && !G.over && !G.paused && !mobilePauseOpen && !mapLoadInProgress &&
+  shouldShow: () => !vr.active && !!G && !G.over && !G.paused && !mobilePauseOpen && !mapLoadInProgress &&
     !G.mpConnectionPaused && !(multiplayer.overlay && !multiplayer.overlay.hidden) && !multiplayer.isChatOpen(),
   shouldShowGrapple: () => !!(G?.world?.grappleEnabled && G?.player?.grapple),
 });
@@ -4833,7 +4880,7 @@ setupPwaInstall({
 });
 
 document.addEventListener('pointerlockchange', () => {
-  if (usesMobileControls()) return;
+  if (vr.active || usesMobileControls()) return;
   const locked = document.pointerLockElement === canvas;
   if (G && !G.over) {
     if (!locked) {
@@ -5252,9 +5299,16 @@ multiplayer.addEventListener('disconnect', () => {
 });
 
 /* ---------------- main loop ---------------- */
-function tick(now) {
+function tick(now, xrFrame) {
   if (!G) return;
   mobileControls.sync();
+  vr.beforeFrame(xrFrame, renderPass.scene, mapLoadInProgress || !mapLoadingScreen?.hidden || openingMultiplayer ||
+    !!(multiplayer.overlay && !multiplayer.overlay.hidden) || multiplayer.isChatOpen());
+  if (mapLoadInProgress || !mapLoadingScreen?.hidden) {
+    if (vr.active) vr.render(renderPass.scene);
+    G.lastT = now;
+    return;
+  }
   if (G.multiplayer && multiplayer.phase === 'playing' && !G.mpConnectionPaused &&
       now - (G.mpLastSnapshotAt || now) > MP_SNAPSHOT_STALL_MS) {
     // A host frame hitch is not a socket disconnect. Hard-pausing here used to
@@ -5275,13 +5329,13 @@ function tick(now) {
     G.lastStepWall = now;
     step(dt);
   } else setJetpackThrust(false);
-  updateDeathCamera(dt);
+  if (!vr.active) updateDeathCamera(dt);
   updateUnderwaterFx(dt);
   updateFoliageFx(dt);
   updateHallucinationFx(dt);
   renderFrame();
   const workMs = performance.now() - workStartedAt;
-  if (!G.paused && !G.over) {
+  if (!vr.active && !G.paused && !G.over) {
     recordPerformanceSample(frameMs, workMs);
     updateAdaptiveRenderScale(frameMs, workMs);
   }
@@ -5297,9 +5351,8 @@ function tick(now) {
     const map = G.pendingMap;
     G.pendingMap = null;
     queueMapLoad(map, selectedMode);
-    return; // startMatch scheduled its own loop
+    return;
   }
-  rafId = requestAnimationFrame(tick);
 }
 
 function renderFrame() {
@@ -5316,6 +5369,7 @@ function renderFrame() {
     pickups: G.pickups?.items,
     lowQuality: usesLightRenderPath(),
   });
+  if (vr.active) { vr.render(renderPass.scene); return; }
   const shake = G.world.cameraShake || 0;
   const savedPosition = shake > 0 ? camera.position.clone() : null;
   const savedQuaternion = shake > 0 ? camera.quaternion.clone() : null;
@@ -6678,7 +6732,7 @@ function stepMultiplayer(dt) {
   G.world.updateDoors?.(G.characters, dt);
   updateStormAudio();
   const fire = (owner, origin, dir, weaponId) => {
-    if (multiplayer.lastSnapshot?.shotProtocol === 1) multiplayer.recordShot(weaponId, dir, owner.up, owner.deaths || 0);
+    if (multiplayer.lastSnapshot?.shotProtocol === 1) multiplayer.recordShot(weaponId, dir, owner.up, owner.deaths || 0, owner.xrAim?.muzzle);
     G.projectiles.fire(owner, origin, dir, weaponId);
   };
   const moveHook = G.world.postCharacterMove;
