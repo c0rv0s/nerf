@@ -60,6 +60,7 @@
   <body>
     <aside>
       <select id="map" aria-label="Map">
+        <option value="atrium">Atrium</option>
         <option value="canopy">Canopy</option>
         <option value="olympus">Olympus Mons</option>
         <option value="reef">Sunken Reef</option>
@@ -81,7 +82,7 @@
     <script type="module">
       import * as THREE from "three";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-      import { MAPS, texturesReady } from "/src/maps.js";
+      import { MAPS, buildAtrium, texturesReady } from "/src/maps.js";
       import { triangleMeshSurfaceY, pointHitsWorld } from "/src/engine.js";
       import { auditEnvironment } from "/tools/map-audit.js";
       const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -100,6 +101,7 @@
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       const views = {
+        atrium: {Overview: [[70,60,85],[0,8,0]], Arrival: [[0,2.2,43],[0,10,-35]], Fountain: [[19,2.2,9],[0,12,-28]], Gates: [[-12,2.2,0],[-31,12,-12]], Skylight: [[0,2.2,20],[0,32,-15]], Cabinets: [[-23,2.2,3],[-29,1.8,0]]},
         tidebreaker: {Overview: [[80,44,80],[0,0,0]], Ocean: [[120,20,40],[145,0,-55]]},
         orrery: {
           Overview: [[91,58,93],[0,16,0]],
@@ -354,7 +356,7 @@
         }
         document.querySelector("#map").value = id;
         scene = new THREE.Scene();
-        world = MAPS.find((m) => m.id === id).build(scene);
+        world = id === "atrium" ? buildAtrium(scene) : MAPS.find((m) => m.id === id).build(scene);
         mapId = id;
         renderer.toneMappingExposure = world.toneMappingExposure || 1;
         document.querySelector("#views").replaceChildren(

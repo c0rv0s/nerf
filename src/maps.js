@@ -11528,6 +11528,112 @@ function addAtriumGateBrickFrame(scene, world, id, color, px, pz, horiz, baseY =
   }
 }
 
+function addAtriumArcadePlaza(scene, world) {
+  const shell = 0x332a50, trim = 0x615579, metal = 0x192539;
+  const detail = { collide: false, shadow: false };
+  const beam = (a, b, radius, color) => {
+    const start = V(...a), end = V(...b), delta = end.clone().sub(start);
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 6), mat(color));
+    mesh.position.copy(start.add(end).multiplyScalar(0.5));
+    mesh.quaternion.setFromUnitVectors(V(0, 1, 0), delta.normalize());
+    scene.add(mesh);
+  };
+  // A single open hall: the arena frontages own the full wall height.
+  for (const side of [-1, 1]) {
+    addBox(scene, world, side * 34, 19.5, 0, 2, 15, 99, shell);
+    addBox(scene, world, side * 32, 26.5, 0, 4, 1, 99, shell);
+    addBox(scene, world, 0, 20, side * 50, 70, 16, 2, shell);
+    addBox(scene, world, 0, 26.5, side * 49, 70, 1, 4, shell);
+    const neon = side < 0 ? 0xff40b5 : 0x36deff;
+    for (const [z, length] of [[25, 30], [-27, 26]]) {
+      addBox(scene, world, side * 6.2, 0.15, z, 0.14, 0.05, length, neon,
+        { ...detail, emissive: neon, emissiveIntensity: 1.1 });
+    }
+    addBox(scene, world, side * 30, 26.15, 0, 0.14, 0.16, 96, neon,
+      { ...detail, emissive: neon, emissiveIntensity: 1.2 });
+  }
+  // Barrel-vaulted skylight. One glass shell, repeated slender ribs and purlins.
+  const points = [], indices = [];
+  const roofPoint = (i, z) => {
+    const a = i / 32 * Math.PI;
+    return [32 * Math.cos(a), 27 + 14 * Math.sin(a), z];
+  };
+  for (let i = 0; i <= 32; i++) points.push(...roofPoint(i, -49), ...roofPoint(i, 49));
+  for (let i = 0; i < 32; i++) {
+    const n = i * 2;
+    indices.push(n, n + 1, n + 2, n + 1, n + 3, n + 2);
+  }
+  const roof = new THREE.BufferGeometry();
+  roof.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+  roof.setIndex(indices); roof.computeVertexNormals();
+  const glass = new THREE.Mesh(roof, new THREE.MeshStandardMaterial({ color: 0xb9dce0, transparent: true, opacity: 0.22, roughness: 0.22, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false }));
+  glass.name = 'atrium-arcade-skylight'; scene.add(glass);
+  for (const z of [-49, 49]) {
+    const vertices = [0, 27, z], faces = [];
+    for (let i = 0; i <= 32; i++) vertices.push(...roofPoint(i, z));
+    for (let i = 1; i <= 32; i++) faces.push(0, i, i + 1);
+    const end = new THREE.BufferGeometry();
+    end.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    end.setIndex(faces); end.computeVertexNormals();
+    scene.add(new THREE.Mesh(end, glass.material));
+    for (let i = 2; i < 32; i += 4) {
+      const top = roofPoint(i, z);
+      beam([top[0], 27, z], top, 0.09, metal);
+    }
+  }
+
+  for (const z of [-49, -36, -24, -12, 0, 12, 24, 36, 49]) {
+    const curve = new THREE.CatmullRomCurve3(Array.from({ length: 33 }, (_, i) => V(...roofPoint(i, z))));
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 32, 0.22, 6, false), mat(shell)));
+  }
+  for (let i = 0; i <= 32; i += 2) beam(roofPoint(i, -49), roofPoint(i, 49), 0.09, metal);
+  // Small islands keep the central promenade and the fountain pressure plate clear.
+  for (const x of [-8.5, 8.5]) for (const z of [-28, 23]) {
+    addBox(scene, world, x, 0.5, z, 4.6, 1, 6, shell);
+    addBox(scene, world, x, 1.04, z, 4.1, 0.12, 5.5, 0x484d33, detail);
+    addOlympusConservatoryTree(scene, world, x, 1.1, z, 7.5, Math.round(z + x + 50));
+    for (const dz of [-1.9, 1.9]) addOlympusConservatoryPlant(scene, world, x, 1.1, z + dz, 0.6, Math.round(z + 35));
+    for (const dx of [-3.1, 3.1]) {
+      addBox(scene, world, x + dx, 0.75, z, 1.3, 0.35, 5, 0x7054a3);
+      for (const dz of [-1.8, 1.8]) addBox(scene, world, x + dx, 0.32, z + dz, 0.7, 0.64, 0.4, metal);
+    }
+  }
+  // Cabinet banks occupy the gaps between portal bays, facing the promenade.
+  const screenTextures = [0xff40b5, 0x36deff, 0x8c75ff].map((color, index) => {
+    const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 160;
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#080d25'; g.fillRect(0, 0, 128, 160);
+    const ink = '#' + color.toString(16).padStart(6, '0');
+    g.strokeStyle = ink; g.lineWidth = 2;
+    for (let y = 65; y < 160; y += 15) { g.beginPath(); g.moveTo(0, y); g.lineTo(128, y); g.stroke(); }
+    for (let x = -180; x <= 300; x += 48) { g.beginPath(); g.moveTo(64, 52); g.lineTo(x, 160); g.stroke(); }
+    g.fillStyle = '#fff'; g.font = 'bold 15px monospace'; g.textAlign = 'center';
+    g.fillText(['BLAST', 'REVIVAL', 'HI SCORE'][index], 64, 23);
+    g.fillStyle = ink; g.fillRect(53, 83, 22, 14); g.fillRect(61, 73, 6, 10);
+    for (let i = 0; i < 5; i++) g.fillRect(15 + i * 22, 38 + (i % 2) * 10, 8, 7);
+    const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  });
+  for (const side of [-1, 1]) for (const bay of [-24, 0, 24]) for (const offset of [-3, 3]) {
+    const x = side * 29.2, z = bay + offset;
+    const index = (bay / 24 + 1 + (offset > 0 ? 1 : 0)) % 3;
+    const color = [0xff40b5, 0x36deff, 0x8c75ff][index];
+    addBox(scene, world, x, 1.65, z, 1.6, 3.3, 2.1, 0x161b30);
+    addBox(scene, world, x - side * 0.87, 1.15, z, 0.5, 0.2, 2.2, 0x46536e);
+    addBox(scene, world, x - side * 0.83, 3.06, z, 0.12, 0.2, 1.85, color,
+      { ...detail, emissive: color, emissiveIntensity: 1.1 });
+    for (const dz of [-0.95, 0.95]) addBox(scene, world, x - side * 0.83, 2.05, z + dz, 0.12, 1.6, 0.07, color,
+      { ...detail, emissive: color, emissiveIntensity: 0.7 });
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.55),
+      new THREE.MeshBasicMaterial({ map: screenTextures[index] }));
+    screen.position.set(x - side * 0.815, 2.1, z); screen.rotation.y = -side * Math.PI / 2;
+    scene.add(screen);
+    addBox(scene, world, x - side * 0.95, 1.34, z - 0.45, 0.12, 0.24, 0.12, color, detail);
+    for (const dz of [0.15, 0.4, 0.65]) addBox(scene, world, x - side * 0.98, 1.28, z + dz, 0.14, 0.07, 0.14, color, detail);
+  }
+  flushOlympusConservatoryFoliage(scene, world);
+}
+
 export function buildAtrium(scene) {
   const world = newWorld({ killY: -75, playerSpeed: 12.5 });
   scene.background = new THREE.Color(0xd99cb0);
@@ -11538,21 +11644,23 @@ export function buildAtrium(scene) {
 
   // Courtyard floor, split around the full 14×10 fountain basin. Its one-piece
   // submerged floor seals this entire footprint until the north plate retracts it.
-  addBox(scene, world, -19.5, -0.5, 0, 25, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [4, 12] });
-  addBox(scene, world, 19.5, -0.5, 0, 25, 1, 96, 0x8a8598, { tex: 'neonfloor', repeat: [4, 12] });
-  addBox(scene, world, 0, -0.5, -26.5, 14, 1, 43, 0x8a8598, { tex: 'neonfloor', repeat: [2, 6] });
-  addBox(scene, world, 0, -0.5, 26.5, 14, 1, 43, 0x8a8598, { tex: 'neonfloor', repeat: [2, 6] });
-  addBox(scene, world, 0, 6, -49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
-  addBox(scene, world, 0, 6, 49.5, 70, 12, 3, 0x6a5f88, { tex: 'neonwall', repeat: [9, 2] });
-  addBox(scene, world, -33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
+  addBox(scene, world, -19.5, -0.5, 0, 25, 1, 96, 0x424459, { tex: 'neonfloor', repeat: [4, 12] });
+  addBox(scene, world, 19.5, -0.5, 0, 25, 1, 96, 0x424459, { tex: 'neonfloor', repeat: [4, 12] });
+  addBox(scene, world, 0, -0.5, -26.5, 14, 1, 43, 0x424459, { tex: 'neonfloor', repeat: [2, 6] });
+  addBox(scene, world, 0, -0.5, 26.5, 14, 1, 43, 0x424459, { tex: 'neonfloor', repeat: [2, 6] });
+  addBox(scene, world, 0, 6, -49.5, 70, 12, 3, 0x332a50);
+  addBox(scene, world, 0, 6, 49.5, 70, 12, 3, 0x332a50);
+  addBox(scene, world, -33.5, 6, 0, 3, 12, 99, 0x332a50);
   // The former secret hallway is gone; the east wall is once again a complete
   // atrium boundary. Secret-map discovery now happens above the fountain.
-  addBox(scene, world, 33.5, 6, 0, 3, 12, 99, 0x6a5f88, { tex: 'neonwall', repeat: [12, 2] });
+  addBox(scene, world, 33.5, 6, 0, 3, 12, 99, 0x332a50);
 
-  // Central fountain with matching lawn runs on both sides. End rim slabs own
+  addAtriumArcadePlaza(scene, world);
+
+  // Central fountain with matching trim inlays on both sides. End rim slabs own
   // the corners; side slabs stop between them so their top faces never overlap.
-  addBox(scene, world, 0, 0.06, 25, 12, 0.14, 30, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 5] });
-  addBox(scene, world, 0, 0.06, -25, 12, 0.14, 30, 0x3f7a35, { tex: 'atrium-grass', repeat: [2, 5] });
+  addBox(scene, world, 0, 0.06, 25, 12, 0.14, 30, 0x252b43, { tex: 'neonfloor', repeat: [2, 5] });
+  addBox(scene, world, 0, 0.06, -25, 12, 0.14, 30, 0x252b43, { tex: 'neonfloor', repeat: [2, 5] });
   addBox(scene, world, 0, 0.45, 6, 16, 0.9, 2, 0x555a74, { tex: 'panel' });   // pool rim
   addBox(scene, world, 0, 0.45, -6, 16, 0.9, 2, 0x555a74, { tex: 'panel' });
   addBox(scene, world, -8, 0.45, 0, 2, 0.9, 10, 0x555a74, { tex: 'panel' });
@@ -11564,9 +11672,8 @@ export function buildAtrium(scene) {
 
   // The atrium's visual anchor: a large two-tier arcade wordmark rather than a
   // stretched version of the small utility sign component.
-  addAtriumHeroSign(scene, 0, 16.2, -48.5);
-  addBox(scene, world, -11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
-  addBox(scene, world, 11, 12.7, -48.5, 0.4, 1.8, 0.4, 0x3a3452);
+  addAtriumHeroSign(scene, 0, 25.2, -45.2);
+
 
   // Gate bays. The long side walls hold the eight arenas. Keep the Hall of
   // Fame frontage clear, with the Orrery beside multiplayer on the rear wall.
@@ -11589,23 +11696,36 @@ export function buildAtrium(scene) {
     const sgn = (wall === 'e' || wall === 's') ? 1 : -1;
     const px = horiz ? off : sgn * 31.2, pz = horiz ? sgn * 47.2 : off;  // back face flush with wall
     const frameId = id === 'orrery' ? 'fortress' : id === 'hall' ? 'arena' : id === 'multiplayer' ? 'sanctum' : id;
+    const openingHeight = ATRIUM_GATE_OPENING_HEIGHT;
+    const openingWidth = ATRIUM_GATE_OPENING_WIDTH;
+    addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, horiz);
+    // Suspended attraction signs fill the high wall without stretching the door.
+    for (const u of [-6, 6]) {
+      addBox(scene, world, horiz ? px + u : sgn * 30.2, 22.3,
+        horiz ? sgn * 46.2 : pz + u,
+        0.13, 7.4, 0.13, 0x65718b, { collide: false });
+    }
+    for (const [y, width] of [[12.6, 4.2], [11.6, 2.8], [10.6, 1.4]]) {
+      addBox(scene, world, horiz ? px : sgn * 30.2, y,
+        horiz ? sgn * 46.2 : pz,
+        horiz ? width : 0.12, 0.17, horiz ? 0.12 : width, color,
+        { collide: false, shadow: false, emissive: color, emissiveIntensity: 0.85 });
+    }
     if (horiz) {
-      addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, true);
-      addMagicPortal(scene, world, px, ATRIUM_GATE_OPENING_HEIGHT / 2, pz + sgn * 0.82,
-        ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT,
+      addMagicPortal(scene, world, px, openingHeight / 2, pz + sgn * 0.82,
+        openingWidth, openingHeight,
         color, sgn === -1 ? 0 : Math.PI);
     } else {
-      addAtriumGateBrickFrame(scene, world, frameId, color, px, pz, false);
-      addMagicPortal(scene, world, px + sgn * 0.82, ATRIUM_GATE_OPENING_HEIGHT / 2, pz,
-        ATRIUM_GATE_OPENING_WIDTH, ATRIUM_GATE_OPENING_HEIGHT,
+      addMagicPortal(scene, world, px + sgn * 0.82, openingHeight / 2, pz,
+        openingWidth, openingHeight,
         color, -sgn * Math.PI / 2);
     }
     // Oversized attraction marquees echo the original Arena Blast atrium.
     // Pull them slightly into the room so their transparent wings clear the wall.
     addAtriumMarquee(scene, id, name, color,
-      horiz ? px : sgn * 31.86, 10.45, horiz ? sgn * 47.9 : pz,
+      horiz ? px : sgn * 29.6, 17.5, horiz ? sgn * 45.6 : pz,
       horiz ? (sgn === -1 ? 0 : Math.PI) : -sgn * Math.PI / 2,
-      horiz ? 16.5 : 15.5);
+      19.5);
     const L = new THREE.PointLight(color, 26, 20);
     L.position.set(horiz ? px : px - sgn * 2.5, 4.5, horiz ? pz - sgn * 2.5 : pz);
     scene.add(L);
@@ -11617,11 +11737,11 @@ export function buildAtrium(scene) {
   addAtriumSecretObservatory(scene, world, fountain);
   addAtriumUnderwaterChamber(scene, world);
 
-  // Flower borders flank both halves of the boulevard without running beneath
+  // Pale tile borders flank both halves of the promenade without running beneath
   // the centered fountain.
   for (const x of [-8.5, 8.5]) {
-    addBox(scene, world, x, 0.036, 25, 5, 0.07, 30, 0xd8a8c8, { tex: 'flowers', repeat: [1, 5] });
-    addBox(scene, world, x, 0.036, -25, 5, 0.07, 30, 0xd8a8c8, { tex: 'flowers', repeat: [1, 5] });
+    addBox(scene, world, x, 0.036, 25, 5, 0.07, 30, 0x3c3860, { tex: 'neonfloor', repeat: [1, 5] });
+    addBox(scene, world, x, 0.036, -25, 5, 0.07, 30, 0x3c3860, { tex: 'neonfloor', repeat: [1, 5] });
   }
 
   // controls board to the left of spawn (replaces the old overlay text).
