@@ -14,7 +14,7 @@ await page.addInitScript({content:readFileSync(iwerBundle,'utf8')+`
 window.xrDevice=new IWER.XRDevice({...IWER.oculusQuest1,userAgent:navigator.userAgent},{stereoEnabled:true});xrDevice.installRuntime({forceInstall:true});xrDevice.position.set(0,1.6,0);
 // Exercise mixed/predicted timestamp resilience, not only the emulator's page clock.
 const request=navigator.xr.requestSession.bind(navigator.xr);
-navigator.xr.requestSession=async(...args)=>{const s=await request(...args);const raf=s.requestAnimationFrame.bind(s);s.requestAnimationFrame=cb=>raf((t,f)=>{window.xrCallbackCount=(window.xrCallbackCount||0)+1;cb(t+50,f)});return s;};
+navigator.xr.requestSession=async(...args)=>{const s=await request(...args);window.xrTestSession=s;const raf=s.requestAnimationFrame.bind(s);s.requestAnimationFrame=cb=>raf((t,f)=>{window.xrCallbackCount=(window.xrCallbackCount||0)+1;cb(t+50,f)});return s;};
 `});
 if(process.env.REPRO_OLD==='1') await page.route('**/src/main.js*',async route=>{
  const response=await route.fetch();let source=await response.text();const original=source;
@@ -61,7 +61,8 @@ assert.equal(await page.evaluate(()=>__game().player.moveInput.forward),1);
 console.log('held-stick map interlock passed');
 await page.evaluate(()=>xrDevice.controllers.right.updateButtonValue('b-button',1));
 await page.waitForFunction(()=>__vr().paused,{timeout:15000});
-await page.evaluate(()=>document.querySelector('#vr-entry button').click());
+assert.equal(await page.evaluate(()=>__vr().active),true);
+await page.evaluate(()=>window.xrTestSession.end());
 await page.waitForFunction(()=>!__game().player.vrActive,{timeout:15000});
 assert.deepEqual(errors,[]);console.log('desktop restored',await page.evaluate(()=>({pixelRatio:__perf().pixelRatio,shadows:__perf().shadows,paused:__game().paused})));console.log('PASS');
 }finally{await browser.close();}

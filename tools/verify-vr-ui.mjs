@@ -10,7 +10,7 @@ const browser=await chromium.launch({headless:true,channel:'chrome',args:['--ena
 try {
 const context=await browser.newContext({viewport:{width:1000,height:800},ignoreHTTPSErrors:true});
 const page=await context.newPage();const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('ERROR',e.message)});
-await page.addInitScript({content:readFileSync(iwerBundle,'utf8')+`\nwindow.xrDevice=new IWER.XRDevice({...IWER.oculusQuest1,userAgent:navigator.userAgent},{stereoEnabled:true});xrDevice.installRuntime({forceInstall:true});xrDevice.position.set(0,1.6,0);`});
+await page.addInitScript({content:readFileSync(iwerBundle,'utf8')+`\nwindow.xrDevice=new IWER.XRDevice({...IWER.oculusQuest1,userAgent:navigator.userAgent},{stereoEnabled:true});xrDevice.installRuntime({forceInstall:true});xrDevice.position.set(0,1.6,0);const request=navigator.xr.requestSession.bind(navigator.xr);navigator.xr.requestSession=async(...args)=>window.xrTestSession=await request(...args);`});
 await page.goto(new URL('?quality=low',process.env.NERF_TEST_URL || 'http://localhost:3000').href,{waitUntil:'domcontentloaded'});
 await page.waitForFunction(()=>window.__game?.()?.player&&document.getElementById('maploading').hidden,{timeout:120000});
 await page.evaluate(()=>document.exitPointerLock?.());
@@ -21,7 +21,7 @@ await page.waitForTimeout(200);assert.equal(await page.locator('#vr-entry').isVi
 const button=async(hand,id,value)=>{await page.evaluate(({hand,id,value})=>xrDevice.controllers[hand].updateButtonValue(id,value),{hand,id,value});await page.waitForTimeout(120);};
 const press=async(hand,id)=>{await button(hand,id,1);await button(hand,id,0);};
 const atlas=async(name)=>{const data=await page.evaluate(name=>__vr().ui[name].canvas.toDataURL(),name);writeFileSync(`/tmp/nerf-vr-${name}.png`,Buffer.from(data.split(',')[1],'base64'));};
-const clickMenu=async(id)=>{
+const clickMenu=async(id,confirmButton='trigger')=>{
  await page.evaluate(async id=>{
   const T=await import('three');const v=__vr(), ui=v.ui, b=ui.buttons.find(b=>b.id===id);
   ui.menu.mesh.updateWorldMatrix(true,false);
@@ -34,11 +34,11 @@ const clickMenu=async(id)=>{
  },id);
  await page.waitForTimeout(200);
  assert.equal(await page.evaluate(()=>{const u=__vr().ui;return u.buttons[u.hovered]?.id}),id);
- await press('right','trigger');
+ await press('right',confirmButton);
 };
 await press('right','b-button');
 assert.equal(await page.evaluate(()=>__vr().active&&__vr().paused&&__game().paused),true);
-assert.equal(await page.locator('#vr-entry').isVisible(),true);
+assert.equal(await page.locator('#vr-entry').isVisible(),false);
 await atlas('menu');
 await clickMenu('resume');assert.equal(await page.evaluate(()=>__vr().paused),false);
 console.log('B pauses without exiting; ray-selected resume works');
@@ -47,7 +47,7 @@ await page.waitForFunction(()=>__game()?.mapDef?.id==='canopy'&&document.getElem
 await page.evaluate(()=>{const p=__game().player;p.grapple=true;p.hp=20;p.shield=35;p.weapons.scatter=true;p.ammo.scatter=2;p.switchWeapon('scatter');xrDevice.controllers.right.quaternion.set(0,0,0,1);xrDevice.controllers.left.quaternion.set(Math.sin(.3),0,0,Math.cos(.3));});
 await page.waitForTimeout(200);
 await atlas('vitals');
-await press('right','b-button');const pausedTime=await page.evaluate(()=>__game().timeLeft);await page.waitForTimeout(250);assert.equal(await page.evaluate(()=>__game().timeLeft),pausedTime);await press('right','b-button');await page.waitForTimeout(150);
+await press('right','b-button');const pausedTime=await page.evaluate(()=>__game().timeLeft);await page.waitForTimeout(250);assert.equal(await page.evaluate(()=>__game().timeLeft),pausedTime);await page.evaluate(()=>{__vr().ui.selected=1;});await clickMenu('resume','a-button');await page.waitForTimeout(150);
 const aim=await page.evaluate(()=>({gun:__game().player.xrAim.dir.toArray(),grapple:__game().player.xrGrappleAim.dir.toArray(),leftVisible:__vr().grappleGun.visible,leftParent:__vr().grappleGun.parent.userData.source.handedness}));
 assert.equal(aim.leftParent,'left');assert.equal(aim.leftVisible,true);assert.notDeepEqual(aim.gun,aim.grapple);
 // Put a known grapple target on the left-hand ray, independently of the gun ray.
@@ -67,6 +67,8 @@ await page.waitForFunction(()=>__game()?.scene?.userData?.end&&__vr().podium,{ti
 await page.waitForTimeout(500);
 const podium=await page.evaluate(async()=>{const T=await import('three'),v=__vr();return {distance:v.camera.getWorldPosition(new T.Vector3()).distanceTo(v.podium.lookAt),visible:v.ui.menu.mesh.visible,result:v.ui.menu.key};});
 assert.ok(podium.distance<20);assert.equal(podium.visible,true);assert.match(podium.result,/2400/);
+assert.deepEqual(await page.evaluate(()=>__vr().ui.buttons.map(b=>b.id)),['atrium']);
+await press('right','b-button');assert.equal(await page.evaluate(()=>__vr().active&&__game().over),true);await press('right','b-button');
 await atlas('menu');await page.screenshot({path:'/tmp/nerf-vr-podium-stereo.png'});
 await page.evaluate(()=>xrDevice.quaternion.set(0,Math.sin(-.255),0,Math.cos(-.255)));
 await page.waitForTimeout(200);
@@ -75,7 +77,9 @@ await clickMenu('atrium');
 await page.waitForFunction(()=>__game()?.atrium&&document.getElementById('maploading').hidden&&__game().player.vrActive,{timeout:120000});
 await page.evaluate(()=>xrDevice.quaternion.set(0,0,0,1));await page.waitForTimeout(200);
 assert.equal(await page.evaluate(()=>__vr().active),true);console.log('podium visible; scores and ray-selected Atrium work without leaving VR');
-await press('right','b-button');await clickMenu('exit');
+await press('right','b-button');assert.equal(await page.evaluate(()=>__vr().active),true);
+assert.equal(await page.evaluate(()=>__vr().ui.buttons.some(b=>b.id==='exit')),false);
+await page.evaluate(()=>window.xrTestSession.end());
 await page.waitForFunction(()=>!__vr().active,{timeout:15000});
 assert.deepEqual(errors,[]);console.log('PASS');
 }finally{await browser.close();}

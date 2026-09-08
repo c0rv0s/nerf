@@ -113,8 +113,8 @@ export class VRUI {
     this.menu.mesh.position.set(sidePanel ? 1.23 : 0, game.over ? -0.08 : 0, game.over ? -2.2 : -1.8);
     const ranked = game.victoryTransition?.result?.ranked || [...(game.characters || [])].sort((a,b)=>(b.score||0)-(a.score||0));
     const rows = ranked.slice(0,8);
-    const actions = game.over ? [['atrium','BACK TO ATRIUM'],['exit','EXIT VR']] :
-      [['resume','RESUME'], ...(game.atrium ? [] : [['atrium','BACK TO ATRIUM']]), ['exit','EXIT VR']];
+    const actions = game.over ? [['atrium','BACK TO ATRIUM']] :
+      [['resume','RESUME'], ...(game.atrium ? [] : [['atrium','BACK TO ATRIUM']])];
     this.buttons = actions.map(([id,label],i)=>({id,label,x:50,y:790+i*94,w:924,h:76}));
     this.selected = Math.min(this.selected,this.buttons.length-1);
     const result = game.victoryTransition?.result;
@@ -163,7 +163,7 @@ export class VRUI {
     }
     this.previousAxis=axis;
     if (trigger && this.hovered >= 0) return this.buttons[this.hovered]?.id;
-    if (confirm) return this.buttons[this.selected]?.id;
+    if (confirm) return this.buttons[this.hovered >= 0 ? this.hovered : this.selected]?.id;
     return null;
   }
 }

@@ -46,7 +46,7 @@ export class VRControls {
       this.previous = {};
       this.turnLatched = false;
       this.onEnter();
-      this.button.textContent = 'EXIT VR';
+      this.syncButton();
     });
     renderer.xr.addEventListener('sessionend', () => {
       this.releasePlayer();
@@ -78,7 +78,7 @@ export class VRControls {
     root.append(this.status, this.button);
     document.body.appendChild(root);
     this.button.addEventListener('click', async () => {
-      if (this.active) { await this.exit(); return; }
+      if (this.active) return;
       if (!this.supported || !this.isPaused()) return;
       if (!this.getGame() || !this.canEnter()) {
         this.status.textContent = 'Enter the lobby or an arena and close any menus, then select ENTER VR.';
@@ -140,7 +140,7 @@ export class VRControls {
   }
 
   syncButton() {
-    this.root.style.display = this.isPaused() ? 'flex' : 'none';
+    this.root.style.display = !this.active && this.isPaused() ? 'flex' : 'none';
   }
 
   setPaused(value) {
@@ -157,11 +157,6 @@ export class VRControls {
     }
     this.onPause(this.paused);
     this.syncButton();
-  }
-
-  async exit() {
-    try { await this.renderer.xr.getSession()?.end(); }
-    catch (error) { this.status.textContent = `Could not exit VR: ${error.message}`; }
   }
 
   syncRig(player) {
@@ -220,7 +215,8 @@ export class VRControls {
     const left = this.controllers.find(c => c.userData.source?.handedness === 'left');
     const rb = readVRButtons(right?.userData.source?.gamepad);
     const lb = readVRButtons(left?.userData.source?.gamepad);
-    if (rb.secondary && !this.previous.pause) this.setPaused(!this.paused);
+    const pausePressed = rb.secondary && !this.previous.pause;
+    if (pausePressed) this.setPaused(!this.paused);
     if (lb.secondary && !this.previous.center) this.center.copy(this.head);
     const stick = vrStick(left?.userData.source?.gamepad);
     const rightStick = vrStick(right?.userData.source?.gamepad);
@@ -292,13 +288,12 @@ export class VRControls {
       performance.now() / 1000);
     this.ui.update(game, { paused: this.paused, blocked, needsNeutral: this.needsNeutral, awards: this.getAwards() });
     const action = this.ui.interact(right, {
-      trigger: rb.fire && !this.previous.fire,
-      confirm: rb.jump && !this.previous.jump,
+      trigger: !pausePressed && rb.fire && !this.previous.fire,
+      confirm: !pausePressed && rb.jump && !this.previous.jump,
       axis: rightStick.y,
     });
     this.previous = { jump: rb.jump, fire: rb.fire, weapon: lb.jump, grapple: lb.fire, pause: rb.secondary, center: lb.secondary };
     if (action === 'resume') this.setPaused(false);
-    if (action === 'exit') this.exit();
     if (action === 'atrium') {
       this.setPaused(false);
       this.onAtrium();

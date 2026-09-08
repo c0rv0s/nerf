@@ -57,13 +57,14 @@ you straight into another gate.
 
 Health, shield, weapon, ammo, awards, and round status appear inside the headset.
 Low health and low ammo turn red; health has the same orange/gold bar as desktop.
-B pauses solo play and opens a headset scoreboard with Resume, Back to Atrium,
-and Exit VR buttons. Point the right controller and pull its trigger, or use
+B pauses solo play and opens a headset scoreboard with Resume and Back to
+Atrium buttons. There is no in-game Exit VR action. Point the right controller and pull its trigger, or use
 right-stick up/down and A. Online matches continue while your menu is open.
 The results panel appears beside the visible podium at the end of a round.
-The desktop VR setup/entry/exit button only appears while paused. Walk
+The desktop VR setup/entry button only appears while paused outside VR. Walk
 through an Atrium gate to enter an arena. Multiplayer lobby, voting, settings,
-and name-entry menus still use the desktop; select Exit VR from the B menu to use them, then re-enter.
+and name-entry menus still use the desktop. Headset/runtime controls handle
+leaving VR; B and Back to Atrium always keep the session running.
 VR uses a dedicated low-detail profile at 80% headset render scale, without
 dynamic shadows or desktop resolution changes during a session. Desktop quality
 is restored on exit. VR uses direct stereo rendering without the desktop bloom compositor, camera

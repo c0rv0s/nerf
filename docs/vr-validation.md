@@ -43,7 +43,9 @@ instead of the timing script. It checks pause-only visibility of the desktop
 VR button, B pause/resume without ending the session, paused solo-match time,
 right-controller ray selection, left-hand grapple aiming and attachment while
 firing the right-hand gun, award appearance/expiry, podium placement and scores,
-and returning to the Atrium before explicitly exiting VR from the menu.
+and returning to the Atrium without ending VR. It also checks that A activates
+the visibly highlighted pointer target and that B cannot activate a menu action.
+Only the emulated runtime ends the session for cleanup.
 It writes HUD, awards, results, and stereo screenshots under `/tmp/nerf-vr-*`.
 The results panel is anchored beside the podium so turning toward it reveals
 the whole panel; B also brings the menu into the center of the view.
