@@ -49,3 +49,21 @@ Only the emulated runtime ends the session for cleanup.
 It writes HUD, awards, results, and stereo screenshots under `/tmp/nerf-vr-*`.
 The results panel is anchored beside the podium so turning toward it reveals
 the whole panel; B also brings the menu into the center of the view.
+
+## First-use effects and powerup finishes
+
+The timing regression also triggers an incoming hit and a visible puff after
+loading Blast Complex in VR, checking that they introduce no shader programs.
+It checks that the controller gun shares the player's loaded gold/silver material
+on the blaster and Whomper, follows timer expiry, and clears the finish on respawn.
+
+The loader now submits a draw of the revealed combat probes before removing them,
+with a one-pixel scissor to prepare buffers and draw bindings. It temporarily
+disables XR camera substitution so simulation-camera probes are included, then
+restores renderer state. Entering VR warms combat and event effects again after
+switching to the direct render path without shadows.
+
+Local Chrome/IWER validation on September 8, 2026 passed these checks and the
+existing clock, map-change interlock, and session-exit checks. This verifies
+resource preparation and material state; it does not establish Rift frame times
+or prove that the reported three-second first-hit stall is eliminated.

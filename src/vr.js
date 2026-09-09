@@ -282,7 +282,14 @@ export class VRControls {
       this.models[player.weapon] = buildBlaster(player.weapon);
       this.gun.add(this.models[player.weapon]);
     }
-    for (const [id, model] of Object.entries(this.models)) model.visible = id === player.weapon;
+    for (const [id, model] of Object.entries(this.models)) {
+      model.visible = id === player.weapon;
+      // The controller gun is separate geometry, but must follow the same
+      // material as the desktop weapon through pickups, expiry and respawn.
+      const shell = model.children[0];
+      const source = player.vmWeapons[id]?.children[0];
+      if (shell && source) shell.material = source.material;
+    }
     updateWeaponWarmupVisual(this.models.whomper,
       player.warmupWeapon === 'whomper' ? 1 - player.warmupT / WEAPONS.whomper.warmup : -1,
       performance.now() / 1000);

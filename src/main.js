@@ -844,6 +844,10 @@ const vr = new VRControls({
     mobileControls.reset();
     syncWorldVisualQuality();
     syncRenderQuality();
+    if (G) {
+      prewarmMatchVisuals(G.scene, G.player, G.characters, G.projectiles, G.fxPool);
+      prewarmEventVisuals();
+    }
     if (G) { G.paused = !!G.mpConnectionPaused; G.lastT = performance.now(); }
     setStyle(clickcatch, 'display', 'none');
     updatePauseMenuExtras(false);
@@ -5819,15 +5823,21 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
   // every hidden weapon, powerup-skin probe, and equipped-jetpack part so the
   // loading phase really compiles the variants that can appear mid-match.
   const visibility = new Map();
+  const culling = new Map();
+  const unCull = root => root?.traverse(obj => {
+    if (!culling.has(obj)) culling.set(obj, obj.frustumCulled);
+    obj.frustumCulled = false;
+  });
   const reveal = root => root?.traverse(obj => {
     visibility.set(obj, obj.visible);
     obj.visible = true;
   });
-  reveal(player.viewmodel);
-  reveal(player.dualBlasterViewmodel);
-  reveal(player.grappleViewmodel);
-  for (const character of characters) reveal(character.mesh);
-  reveal(projectiles.lightningArcPool?.[0]?.group);
+  const revealAndUnCull = root => { reveal(root); unCull(root); };
+  revealAndUnCull(player.viewmodel);
+  revealAndUnCull(player.dualBlasterViewmodel);
+  revealAndUnCull(player.grappleViewmodel);
+  for (const character of characters) revealAndUnCull(character.mesh);
+  revealAndUnCull(projectiles.lightningArcPool?.[0]?.group);
   const cleanupDropPrewarm = G?.pickups?.prepareDropPrewarm?.() || (() => {});
 
   // Damage numbers used to allocate and upload a fresh canvas texture on the
@@ -5883,16 +5893,21 @@ function prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPoo
     probes.add(new THREE.Mesh(beamGeo, projectiles.beamMatFor(weapon.color, 0.2)));
   }
   camera.add(probes);
+  unCull(probes);
+  unCull(markerProbe?.sprite);
+  unCull(G?.pickups?.dropPrewarmGroup);
 
   const warmPos = camera.getWorldPosition(new THREE.Vector3())
     .addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 4);
   fxPool.spawnPuff(warmPos, 0xffffff, 0.1);
+  for (const puff of fxPool.puffs) unCull(puff.m);
   return () => {
     fxPool.clear();
     cleanupDropPrewarm();
     camera.remove(probes);
     for (const geometry of probeGeometries) geometry.dispose();
     for (const [object, visible] of visibility) object.visible = visible;
+    for (const [object, culled] of culling) object.frustumCulled = culled;
     if (markerProbe && markerProbeState) {
       markerProbe.sprite.visible = markerProbeState.visible;
       markerProbe.sprite.position.copy(markerProbeState.position);
@@ -5915,10 +5930,36 @@ function beginGameplayShaderCompile() {
   };
 }
 
+// Compilation alone does not upload vertex buffers or initialize live draw
+// bindings. Submit the revealed effects before cleanup, clipped to one pixel.
+// Disable XR camera substitution so probes attached to the simulation camera
+// are drawn even when loading an arena inside an active headset session.
+function drawGameplayWarmup(scene) {
+  const xrEnabled = renderer.xr.enabled;
+  const target = renderer.getRenderTarget();
+  const scissor = renderer.getScissor(new THREE.Vector4());
+  const scissorTest = renderer.getScissorTest();
+  try {
+    renderer.xr.enabled = false;
+    renderer.setRenderTarget(usesLightRenderPath() ? null : composer.renderTarget1);
+    renderer.setScissor(0, 0, 1, 1);
+    renderer.setScissorTest(true);
+    renderer.render(scene, camera);
+  } finally {
+    renderer.xr.enabled = xrEnabled;
+    renderer.setRenderTarget(target);
+    renderer.setScissor(scissor);
+    renderer.setScissorTest(scissorTest);
+  }
+}
+
 function prewarmMatchVisuals(scene, player, characters, projectiles, fxPool) {
   const cleanup = prepareMatchVisualPrewarm(scene, player, characters, projectiles, fxPool);
   const restoreTarget = beginGameplayShaderCompile();
-  try { renderer.compile(scene, camera); } finally {
+  try {
+    renderer.compile(scene, camera);
+    drawGameplayWarmup(scene);
+  } finally {
     restoreTarget();
     cleanup();
   }
@@ -5930,6 +5971,7 @@ async function prewarmMatchVisualsAsync(scene, player, characters, projectiles, 
   try {
     if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(scene, camera);
     else renderer.compile(scene, camera);
+    drawGameplayWarmup(scene);
   } finally {
     restoreTarget();
     cleanup();
@@ -6155,7 +6197,10 @@ function prewarmEventVisuals() {
   const warm = prepareEventVisualPrewarm();
   const restoreTarget = beginGameplayShaderCompile();
   try {
-    if (warm.needsCompile) renderer.compile(warm.scene, camera);
+    if (warm.needsCompile) {
+      renderer.compile(warm.scene, camera);
+      drawGameplayWarmup(warm.scene);
+    }
   } finally {
     restoreTarget();
     warm.cleanup();
@@ -6169,6 +6214,7 @@ async function prewarmEventVisualsAsync() {
     if (warm.needsCompile) {
       if (typeof renderer.compileAsync === 'function') await renderer.compileAsync(warm.scene, camera);
       else renderer.compile(warm.scene, camera);
+      drawGameplayWarmup(warm.scene);
     }
   } finally {
     restoreTarget();
@@ -6806,7 +6852,7 @@ function stepMultiplayer(dt) {
 if (Object.isExtensible(window)) {
 window.__game = () => G;
 window.__vr = () => ({ active: vr.active, paused: vr.paused, rig: vr.rig, camera: vr.camera,
-  ui: vr.ui, grappleGun: vr.grappleGun, podium: vr.podium, award: (...args) => hud.award(...args) });
+  ui: vr.ui, models: vr.models, grappleGun: vr.grappleGun, podium: vr.podium, award: (...args) => hud.award(...args) });
 window.__mp = () => ({
   isHost: multiplayer.isHost,
   shouldHost: multiplayer.shouldHost(),

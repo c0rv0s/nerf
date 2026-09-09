@@ -43,6 +43,58 @@ console.log('atrium clock',atriumTiming);assert.ok(atriumTiming.simulated<=atriu
 await page.evaluate(()=>{window.__start('arena');});
 await page.waitForFunction(()=>__game()?.mapDef?.id==='arena'&&document.getElementById('maploading').hidden&&__game().player.vrActive,{timeout:120000});
 const quality=await page.evaluate(()=>__perf());console.log('VR quality',{pixelRatio:quality.pixelRatio,shadows:quality.shadows});assert.equal(quality.pixelRatio,1);assert.equal(quality.shadows,false);
+const firstHit = await page.evaluate(async () => {
+ const g=__game();
+ const before=new Set(__renderPrograms().map(p=>p.cacheKey));
+ const started=performance.now();
+ g.projectiles.fx.onDamage(g.player,1,g.characters.find(c=>!c.isPlayer));
+ const T=await import('three');
+ const position=__vr().camera.getWorldPosition(new T.Vector3())
+   .addScaledVector(__vr().camera.getWorldDirection(new T.Vector3()),2);
+ g.fxPool.spawnPuff(position,0xff5c5c,1);
+ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+ return {elapsedMs:performance.now()-started,
+   newPrograms:__renderPrograms().filter(p=>!before.has(p.cacheKey)).length};
+});
+console.log('first incoming hit after VR match load',firstHit);
+assert.equal(firstHit.newPrograms,0);
+// Powerup finishes must follow the actual player shell, including a weapon
+// first selected while powered up, expiration, and respawn.
+const skins = await page.evaluate(async () => {
+ const p=__game().player, vr=__vr();
+ const originalWeapon=p.weapon;
+ const results=[];
+ const frame=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+ for(const kind of ['gold','silver',null]) {
+   if(kind) {
+     p.powerup={kind,timeLeft:30};
+     p.setSkin(kind);
+   } else {
+     p.powerup.timeLeft=0;
+     await frame();
+   }
+   for(const weapon of ['blaster','whomper']) {
+     p.weapon=weapon;
+     await frame();
+     const shell=vr.models[weapon]?.children[0];
+     results.push({kind,weapon,same:shell?.material===p.vmWeapons[weapon].children[0].material,
+       textured:!!shell?.material.map?.image});
+   }
+ }
+ p.powerup={kind:'gold',timeLeft:30};
+ p.setSkin('gold');
+ p.spawn(p.pos.clone());
+ await frame();
+ results.push({kind:null,weapon:'respawn',same:!p.powerup &&
+   vr.models[p.weapon].children[0].material===p.vmWeapons[p.weapon].children[0].material});
+ p.weapon=originalWeapon;
+ return results;
+});
+console.log('VR powerup materials',skins);
+for(const skin of skins) {
+ assert.equal(skin.same,true,JSON.stringify(skin));
+ if(skin.kind) assert.equal(skin.textured,true,JSON.stringify(skin));
+}
 const timing=await page.evaluate(async()=>{
  const g=__game();let total=0,count=0;const update=g.world.update?.bind(g.world);
  g.world.update=(dt,...args)=>{total+=dt;count++;return update?.(dt,...args);};
