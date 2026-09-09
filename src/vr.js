@@ -161,13 +161,21 @@ export class VRControls {
 
   syncRig(player) {
     this.rig.rotation.set(0, this.heading, 0);
+    if (player.world.escher && !this.podium) {
+      // Reuse the desktop frame's smoothed surface rotation. Remove tracked
+      // head yaw here because WebXR applies the headset pose beneath the rig.
+      const back = player.frameFwd.clone().negate();
+      const right = new THREE.Vector3().crossVectors(player.frameUp, back).normalize();
+      this.rig.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, player.frameUp, back));
+      this.rig.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(THREE.Object3D.DEFAULT_UP, -this.headYaw));
+    }
     const scale = player.world.characterVisualScale?.(player) || 1;
-    this.rig.position.copy(this.center).applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.heading).negate();
+    this.rig.position.copy(this.center).applyQuaternion(this.rig.quaternion).negate();
     if (this.podium) {
       this.rig.position.add(this.podium.anchor || new THREE.Vector3()).add(new THREE.Vector3(0,4.15,11.5));
     } else {
       this.rig.position.add(player.pos);
-      this.rig.position.y += player.eyeHeight * scale;
+      this.rig.position.addScaledVector(player.world.escher ? player.up : THREE.Object3D.DEFAULT_UP, player.eyeHeight * scale);
     }
     this.rig.updateMatrixWorld(true);
   }
@@ -201,6 +209,7 @@ export class VRControls {
       this.player = player;
       this.paused = false;
       this.heading = player.yaw - headYaw;
+      this.headYaw = headYaw;
       this.center.copy(this.head);
       this.previous = {};
       this.turnLatched = false;
@@ -225,6 +234,10 @@ export class VRControls {
     const turn = snapTurn(this.needsNeutral || this.paused || game.over ? 0 : rightStick.x, this.turnLatched);
     this.turnLatched = turn.latched;
     this.heading += turn.radians;
+    if (player.world.escher && !game.over) {
+      player.frameFwd.applyAxisAngle(player.frameUp, headYaw - this.headYaw + turn.radians).normalize();
+    }
+    this.headYaw = headYaw;
     const podium = game.over ? game.scene?.userData?.end : null;
     if (podium && this.podium !== podium) {
       this.podium = podium;
@@ -238,7 +251,7 @@ export class VRControls {
     this.renderer.xr.updateCamera(this.camera);
     player.yaw = this.heading + headYaw;
     player.pitch = Math.asin(THREE.MathUtils.clamp(headForward.y, -1, 1));
-    player.frameFwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    if (!player.world.escher) player.frameFwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     const enabled = !this.needsNeutral && !this.paused && !blocked && !game.paused && !game.over && player.alive;
     player.setMoveInput(enabled ? stick.x : 0, enabled ? -stick.y : 0);
     player.keys.Space = enabled && rb.jump;
@@ -253,7 +266,8 @@ export class VRControls {
       this.direction.set(0, 0, -1).transformDirection(right.matrixWorld);
       const origin = new THREE.Vector3().setFromMatrixPosition(right.matrixWorld).addScaledVector(this.direction, 0.38);
       const eye = player.pos.clone();
-      eye.y += player.eyeHeight * (player.world.characterVisualScale?.(player) || 1);
+      eye.addScaledVector(player.world.escher ? player.up : THREE.Object3D.DEFAULT_UP,
+        player.eyeHeight * (player.world.characterVisualScale?.(player) || 1));
       player.xrAim = { dir: this.direction.clone(), muzzle: boundedVRMuzzle(origin.sub(eye)) };
     }
     player.xrGrappleAim = null;

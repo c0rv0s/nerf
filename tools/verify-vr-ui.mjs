@@ -42,6 +42,30 @@ assert.equal(await page.locator('#vr-entry').isVisible(),false);
 await atlas('menu');
 await clickMenu('resume');assert.equal(await page.evaluate(()=>__vr().paused),false);
 console.log('B pauses without exiting; ray-selected resume works');
+// Prism must carry the tracked head and controllers through the same rotating
+// surface frame as desktop, without resetting movement to world-horizontal.
+await page.evaluate(()=>{window.__start('prism');});
+await page.waitForFunction(()=>__game()?.mapDef?.id==='prism'&&document.getElementById('maploading').hidden&&__game().player.vrActive,{timeout:120000});
+await press('right','b-button');
+const prism = await page.evaluate(async()=>{
+ const T=await import('three'); const v=__vr(), p=__game().player;
+ const samples=[];
+ for(const angle of [0,Math.PI/8,Math.PI/4,Math.PI/2,Math.PI]) {
+  const q=new T.Quaternion().setFromAxisAngle(new T.Vector3(0,0,1),angle);
+  p.frameUp.set(0,1,0).applyQuaternion(q); p.up.copy(p.frameUp);
+  p.frameFwd.set(0,0,-1); await new Promise(resolve=>setTimeout(resolve,100));
+  const actualUp=new T.Vector3(0,1,0).applyQuaternion(v.rig.quaternion);
+  const center=new T.Vector3(0,1.6,0).applyMatrix4(v.rig.matrixWorld);
+  const eye=p.pos.clone().addScaledVector(p.up,p.eyeHeight);
+  samples.push({upError:actualUp.distanceTo(p.frameUp),eyeError:center.distanceTo(eye)});
+ }
+ p.frameUp.set(1,0,0);p.up.copy(p.frameUp);p.frameFwd.set(0,1,0);
+ return samples;
+});
+for(const sample of prism) {assert.ok(sample.upError<1e-6);assert.ok(sample.eyeError<1e-6);}
+await page.waitForTimeout(150);
+assert.ok(await page.evaluate(()=>__game().player.frameFwd.distanceTo({x:0,y:1,z:0})<1e-6));
+console.log('Prism VR follows floor, intermediate roll, wall and ceiling frames; eye anchor and surface heading remain aligned');
 await page.evaluate(()=>{window.__start('canopy');});
 await page.waitForFunction(()=>__game()?.mapDef?.id==='canopy'&&document.getElementById('maploading').hidden&&__game().player.vrActive,{timeout:120000});
 await page.evaluate(()=>{const p=__game().player;p.grapple=true;p.hp=20;p.shield=35;p.weapons.scatter=true;p.ammo.scatter=2;p.switchWeapon('scatter');xrDevice.controllers.right.quaternion.set(0,0,0,1);xrDevice.controllers.left.quaternion.set(Math.sin(.3),0,0,Math.cos(.3));});
