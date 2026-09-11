@@ -584,6 +584,7 @@ function handleMessage(conn, msg) {
           aim:sanitizeUnitVec(s.aim,{x:0,y:0,z:-1}),
           up:sanitizeUnitVec(s.up,{x:0,y:1,z:0}),
           ...(boundedVRMuzzle(s.vrMuzzle) ? {vrMuzzle: boundedVRMuzzle(s.vrMuzzle)} : {}),
+          ...(s.handSide === -1 || s.handSide === 1 ? {handSide:s.handSide} : {}),
         })) } : {}),
       yaw: finite(msg.yaw, slot.yaw),
       pitch: Math.max(-1.55, Math.min(1.55, finite(msg.pitch, slot.pitch))),

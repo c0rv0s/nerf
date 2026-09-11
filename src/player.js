@@ -62,6 +62,9 @@ export class Player {
     this.keys = {};
     this.moveInput = { strafe: 0, forward: 0 };
     this.firing = false;
+    this.xrHandAims = null;
+    this.xrHandFiring = null;
+    this.xrHandCooldown = { left: 0, right: 0 };
     this.grounded = false;
     this.recoil = 0;
     this.leftRecoil = 0;
@@ -278,6 +281,10 @@ export class Player {
     if (this.grappleViewmodel) this.grappleViewmodel.visible = false;
     this.dualBlaster = false;
     this._dualBlasterNextLeft = false;
+    this.xrHandAims = null;
+    this.xrHandFiring = null;
+    this.xrHandCooldown.left = 0;
+    this.xrHandCooldown.right = 0;
     this.syncDualBlasterViewmodel();
     this._airJumped = false;
     this.recoil = 0;
@@ -404,32 +411,41 @@ export class Player {
     updateWeaponWarmupVisual(this.vmWeapons?.whomper, -1);
   }
 
-  fireCurrentWeapon(fire, w) {
+  fireCurrentWeapon(fire, w, options = {}) {
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
     // launch from the gun muzzle (right and below the eye), not the face
     const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize();
     const visualScale = this.world.characterVisualScale?.(this) || 1;
-    const handSide = this.weapon === 'blaster' && this.dualBlaster
-      ? (this._dualBlasterNextLeft ? -1 : 1)
-      : 1;
-    if (this.weapon === 'blaster' && this.dualBlaster) {
+    const explicitHandSide = options.handSide === -1 || options.handSide === 1;
+    const handSide = explicitHandSide
+      ? options.handSide
+      : this.weapon === 'blaster' && this.dualBlaster
+        ? (this._dualBlasterNextLeft ? -1 : 1)
+        : 1;
+    if (this.weapon === 'blaster' && this.dualBlaster && !explicitHandSide) {
       this._dualBlasterNextLeft = !this._dualBlasterNextLeft;
     }
     const origin = this.camera.position.clone()
       .addScaledVector(dir, 1.1 * visualScale)
       .addScaledVector(right, handSide * 0.18 * visualScale)
       .addScaledVector(this.camera.up, -0.22 * visualScale);
-    if (this.xrAim) {
-      dir.copy(this.xrAim.dir);
+    const xrAim = options.xrAim || this.xrAim;
+    if (xrAim) {
+      this.xrAim = xrAim;
+      dir.copy(xrAim.dir);
       origin.copy(this.pos).addScaledVector(this.up, this.eyeHeight * visualScale);
-      origin.add(new THREE.Vector3(this.xrAim.muzzle.x, this.xrAim.muzzle.y, this.xrAim.muzzle.z));
+      origin.add(new THREE.Vector3(xrAim.muzzle.x, xrAim.muzzle.y, xrAim.muzzle.z));
     }
     fire(this, origin, dir, this.weapon);
     if (this.weapon !== 'blaster') this.ammo[this.weapon]--;
     // Warmup weapons pay their entire firing delay before the shot releases.
-    const cadence = this.weapon === 'blaster' && this.dualBlaster ? 2 : 1;
-    this.cooldown = w.warmup ? 0 : 1 / (w.rof * cadence);
+    if (options.independentHand) {
+      this.xrHandCooldown[handSide < 0 ? 'left' : 'right'] = w.warmup ? 0 : 1 / w.rof;
+    } else {
+      const cadence = this.weapon === 'blaster' && this.dualBlaster ? 2 : 1;
+      this.cooldown = w.warmup ? 0 : 1 / (w.rof * cadence);
+    }
     const feel = WEAPON_FEEL[this.weapon] || WEAPON_FEEL.blaster;
     if (handSide < 0) this.leftRecoil = Math.min(2.2, this.leftRecoil + feel.recoil);
     else this.recoil = Math.min(2.2, this.recoil + feel.recoil);
@@ -463,9 +479,23 @@ export class Player {
 
     // Firing
     this.cooldown -= dt;
+    this.xrHandCooldown.left = Math.max(0, this.xrHandCooldown.left - dt);
+    this.xrHandCooldown.right = Math.max(0, this.xrHandCooldown.right - dt);
     const w = WEAPONS[this.weapon];
     const hasAmmo = this.weapon === 'blaster' || this.ammo[this.weapon] > 0;
-    if (w.warmup) {
+    const vrDualBlasters = this.vrActive && this.weapon === 'blaster' && this.dualBlaster &&
+      this.xrHandAims && this.xrHandFiring;
+    if (vrDualBlasters) {
+      this.cancelWeaponWarmup();
+      for (const [hand, handSide] of [['right', 1], ['left', -1]]) {
+        if (!this.xrHandFiring[hand] || !this.xrHandAims[hand] || this.xrHandCooldown[hand] > 0) continue;
+        this.fireCurrentWeapon(fire, w, {
+          handSide,
+          xrAim: this.xrHandAims[hand],
+          independentHand: true,
+        });
+      }
+    } else if (w.warmup) {
       if (!this.firing || !hasAmmo || this.cooldown > 0) {
         this.cancelWeaponWarmup();
       } else if (this.warmupWeapon !== this.weapon) {

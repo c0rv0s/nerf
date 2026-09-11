@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { vrStick, readVRButtons, snapTurn, boundedVRMuzzle } from '../src/vr-input.js';
+import { vrStick, readVRButtons, snapTurn, boundedVRMuzzle, vrBlasterTriggers } from '../src/vr-input.js';
 
 test('Touch uses thumbstick axes 2/3, with deadzone and safe disconnect', () => {
   assert.deepEqual(vrStick({ axes: [1, 1, -0.8, 0.6] }), {x:-0.8,y:0.6});
@@ -24,6 +24,18 @@ test('Touch trigger, squeeze, and face buttons remain separate', () => {
   const buttons = Array.from({length:6}, (_,i) => ({pressed: i===0 || i===5}));
   assert.deepEqual(readVRButtons({buttons}), {fire:true,grip:false,jump:false,secondary:true});
   assert.deepEqual(readVRButtons(), {fire:false,grip:false,jump:false,secondary:false});
+});
+
+test('dual Secret Shots map each trigger to its own controller', () => {
+  assert.deepEqual(vrBlasterTriggers(true, true, true, true, {fire:true}, {fire:false}), {
+    right: true, left: false,
+  });
+  assert.deepEqual(vrBlasterTriggers(true, true, true, true, {fire:false}, {fire:true}), {
+    right: false, left: true,
+  });
+  assert.deepEqual(vrBlasterTriggers(true, false, true, true, {fire:false}, {fire:true}), {
+    right: false, left: false,
+  });
 });
 
 test('multiplayer VR muzzle rejects malformed input and bounds physical reach', () => {

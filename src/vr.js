@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { VRUI } from './vr-ui.js';
 import { buildBlaster, WEAPONS, updateWeaponWarmupVisual } from './weapons.js';
-import { vrStick, readVRButtons, snapTurn, boundedVRMuzzle, vrControlsNeutral } from './vr-input.js';
+import {
+  vrStick, readVRButtons, snapTurn, boundedVRMuzzle, vrBlasterTriggers, vrControlsNeutral,
+} from './vr-input.js';
 
 // The simulation camera stays independent: headset poses never feed recoil or
 // death-camera animation back into the user's physical head orientation.
@@ -33,6 +35,13 @@ export class VRControls {
     this.gun.position.set(0, -0.025, -0.12);
     this.gun.scale.setScalar(0.42);
     this.models = {};
+    this.leftGun = new THREE.Group();
+    this.leftGun.position.set(0, -0.025, -0.12);
+    this.leftGun.scale.setScalar(0.42);
+    this.leftBlaster = buildBlaster('blaster');
+    this.leftGun.add(this.leftBlaster);
+    this.horse = null;
+    this.horseSource = null;
     this.grappleGun = new THREE.Group();
     this.grappleGun.position.set(0, -0.025, -0.12);
     this.grappleGun.scale.setScalar(0.42);
@@ -126,6 +135,8 @@ export class VRControls {
     this.player.wantJump = false;
     this.player.jumpBuffer = 0;
     this.player.xrAim = null;
+    this.player.xrHandAims = null;
+    this.player.xrHandFiring = null;
     this.player.xrGrappleAim = null;
     this.player.vrActive = false;
     this.player.camera.visible = true;
@@ -133,6 +144,10 @@ export class VRControls {
     this.player.detachGrapple?.();
     this.grappleGun.removeFromParent();
     this.grappleGun.clear();
+    this.leftGun.removeFromParent();
+    this.horse?.removeFromParent();
+    this.horse = null;
+    this.horseSource = null;
     this.grappleMuzzle = null;
     this.podium = null;
     this.ui.resultsAnchor.removeFromParent();
@@ -180,6 +195,49 @@ export class VRControls {
     this.rig.updateMatrixWorld(true);
   }
 
+  syncHorse(player, game) {
+    const source = player.world.mounted ? player.horseViewmodel : null;
+    if (!source) {
+      if (this.horse) this.horse.visible = false;
+      return;
+    }
+    if (!this.horse || this.horseSource !== source) {
+      this.horse?.removeFromParent();
+      this.horse = source.clone(true);
+      this.horseSource = source;
+      this.horse.scale.setScalar(0.18);
+      this.horse.traverse(child => {
+        if (!child.isMesh) return;
+        child.material = child.material.clone();
+        child.material.depthTest = false;
+        child.material.depthWrite = false;
+        child.frustumCulled = false;
+        child.renderOrder = 9000;
+      });
+      this.rig.add(this.horse);
+    }
+    this.horse.position.copy(this.center).add(source.position);
+    this.horse.position.y -= 0.1;
+    this.horse.position.z -= 1.4;
+    this.horse.rotation.set(
+      source.rotation.x,
+      Math.atan2(Math.sin(player.horseHeading - this.heading), Math.cos(player.horseHeading - this.heading)),
+      source.rotation.z,
+    );
+    this.horse.visible = player.alive && !this.paused && !game.over;
+  }
+
+  controllerAim(controller, player) {
+    if (!controller?.visible) return null;
+    const dir = new THREE.Vector3(0, 0, -1).transformDirection(controller.matrixWorld);
+    const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld).addScaledVector(dir, 0.38);
+    const eye = player.pos.clone().addScaledVector(
+      player.world.escher ? player.up : THREE.Object3D.DEFAULT_UP,
+      player.eyeHeight * (player.world.characterVisualScale?.(player) || 1),
+    );
+    return { dir, muzzle: boundedVRMuzzle(origin.sub(eye)) };
+  }
+
   beforeFrame(frame, scene, blocked = false) {
     if (!this.active) return;
     const game = this.getGame();
@@ -192,6 +250,8 @@ export class VRControls {
       player.setMoveInput(0, 0);
       player.firing = false;
       player.xrAim = null;
+      player.xrHandAims = null;
+      player.xrHandFiring = null;
       player.xrGrappleAim = null;
       player.detachGrapple?.();
       player.keys.Space = false;
@@ -248,6 +308,7 @@ export class VRControls {
       this.ui.anchorResults(this.rig, this.center, headYaw);
     }
     this.syncRig(player);
+    this.syncHorse(player, game);
     this.renderer.xr.updateCamera(this.camera);
     player.yaw = this.heading + headYaw;
     player.pitch = Math.asin(THREE.MathUtils.clamp(headForward.y, -1, 1));
@@ -258,20 +319,28 @@ export class VRControls {
     player.keys.ShiftLeft = enabled && lb.grip;
     if (enabled && rb.jump && !this.previous.jump) player.wantJump = true;
     if (enabled && lb.jump && !this.previous.weapon) player.cycleWeapon(1);
-    player.xrAim = null;
-    player.firing = enabled && !!right?.visible && rb.fire;
+    const rightAim = this.controllerAim(right, player);
+    const leftAim = this.controllerAim(left, player);
+    const dualBlaster = player.dualBlaster && player.weapon === 'blaster';
+    const blasterTriggers = vrBlasterTriggers(
+      enabled,
+      dualBlaster,
+      !!right?.visible,
+      !!left?.visible,
+      rb,
+      lb,
+    );
+    player.xrHandAims = { right: rightAim, left: leftAim };
+    player.xrHandFiring = blasterTriggers;
+    player.xrAim = rightAim || leftAim;
+    player.firing = blasterTriggers.right || blasterTriggers.left;
     if (right?.visible) {
       if (this.gun.parent !== right) right.add(this.gun);
-      // Target-ray space points down -Z; Object3D.getWorldDirection uses +Z.
-      this.direction.set(0, 0, -1).transformDirection(right.matrixWorld);
-      const origin = new THREE.Vector3().setFromMatrixPosition(right.matrixWorld).addScaledVector(this.direction, 0.38);
-      const eye = player.pos.clone();
-      eye.addScaledVector(player.world.escher ? player.up : THREE.Object3D.DEFAULT_UP,
-        player.eyeHeight * (player.world.characterVisualScale?.(player) || 1));
-      player.xrAim = { dir: this.direction.clone(), muzzle: boundedVRMuzzle(origin.sub(eye)) };
     }
+    if (dualBlaster && left?.visible && this.leftGun.parent !== left) left.add(this.leftGun);
+    this.leftGun.visible = !!(dualBlaster && left?.visible && player.alive && !this.paused && !game.over);
     player.xrGrappleAim = null;
-    if (left?.visible && player.grapple && player.grappleLauncher && !game.over) {
+    if (!dualBlaster && left?.visible && player.grapple && player.grappleLauncher && !game.over) {
       if (!this.grappleMuzzle) {
         const model = player.grappleLauncher.clone(true);
         this.grappleGun.add(model);
@@ -292,6 +361,8 @@ export class VRControls {
     this.gun.visible = !!right?.visible && player.alive && !this.paused && !game.over;
     this.gun.position.z = -0.12 + player.recoil * 0.025;
     this.gun.rotation.x = player.recoil * 0.05;
+    this.leftGun.position.z = -0.12 + player.leftRecoil * 0.025;
+    this.leftGun.rotation.x = player.leftRecoil * 0.05;
     if (!this.models[player.weapon]) {
       this.models[player.weapon] = buildBlaster(player.weapon);
       this.gun.add(this.models[player.weapon]);
@@ -304,6 +375,9 @@ export class VRControls {
       const source = player.vmWeapons[id]?.children[0];
       if (shell && source) shell.material = source.material;
     }
+    const leftShell = this.leftBlaster.children[0];
+    const leftSource = player.dualBlasterViewmodel?.children[0];
+    if (leftShell && leftSource) leftShell.material = leftSource.material;
     updateWeaponWarmupVisual(this.models.whomper,
       player.warmupWeapon === 'whomper' ? 1 - player.warmupT / WEAPONS.whomper.warmup : -1,
       performance.now() / 1000);

@@ -50,6 +50,9 @@ export class VRUI {
 
   update(game, { paused, blocked, needsNeutral, awards = [], now = performance.now() }) {
     const p = game.player;
+    // Mounted first-person geometry occupies the lower center of the view.
+    // Drop the always-on-top vitals strip below the horse's ears and forelock.
+    this.vitals.mesh.position.y = p.world?.mounted ? -0.82 : -0.5;
     const hp = Math.max(0, Math.ceil(p.hp));
     const ammo = p.weapon === 'blaster' ? '∞' : p.ammo[p.weapon] || 0;
     const critical = hp <= 25;

@@ -29,3 +29,10 @@ export function vrControlsNeutral(stick, turn, buttons) {
   return stick.x === 0 && stick.y === 0 && turn.x === 0 && turn.y === 0 &&
     !buttons.fire && !buttons.jump && !buttons.grip;
 }
+
+export function vrBlasterTriggers(enabled, dualBlaster, rightVisible, leftVisible, rightButtons, leftButtons) {
+  return {
+    right: !!(enabled && rightVisible && rightButtons?.fire),
+    left: !!(enabled && dualBlaster && leftVisible && leftButtons?.fire),
+  };
+}

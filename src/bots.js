@@ -15,6 +15,7 @@ import { stepJetpack } from './jetpack.js';
 import { chooseCombatIntent, combatTargetScore, pickupUtility } from './bot-strategy.js';
 import { clearDrowningState, waterSpeedMultiplier } from './water-movement.js';
 import { weaponShotCooldown } from './weapon-cadence.js';
+import { showSpawnedMesh } from './spawn-visual.js';
 import {
   applyGrapplePull, createGrappleVisual, findGrappleAnchor, updateGrappleVisual,
 } from './grapple.js';
@@ -395,7 +396,7 @@ export class Bot {
       const nf = this._nearSurfAt(this.pos);
       if (nf) this.up.copy(nf);
     }
-    this.mesh.visible = true;
+    showSpawnedMesh(this.mesh, this.pos);
   }
 
   // Nearest waypoint the bot can actually reach: same floor and clear line of

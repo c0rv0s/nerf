@@ -4723,7 +4723,7 @@ function buildOldWest(scene) {
     ['health', 50, 14.2, -40, {}],       // halfway up the cliff ramp
     ['health', -210, 0.7, 158, {}],      // far corner opposite the cliff
     ['shield', 18, 0.7, 82, {}],
-    ['speed', -155, 0.7, 92, {}], ['points', 205, 0.7, -82, { amount: 250 }],
+    ['speed', -155, 0.7, 92, {}],
   ]) pk(world, kind, x, y, z, extra);
 
   // Secret Shot is granted on spawn; every other regular loadout slot must be

@@ -132,11 +132,12 @@ class MultiplayerClient extends EventTarget {
     }
   }
 
-  recordShot(weapon, aim, up, life = 0, vrMuzzle = null) {
+  recordShot(weapon, aim, up, life = 0, vrMuzzle = null, handSide = null) {
     const shot = { seq: ++this.shotSeq, weapon, life, sampledAt: this.serverNow(),
       aim: {x:aim.x,y:aim.y,z:aim.z}, up: {x:up.x,y:up.y,z:up.z} };
     const muzzle = boundedVRMuzzle(vrMuzzle);
     if (muzzle) shot.vrMuzzle = muzzle;
+    if (handSide === -1 || handSide === 1) shot.handSide = handSide;
     this.pendingShots.push(shot);
     // Input congestion has a finite memory budget; obsolete shots will be
     // acknowledged/rejected by authority rather than played back in a burst.

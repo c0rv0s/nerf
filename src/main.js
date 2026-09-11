@@ -45,6 +45,7 @@ import {
   advanceNetworkTimer, boundedSnapshotLead, coalesceSnapshotEvents,
   RemoteTimeline, freshInput, SHOT_MAX_AGE_MS, pendingAmmo, mergeShotRequests,
 } from './network-sync.js';
+import { showSpawnedMesh } from './spawn-visual.js';
 import {
   createGrappleVisual, disposeGrappleVisual, updateGrappleVisual,
 } from './grapple.js';
@@ -2358,7 +2359,13 @@ function updateRemoteHuman(ch, dt, fire) {
     const origin = ch.pos.clone()
       .addScaledVector(up, (G.world.mounted ? 2.5 + HORSE_HEIGHT_DELTA : 1.55) * visualScale)
       .addScaledVector(dir, 0.8 * visualScale);
-    const side = ch.shotHandSide?.() || 1;
+    const requestedSide = shotRequest?.handSide;
+    const side = requestedSide === -1 || requestedSide === 1
+      ? requestedSide
+      : ch.shotHandSide?.() || 1;
+    if ((requestedSide === -1 || requestedSide === 1) && ch.dualBlaster) {
+      ch._dualBlasterNextLeft = side > 0;
+    }
     const right = new THREE.Vector3().crossVectors(dir, up).normalize();
     origin.addScaledVector(right, side * 0.22 * visualScale);
     const vrMuzzle = boundedVRMuzzle(shotRequest?.vrMuzzle);
@@ -2691,7 +2698,8 @@ function applyMultiplayerSnapshot(snap) {
       remote.snapshotVel,
       boundedSnapshotLead(snapshotAge, 0, remote.alive),
     );
-    if (!remote.hasSnapshot || remote.alive !== wasAlive) {
+    const spawnStateChanged = !remote.hasSnapshot || remote.alive !== wasAlive;
+    if (spawnStateChanged) {
       remote.pos.copy(remote.targetPos);
       remote.yaw = remote.targetYaw;
       remote.hasSnapshot = true;
@@ -2710,7 +2718,8 @@ function applyMultiplayerSnapshot(snap) {
       remote.warmupAudioStop?.();
       remote.warmupAudioStop = null;
     }
-    remote.mesh.visible = state.alive;
+    if (spawnStateChanged) showSpawnedMesh(remote.mesh, remote.pos, state.alive);
+    else remote.mesh.visible = state.alive;
   }
   for (const [id, remote] of G.remoteSlots) {
     if (seen.has(id)) continue;
@@ -6819,7 +6828,16 @@ function stepMultiplayer(dt) {
   G.world.updateDoors?.(G.characters, dt);
   updateStormAudio();
   const fire = (owner, origin, dir, weaponId) => {
-    if (multiplayer.lastSnapshot?.shotProtocol === 1) multiplayer.recordShot(weaponId, dir, owner.up, owner.deaths || 0, owner.xrAim?.muzzle);
+    if (multiplayer.lastSnapshot?.shotProtocol === 1) multiplayer.recordShot(
+      weaponId,
+      dir,
+      owner.up,
+      owner.deaths || 0,
+      owner.xrAim?.muzzle,
+      owner.vrActive && owner.dualBlaster && weaponId === 'blaster'
+        ? (owner.xrAim === owner.xrHandAims?.left ? -1 : 1)
+        : null,
+    );
     G.projectiles.fire(owner, origin, dir, weaponId);
   };
   const moveHook = G.world.postCharacterMove;
@@ -6852,7 +6870,8 @@ function stepMultiplayer(dt) {
 if (Object.isExtensible(window)) {
 window.__game = () => G;
 window.__vr = () => ({ active: vr.active, paused: vr.paused, rig: vr.rig, camera: vr.camera,
-  ui: vr.ui, models: vr.models, grappleGun: vr.grappleGun, podium: vr.podium, award: (...args) => hud.award(...args) });
+  ui: vr.ui, models: vr.models, gun: vr.gun, leftGun: vr.leftGun, horse: vr.horse,
+  grappleGun: vr.grappleGun, podium: vr.podium, award: (...args) => hud.award(...args) });
 window.__mp = () => ({
   isHost: multiplayer.isHost,
   shouldHost: multiplayer.shouldHost(),

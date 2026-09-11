@@ -66,6 +66,27 @@ for(const sample of prism) {assert.ok(sample.upError<1e-6);assert.ok(sample.eyeE
 await page.waitForTimeout(150);
 assert.ok(await page.evaluate(()=>__game().player.frameFwd.distanceTo({x:0,y:1,z:0})<1e-6));
 console.log('Prism VR follows floor, intermediate roll, wall and ceiling frames; eye anchor and surface heading remain aligned');
+await page.evaluate(()=>{window.__start('oldwest');});
+await page.waitForFunction(()=>__game()?.mapDef?.id==='oldwest'&&document.getElementById('maploading').hidden&&__game().player.vrActive,{timeout:120000});
+await page.evaluate(()=>{const p=__game().player;p.dualBlaster=true;p.syncDualBlasterViewmodel();p.recoil=0;p.leftRecoil=0;p.xrHandCooldown.left=0;p.xrHandCooldown.right=0;});
+await page.waitForTimeout(200);
+const mountedDual=await page.evaluate(()=>({
+ horseVisible:__vr().horse?.visible,
+ horseParent:__vr().horse?.parent===__vr().rig,
+ leftVisible:__vr().leftGun.visible,
+ leftParent:__vr().leftGun.parent?.userData?.source?.handedness,
+ rightParent:__vr().gun.parent?.userData?.source?.handedness,
+}));
+assert.deepEqual(mountedDual,{horseVisible:true,horseParent:true,leftVisible:true,leftParent:'left',rightParent:'right'});
+await page.screenshot({path:'/tmp/nerf-vr-red-rock-dual-stereo.png'});
+await button('left','trigger',1);
+assert.equal(await page.evaluate(()=>__game().player.leftRecoil>0&&__game().player.recoil===0),true);
+await button('left','trigger',0);
+await page.evaluate(()=>{const p=__game().player;p.recoil=0;p.leftRecoil=0;p.xrHandCooldown.left=0;p.xrHandCooldown.right=0;});
+await button('right','trigger',1);
+assert.equal(await page.evaluate(()=>__game().player.recoil>0&&__game().player.leftRecoil===0),true);
+await button('right','trigger',0);
+console.log('Red Rock horse, two controller pistols and independent trigger hands passed');
 await page.evaluate(()=>{window.__start('canopy');});
 await page.waitForFunction(()=>__game()?.mapDef?.id==='canopy'&&document.getElementById('maploading').hidden&&__game().player.vrActive,{timeout:120000});
 await page.evaluate(()=>{const p=__game().player;p.grapple=true;p.hp=20;p.shield=35;p.weapons.scatter=true;p.ammo.scatter=2;p.switchWeapon('scatter');xrDevice.controllers.right.quaternion.set(0,0,0,1);xrDevice.controllers.left.quaternion.set(Math.sin(.3),0,0,Math.cos(.3));});
