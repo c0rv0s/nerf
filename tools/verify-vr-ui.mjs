@@ -78,7 +78,40 @@ const mountedDual=await page.evaluate(()=>({
  rightParent:__vr().gun.parent?.userData?.source?.handedness,
 }));
 assert.deepEqual(mountedDual,{horseVisible:true,horseParent:true,leftVisible:true,leftParent:'left',rightParent:'right'});
+const mountGeometry = await page.evaluate(async () => {
+ const T = await import('three');
+ const v = __vr(), p = __game().player, h = v.horse;
+ h.updateWorldMatrix(true, true);
+ const bounds = new T.Box3().setFromObject(h);
+ const eye = new T.Vector3().setFromMatrixPosition(v.camera.matrixWorld);
+ const down = new T.Raycaster(eye, new T.Vector3(0, -1, 0));
+ const forward = new T.Vector3(0, 0, 1).transformDirection(h.matrixWorld);
+ return {
+  legs: h.children.filter(c => Number.isFinite(c.userData.gaitPhase)).length,
+  size: bounds.getSize(new T.Vector3()).toArray(),
+  saddleBelow: down.intersectObject(h, true).length > 0,
+  anchored: Math.hypot(h.getWorldPosition(new T.Vector3()).x-p.pos.x, h.getWorldPosition(new T.Vector3()).z-p.pos.z) < 1e-6,
+  forward: forward.dot(new T.Vector3(-Math.sin(p.horseHeading),0,-Math.cos(p.horseHeading))) > .999,
+  depth: h.children.every(c => !c.isMesh || (c.material.depthTest && c.material.depthWrite)),
+ };
+});
+assert.equal(mountGeometry.legs, 4);
+assert.ok(mountGeometry.size[1] > 2 && mountGeometry.size[2] > 2);
+assert.ok(mountGeometry.saddleBelow && mountGeometry.anchored && mountGeometry.forward && mountGeometry.depth);
 await page.screenshot({path:'/tmp/nerf-vr-red-rock-dual-stereo.png'});
+const originalHead = await page.evaluate(async () => {
+ const T = await import('three');
+ const {x,y,z,w} = xrDevice.quaternion;
+ const original = [x,y,z,w];
+ const q = new T.Quaternion().setFromEuler(new T.Euler(-0.85, __game().player.horseHeading - __vr().rig.rotation.y, 0, 'YXZ'));
+ xrDevice.quaternion.set(q.x,q.y,q.z,q.w);
+ return original;
+});
+await page.waitForTimeout(250);
+await page.screenshot({path:'/tmp/nerf-vr-horse-look-down.png'});
+await page.evaluate(q => xrDevice.quaternion.set(...q), originalHead);
+await page.waitForTimeout(150);
+
 await button('left','trigger',1);
 assert.equal(await page.evaluate(()=>__game().player.leftRecoil>0&&__game().player.recoil===0),true);
 await button('left','trigger',0);

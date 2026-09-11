@@ -1,3 +1,4 @@
+import { buildHorseVisual } from './horse-visual.js';
 import * as THREE from 'three';
 import { VRUI } from './vr-ui.js';
 import { buildBlaster, WEAPONS, updateWeaponWarmupVisual } from './weapons.js';
@@ -41,6 +42,7 @@ export class VRControls {
     this.leftBlaster = buildBlaster('blaster');
     this.leftGun.add(this.leftBlaster);
     this.horse = null;
+    this.horseLegs = [];
     this.horseSource = null;
     this.grappleGun = new THREE.Group();
     this.grappleGun.position.set(0, -0.025, -0.12);
@@ -147,6 +149,7 @@ export class VRControls {
     this.leftGun.removeFromParent();
     this.horse?.removeFromParent();
     this.horse = null;
+    this.horseLegs = [];
     this.horseSource = null;
     this.grappleMuzzle = null;
     this.podium = null;
@@ -203,27 +206,25 @@ export class VRControls {
     }
     if (!this.horse || this.horseSource !== source) {
       this.horse?.removeFromParent();
-      this.horse = source.clone(true);
+      const { horse, horseLegs } = buildHorseVisual();
+      this.horse = horse;
+      this.horseLegs = horseLegs;
       this.horseSource = source;
-      this.horse.scale.setScalar(0.18);
-      this.horse.traverse(child => {
-        if (!child.isMesh) return;
-        child.material = child.material.clone();
-        child.material.depthTest = false;
-        child.material.depthWrite = false;
-        child.frustumCulled = false;
-        child.renderOrder = 9000;
-      });
       this.rig.add(this.horse);
     }
-    this.horse.position.copy(this.center).add(source.position);
-    this.horse.position.y -= 0.1;
-    this.horse.position.z -= 1.4;
-    this.horse.rotation.set(
-      source.rotation.x,
-      Math.atan2(Math.sin(player.horseHeading - this.heading), Math.cos(player.horseHeading - this.heading)),
-      source.rotation.z,
-    );
+    const scale = player.world.characterVisualScale?.(player) || 1;
+    this.horse.scale.setScalar(scale);
+    // The rig origin is at the calibrated eye. Put the complete mount at the
+    // player's feet so leaning/looking down reveals the saddle, torso and legs.
+    this.horse.position.copy(this.center);
+    this.horse.position.y -= player.eyeHeight * scale;
+    this.horse.rotation.set(0, player.horseHeading - this.heading + Math.PI, 0);
+    const pace = Math.min(1, Math.hypot(player.vel.x, player.vel.z) / 5);
+    const gait = performance.now() * (player.galloping ? 0.021 : 0.013);
+    for (const leg of this.horseLegs) {
+      leg.rotation.x = Math.sin(gait + leg.userData.gaitPhase) * 0.48 * pace;
+    }
+    this.horse.position.y += Math.abs(Math.sin(gait * 2)) * 0.035 * pace * scale;
     this.horse.visible = player.alive && !this.paused && !game.over;
   }
 
