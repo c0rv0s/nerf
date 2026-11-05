@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Atrium · Paintover</title>
+<link rel="icon" href="../../../assets/favicon.ico">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#132e36;color:#f4eadd;font:16px/1.5 system-ui,sans-serif}main{max-width:1440px;margin:auto;padding:32px 24px}h1{font-size:clamp(28px,4vw,48px);line-height:1.1;margin:0 0 12px}p{max-width:850px;color:#b3ccc7}a{color:#f0c679}nav{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}button{font:inherit;background:#302539;border:1px solid #68526d;color:inherit;padding:10px 18px;border-radius:6px;cursor:pointer}button[aria-pressed=true]{background:#e1b874;color:#261b28;border-color:#e1b874}figure{margin:0}img{display:block;width:100%;height:auto}.comparison{position:relative;overflow:hidden;border-radius:8px}.comparison img{aspect-ratio:5/3;object-fit:cover}.after{position:absolute;inset:0;clip-path:inset(0 50% 0 0)}.line{position:absolute;left:50%;top:0;bottom:0;width:2px;background:#fff}.labels{display:flex;justify-content:space-between;gap:12px;padding:8px 0;color:#b3ccc7;font-size:14px}input{width:100%;accent-color:#e1b874}h2{font-size:24px;margin:40px 0 12px}.concepts{display:grid;grid-template-columns:1fr 1fr;gap:20px}.concepts img{border-radius:6px}figcaption{color:#b3ccc7;font-size:14px;margin-top:8px}@media(max-width:700px){main{padding:24px 14px}.concepts{grid-template-columns:1fr}}
+</style>
+<main>
+<h1>The Atrium</h1>
+<p>The arcade at dusk. Compare the entrance promenade, fountain and gate bays from the same three positions in the playable lobby.</p>
+<nav aria-label="Camera position"><button data-view="arrival" aria-pressed="true">Arrival</button><button data-view="fountain" aria-pressed="false">Fountain</button><button data-view="gates" aria-pressed="false">Gate bays</button></nav>
+<div class="comparison"><img id="before" src="arrival-before.jpg" alt="Original arrival promenade"><img id="after" class="after" src="arrival-after.jpg" alt="Revised arrival promenade"><span class="line"></span></div>
+<div class="labels"><span>Revised game</span><span>Original game</span></div>
+<label for="wipe">Drag to compare</label><input id="wipe" type="range" min="0" max="100" value="50">
+<h2>The paintover</h2>
+<figure><a href="target.webp"><img src="target.webp" alt="Arcade conservatory concept with stained glass, brass arches and lapis terrazzo"></a><figcaption>Generated from the original arrival promenade screenshot. The slider above shows the playable result.</figcaption></figure>
+<p><a href="../../../">Enter the Atrium</a> · <a href="../reef-paintover/index.html">Sunken Reef study</a> · <a href="../range-paintover/index.html">Red Rock Range study</a></p>
+</main>
+<script>
+const wipe=document.querySelector('#wipe');
+wipe.addEventListener('input',()=>{document.querySelector('.after').style.clipPath=`inset(0 ${100-wipe.value}% 0 0)`;document.querySelector('.line').style.left=`${wipe.value}%`});
+for(const button of document.querySelectorAll('[data-view]'))button.addEventListener('click',()=>{for(const b of document.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b===button));for(const stage of ['before','after']){const img=document.getElementById(stage);img.src=`${button.dataset.view}-${stage}.jpg`;img.alt=`${stage==='before'?'Original':'Implemented'} ${button.textContent}`;}});
+</script>
+</html>

@@ -1,0 +1,9 @@
+# Imagegen prompts
+
+## Approved paintover
+
+Paint over this exact game screenshot of Mycelium Grove. Final user art direction: CLEARLY NIGHTTIME, but a welcoming, magical enchanted forest, not spooky and not daytime or dawn. Deep ultramarine-blue star-filled sky and visible silver moon. In the play space use luminous medium-value blue-violet shadow colors, with mossy jade rocks, readable purple-blue and honey bark, and pockets of warm amber light from the softly glowing cream-apricot gills of giant lavender and teal mushrooms. Create a few draping leafy tendrils and tiny wildflowers at the edges of the existing tree balconies and near pond shore, golden firefly points, a clear luminous jade pond and silvery ribbon waterfall. The trunks, stones and routes should all remain legible at thumbnail size. No sun, sunlight shafts, pink sunrise or foggy washed-out highlights. No underexposed blacks, horror aesthetic or neon wash. Cozy storybook forest at night. Keep the exact camera, existing silhouettes, clearings, combat routes and entrance behind the waterfall. Practical, painterly low-poly video game target. No HUD, lettering or characters.
+
+## Painted bark albedo
+
+Use case: stylized-concept. Runtime videogame material texture for the tree trunks and bridges in the attached enchanted woodland concept (style reference only). Generate a square, seamless tileable albedo texture of golden warm ochre cedar bark. Full bleed orthographic macro surface with organic interlocking long vertical bark ridges, honey-colored crackled edges, warm umber creases, directional faceted gouache brush textures; avoid busy high contrast stripes. Predominantly LIGHT golden wood, not dark brown; small restrained specks of moss filling some deep creases. No tree outline, lighting direction, ground, sky, text or surrounding scene. Even surface lighting, usable at repeated UVs, seamless all four edges.

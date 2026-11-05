@@ -2,7 +2,7 @@
 
 A browser tribute to *Nerf Arena Blast* (1999): first-person team deathmatch
 against NPC bots, built with Three.js. Solo play is still plain ES modules
-with Three.js loaded from a CDN; multiplayer runs through the included Node
+with Three.js r187 loaded from a CDN (WebGL 2 required); multiplayer runs through the included Node
 WebSocket server.
 
 Live: https://nerf-arena-blast-revival.up.railway.app/

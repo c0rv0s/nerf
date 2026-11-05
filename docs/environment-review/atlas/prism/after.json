@@ -1,0 +1,15 @@
+{
+  "report": {
+    "checks": 235,
+    "failures": [],
+    "layout": {
+      "colliders": 25,
+      "ramps": 0,
+      "ffa": 132,
+      "waypoints": 54,
+      "pickups": 27
+    },
+    "routes": "b61987f1a0d4a82268e092f13460600eae5ea2002c0885778c5aedc0a8553bee"
+  },
+  "errors": []
+}

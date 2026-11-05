@@ -1,0 +1,182 @@
+{
+  "revision": 187,
+  "rows": [
+    {
+      "map": "mycelium",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 0,
+        "maxDepthLane": 0
+      }
+    },
+    {
+      "map": "fortress",
+      "quality": "low",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 20,
+        "maxDepthLane": 1
+      }
+    },
+    {
+      "map": "arena",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 307,
+        "maxDepthLane": 2
+      }
+    },
+    {
+      "map": "canopy",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 32,
+        "maxDepthLane": 1
+      }
+    },
+    {
+      "map": "olympus",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 47,
+        "maxDepthLane": 2
+      }
+    },
+    {
+      "map": "reef",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 8,
+        "maxDepthLane": 1
+      }
+    },
+    {
+      "map": "tidebreaker",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 8,
+        "maxDepthLane": 2
+      }
+    },
+    {
+      "map": "bloom",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 0,
+        "maxDepthLane": 0
+      }
+    },
+    {
+      "map": "orrery",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 0,
+        "maxDepthLane": 0
+      }
+    },
+    {
+      "map": "solar",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 93,
+        "maxDepthLane": 2
+      }
+    },
+    {
+      "map": "city",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 25,
+        "maxDepthLane": 2
+      }
+    },
+    {
+      "map": "sanctum",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 42,
+        "maxDepthLane": 1
+      }
+    },
+    {
+      "map": "oldwest",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 7,
+        "maxDepthLane": 1
+      }
+    },
+    {
+      "map": "asteroids",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 0,
+        "maxDepthLane": 0
+      }
+    },
+    {
+      "map": "prism",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 24,
+        "maxDepthLane": 2
+      }
+    },
+    {
+      "map": "hall",
+      "quality": "high",
+      "positionsFinite": true,
+      "visual": {
+        "unresolved": 0,
+        "wallFeatureOverlaps": 0,
+        "resolvedConflicts": 17,
+        "maxDepthLane": 2
+      }
+    }
+  ],
+  "errors": []
+}

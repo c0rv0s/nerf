@@ -5,7 +5,7 @@ import {
   hasLOS, pointHitsWorld, rand, rayHitsCylinderShell, rayHitsEllipsoid, rayHitsTriangleMesh,
   shellInnerNormal,
 } from './engine.js';
-import { aiTex } from './maps.js';
+import { aiTex, onTextureReady } from './maps.js';
 import { sfx } from './audio.js';
 import { HORSE_HEIGHT_DELTA } from './mount.js';
 
@@ -94,16 +94,23 @@ export function nextLoadedWeaponAfter(currentId, owned = {}, ammo = {}) {
    (plastic shell with baked vertex colors + one emissive "energy" mesh). */
 const _blasterMats = {};
 const _blasterModels = {};
+// Models cloned before the texture loads already share this material.
+function applyWeaponTexture(material, name, repeat, normalStrength) {
+  onTextureReady(name, () => {
+    const tex = aiTex(name, repeat, repeat);
+    if (tex.normalScale && normalStrength) tex.normalScale.set(...normalStrength);
+    material.setValues(tex);
+    material.needsUpdate = true;
+  });
+}
 function blasterMats(color, textureName = null) {
   const bodyKey = textureName ? `body-${textureName}` : 'body';
   if (!_blasterMats[bodyKey]) {
-    const tex = aiTex(textureName || 'plastic', textureName ? 0.16 : 0.6, textureName ? 0.16 : 0.6);
-    if (textureName && tex.normalScale) tex.normalScale.set(0.06, 0.28);
     _blasterMats[bodyKey] = new THREE.MeshStandardMaterial({
       color: 0xffffff, vertexColors: true, roughness: 0.45, metalness: 0.05,
       envMapIntensity: textureName ? 0.85 : 0.5,
-      ...tex,
     });
+    applyWeaponTexture(_blasterMats[bodyKey], textureName || 'plastic', textureName ? .16 : .6, textureName ? [.06, .28] : null);
   }
   const key = 'e' + color;
   if (!_blasterMats[key]) {
@@ -121,8 +128,6 @@ export function blasterSkin(kind) {
   if (!_blasterMats[key]) {
     const gold = kind === 'gold';
     const c = gold ? 0xffc62e : 0xcfe7ff;
-    const tex = aiTex(gold ? 'power-gold' : 'power-silver', 0.2, 0.2);
-    if (tex.normalScale) tex.normalScale.set(gold ? 0.18 : 0.08, gold ? 0.08 : 0.18);
     _blasterMats[key] = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       metalness: gold ? 0.78 : 0.88,
@@ -130,8 +135,8 @@ export function blasterSkin(kind) {
       envMapIntensity: 1.35,
       emissive: c,
       emissiveIntensity: gold ? 0.1 : 0.075,
-      ...tex,
     });
+    applyWeaponTexture(_blasterMats[key], gold ? 'power-gold' : 'power-silver', .2, gold ? [.18, .08] : [.08, .18]);
     _blasterMats[key].userData.baseEmissive = gold ? 0.1 : 0.075;
   }
   return _blasterMats[key];

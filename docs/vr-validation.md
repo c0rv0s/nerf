@@ -1,7 +1,7 @@
 # VR match-loading regression
 
 The arena transition previously called `renderer.setAnimationLoop(tick)` again.
-In the pinned Three.js r160 renderer, that restarts the page animation loop even
+In the former Three.js r160 renderer, that restarts the page animation loop even
 while a headset session is active. Both page and XR callbacks then stepped the
 game. Predicted XR timestamps alternating with page timestamps could repeatedly
 hit the 50 ms simulation cap, accelerating matches and doubling render work.

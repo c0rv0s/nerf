@@ -1,0 +1,111 @@
+{
+  "visual": {
+    "unresolved": 0,
+    "wallFeatureOverlaps": 0,
+    "resolvedConflicts": 20,
+    "maxDepthLane": 1
+  },
+  "perf": {
+    "vr": false,
+    "shadows": true,
+    "targetFps": 90,
+    "hardFloorFps": 80,
+    "sampledFps": null,
+    "p95FrameMs": null,
+    "p95WorkMs": null,
+    "samples": 0,
+    "highRefreshCadence": false,
+    "pixelRatio": 1,
+    "adaptiveRenderScale": 1,
+    "detectedAutoScale": 1,
+    "visualTier": "high",
+    "graphicsMode": "high",
+    "autoGraphicsTestStage": null,
+    "autoQualityLocked": false
+  },
+  "bots": [
+    {
+      "alive": false,
+      "position": [
+        56.45872063623979,
+        -9.540979117872439e-18,
+        11.94574257429801
+      ]
+    },
+    {
+      "alive": true,
+      "position": [
+        60.3078419893602,
+        7.806255641895632e-18,
+        -23.95663385412328
+      ]
+    },
+    {
+      "alive": true,
+      "position": [
+        76.55,
+        0.04928000000000007,
+        -2.1787764328048906
+      ]
+    },
+    {
+      "alive": true,
+      "position": [
+        -4.379523861803998,
+        2.6020852139652106e-17,
+        -26.488302980423274
+      ]
+    },
+    {
+      "alive": true,
+      "position": [
+        -69.26725973369876,
+        2.6020852139652106e-17,
+        26.010643316298147
+      ]
+    },
+    {
+      "alive": true,
+      "position": [
+        0,
+        -0.01999999999999996,
+        3.9433948307631894
+      ]
+    },
+    {
+      "alive": true,
+      "position": [
+        42.17401773857727,
+        7.0752,
+        4.303424210289045
+      ]
+    }
+  ],
+  "low": {
+    "perf": {
+      "vr": false,
+      "shadows": false,
+      "targetFps": 90,
+      "hardFloorFps": 80,
+      "sampledFps": null,
+      "p95FrameMs": null,
+      "p95WorkMs": null,
+      "samples": 0,
+      "highRefreshCadence": false,
+      "pixelRatio": 1,
+      "adaptiveRenderScale": 1,
+      "detectedAutoScale": 1,
+      "visualTier": "low",
+      "graphicsMode": "low",
+      "autoGraphicsTestStage": null,
+      "autoQualityLocked": false
+    },
+    "visual": {
+      "unresolved": 0,
+      "wallFeatureOverlaps": 0,
+      "resolvedConflicts": 20,
+      "maxDepthLane": 1
+    }
+  },
+  "errors": []
+}

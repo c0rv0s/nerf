@@ -1,3 +1,4 @@
+import { atlasTexture } from './atlas-finishes.js';
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { EnvironmentBatch, ribbonSolid } from "./environment-design.js";
@@ -214,8 +215,8 @@ export function buildOrrery(scene, kit) {
       map: floorMap,
       roughness: 0.8,
     }),
-    dark: mat(0x183841, { roughness: 0.75, metalness: 0.18 }),
-    brass: mat(0xb79750, { roughness: 0.39, metalness: 0.65 }),
+    dark: mat(0x152d48, { roughness: 0.75, metalness: 0.18 }),
+    brass: mat(0xd2a95e, { roughness: 0.39, metalness: 0.65 }),
     copper: mat(0x75553d, { roughness: 0.62, metalness: 0.4 }),
     book: mat(0x294a54, { roughness: 0.93 }),
     red: mat(0x8b5348, { roughness: 0.9 }),
@@ -430,7 +431,7 @@ export function buildOrrery(scene, kit) {
     new THREE.CircleGeometry(2.3, 48),
     new THREE.MeshBasicMaterial({
       color: 0xcde8c9,
-      map: aiTex("orrery-celestial").map,
+      map: atlasTexture("orrery"),
     }),
   );
   chart.rotation.x = -Math.PI / 2;
@@ -516,6 +517,7 @@ export function buildOrrery(scene, kit) {
   band(5.8, 31.5, 0.65, brass);
   band(5.8, 31.6, 0.16, light);
   // Four enclosed gallery bays with vaulted arcades and open axial doorways.
+  const atlasEnamel = new THREE.MeshBasicMaterial({ map: atlasTexture('orrery'), side: THREE.DoubleSide });
   const pavilionNames = [
     "MERIDIAN",
     "SOUTH GALLERY",
@@ -529,6 +531,14 @@ export function buildOrrery(scene, kit) {
       floor,
       "orrery-pavilion-roof",
     );
+    const soffit = annulus(43.05,59.95,9.184,.012,a-.299,a+.299,36);
+    const position = soffit.attributes.position, uv = soffit.attributes.uv;
+    for (let i=0;i<position.count;i++) {
+      const x=position.getX(i),z=position.getZ(i);
+      const angle=Math.atan2(z,x)-a;
+      uv.setXY(i, (Math.atan2(Math.sin(angle),Math.cos(angle))+.3)*3.34, (Math.hypot(x,z)-43)/17);
+    }
+    batch.add(soffit,atlasEnamel);
     // Inlaid soffit ribs and warm lanterns give the sheltered galleries a ceiling.
     for (const r of [45, 51.5, 58])
       band(r, 9.17, 0.1, warm, a - 0.28, a + 0.28);

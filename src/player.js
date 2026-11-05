@@ -1,3 +1,4 @@
+import { rangeHorse } from './red-rock-art.js';
 // First-person player: pointer-lock look, WASD movement, firing, weapon switching,
 // and a simple viewmodel blaster with recoil.
 import * as THREE from 'three';
@@ -122,28 +123,7 @@ export class Player {
     this.camera.add(this.dualBlasterViewmodel);
 
     if (this.world.mounted) {
-      const horse = new THREE.Group();
-      const coatTexture = aiTex('horse-coat', 1.7, 1.7);
-      const coat = new THREE.MeshStandardMaterial({
-        color: coatTexture.map ? 0xffffff : 0xa6532b,
-        roughness: 0.88, ...coatTexture,
-      });
-      const mane = new THREE.MeshStandardMaterial({ color: 0x24170f, roughness: 0.94 });
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.55, 1.05), coat);
-      head.position.set(0, -0.62, -1.25);
-      head.rotation.x = -0.12;
-      horse.add(head);
-      for (const side of [-1, 1]) {
-        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.42, 6), coat);
-        ear.position.set(side * 0.16, -0.24, -1.53);
-        ear.rotation.x = -0.18;
-        horse.add(ear);
-      }
-      const forelock = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 6), mane);
-      forelock.position.set(0, -0.34, -1.54);
-      forelock.rotation.x = Math.PI * 0.42;
-      horse.add(forelock);
-      horse.traverse(child => { if (child.isMesh) child.castShadow = true; });
+      const horse = rangeHorse(aiTex('horse-coat',1.7,1.7));
       this.horseViewmodel = horse;
       this.camera.add(horse);
     }

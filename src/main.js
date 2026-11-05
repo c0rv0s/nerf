@@ -467,7 +467,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio,
   initialGraphicsPreset?.pixelRatioCap ?? performanceProfile.pixelRatioCap * initialAutoGraphicsScale));
 renderer.shadowMap.enabled = initialGraphicsPreset?.shadows ?? performanceProfile.shadows;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.02;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1171,7 +1171,8 @@ function updateUnderwaterFx(dt, forceClear = false) {
   G.underwaterMix = forceClear ? 0 : THREE.MathUtils.damp(G.underwaterMix || 0, target, 10, dt);
   const mix = G.underwaterMix;
   const active = mix > 0.01;
-  setStyle(underwaterFx, 'opacity', active ? String(0.78 * mix) : '0');
+  const diveFog = G.world?.diveFog;
+  setStyle(underwaterFx, 'opacity', active ? String((diveFog?.overlay ?? .78) * mix) : '0');
 
   const scene = G.scene;
   if (!scene) return;
@@ -1204,11 +1205,11 @@ function updateUnderwaterFx(dt, forceClear = false) {
 
   if (active) {
     if (!scene.fog) scene.fog = new THREE.Fog(0x0a7aa0, 8, 70);
-    scene.fog.color.set(0x0a7aa0);
-    scene.fog.near = THREE.MathUtils.lerp(G.baseFog?.near ?? 120, 5, mix);
-    scene.fog.far = THREE.MathUtils.lerp(G.baseFog?.far ?? 340, 42, mix);
+    scene.fog.color.set(diveFog?.color ?? 0x0a7aa0);
+    scene.fog.near = THREE.MathUtils.lerp(G.baseFog?.near ?? 120, diveFog?.near ?? 5, mix);
+    scene.fog.far = THREE.MathUtils.lerp(G.baseFog?.far ?? 340, diveFog?.far ?? 42, mix);
     if (G.baseBackground && scene.background?.isColor) {
-      scene.background.copy(G.baseBackground).lerp(new THREE.Color(0x075d78), mix);
+      scene.background.copy(G.baseBackground).lerp(new THREE.Color(diveFog?.color ?? 0x075d78), mix);
     }
     G.underwaterFogActive = true;
   }

@@ -3,8 +3,14 @@ import { Player } from "../src/player.js";
 import { pointHitsWorld, moveCharacter } from "../src/engine.js";
 import { orreryPose } from "../src/orrery-motion.js";
 const V = (...p) => new THREE.Vector3(...p);
+function meshesOfColor(scene,color) {
+  const result=[];
+  scene.traverse(o=>{ if(o.isMesh && o.material.color?.getHex()===color) result.push(o); });
+  return result;
+}
 export function auditOrreryGallerySlab(scene) {
   scene.updateMatrixWorld(true);
+  const floor = meshesOfColor(scene,0x687f7a);
   const probes = [
     // Opening walls, including both notches beside the ramp landings.
     [[0, 9.4, 0], [1, 0, 0], 12],
@@ -23,8 +29,7 @@ export function auditOrreryGallerySlab(scene) {
   const failures = [];
   for (const [origin, direction, distance] of probes) {
     const ray = new THREE.Raycaster(V(...origin), V(...direction), 0, distance + 0.05);
-    const hit = ray.intersectObjects(scene.children, true)
-      .find(h => h.object.material.color?.getHex() === 0x687f7a);
+    const hit = ray.intersectObjects(floor, false)[0];
     if (!hit || Math.abs(hit.distance - distance) > 0.01)
       failures.push({ origin, direction, expected: distance, actual: hit?.distance });
   }
@@ -35,6 +40,7 @@ export function auditOrreryGallerySlab(scene) {
 export function auditOrreryStairFaces(scene) {
   scene.updateMatrixWorld(true);
   const failures = [];
+  const stairs = meshesOfColor(scene,0xc5cabe);
   let checks = 0;
   for (let k = 0; k < 4; k++) {
     for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
@@ -47,8 +53,7 @@ export function auditOrreryStairFaces(scene) {
             V(radius * Math.cos(angle), y - direction * 0.2, radius * Math.sin(angle)),
             V(0, direction, 0), 0, 0.4,
           );
-          const hits = ray.intersectObjects(scene.children, true);
-          const stone = hits.find(h => h.object.material.color?.getHex() === 0xc5cabe);
+          const stone = ray.intersectObjects(stairs, false)[0];
           checks++;
           if (!stone || Math.abs(stone.point.y - y) > 0.025)
             failures.push({ stair: k, t, radius, underside });

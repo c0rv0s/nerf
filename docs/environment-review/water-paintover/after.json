@@ -1,0 +1,149 @@
+{
+  "mycelium": {
+    "layoutHash": "977c94b553fa6e7397955c7ae888bdac4c7e7a0c968052e24c66f571b61f9111",
+    "routeHash": "22b061cea3cb9672de33b55d26440cb740add0295bfbbcbe6d4d9ab04eb23cca",
+    "stats": {
+      "map": "mycelium",
+      "calls": 807,
+      "triangles": 897014,
+      "colliders": 1080,
+      "issues": 0,
+      "meshes": 810
+    },
+    "errors": [],
+    "audit": {
+      "map": "mycelium",
+      "transit": null,
+      "checks": 3966,
+      "failures": [],
+      "rayChecks": 2826,
+      "candidates": 113520,
+      "exhaustive": 642168,
+      "candidateReductionPercent": 82,
+      "navigationComponents": [
+        361
+      ],
+      "blockedSpawns": []
+    }
+  },
+  "canopy": {
+    "layoutHash": "1d7bb6e9edc8cc06b64b1f3be4d6d29837f06f484d64cc11c77fe317a81a84e5",
+    "routeHash": "e9a259201f57ada20f6ebc1c20841cba82051a9c5a40b8fda514d3736f5ccc31",
+    "stats": {
+      "map": "canopy",
+      "calls": 366,
+      "triangles": 587339,
+      "colliders": 168,
+      "issues": 0,
+      "meshes": 341
+    },
+    "errors": [],
+    "audit": {
+      "map": "canopy",
+      "transit": null,
+      "checks": 2243,
+      "failures": [],
+      "rayChecks": 954,
+      "candidates": 43733,
+      "exhaustive": 382392,
+      "candidateReductionPercent": 89,
+      "navigationComponents": [
+        419
+      ],
+      "blockedSpawns": []
+    }
+  },
+  "fortress": {
+    "layoutHash": "7455f86f88d308ee2f2e7dc43cf44912b206fa7190031effb73f2ef27156359f",
+    "routeHash": "821b697cd088770239fc05cb1afc858cf75b51066b211a8d45a6c09b7851d9ef",
+    "stats": {
+      "map": "fortress",
+      "calls": 229,
+      "triangles": 12362,
+      "colliders": 174,
+      "issues": 0,
+      "meshes": 178
+    },
+    "errors": [],
+    "audit": {
+      "map": "fortress",
+      "transit": null,
+      "checks": 1046,
+      "failures": [],
+      "rayChecks": 0,
+      "candidates": 0,
+      "exhaustive": 0,
+      "candidateReductionPercent": null,
+      "navigationComponents": [
+        182
+      ],
+      "blockedSpawns": []
+    }
+  },
+  "arena": {
+    "layoutHash": "c7defcd80661bcee7071f94835e7457bf69c077923a62535f6c7fce15bd1eaa8",
+    "routeHash": "a63da9948203be732769a356b86b271f9e5f7e77da6284097aa5c06ec145689c",
+    "stats": {
+      "map": "arena",
+      "calls": 186,
+      "triangles": 19756,
+      "colliders": 211,
+      "issues": 0,
+      "meshes": 225
+    },
+    "errors": []
+  },
+  "olympus": {
+    "layoutHash": "a1bad204ee5d6108bc7a4764c1b1e283d058618fd29a4e48b295addc04c337fb",
+    "routeHash": "894bd83044e5bbf4a1bd9a872aca9709b46429fbe65ee797cc2ff93bc5eeccfe",
+    "stats": {
+      "map": "olympus",
+      "calls": 333,
+      "triangles": 89232,
+      "colliders": 466,
+      "issues": 0,
+      "meshes": 383
+    },
+    "errors": [],
+    "audit": {
+      "map": "olympus",
+      "transit": null,
+      "checks": 2966,
+      "failures": [],
+      "rayChecks": 1404,
+      "candidates": 43403,
+      "exhaustive": 261468,
+      "candidateReductionPercent": 83,
+      "navigationComponents": [
+        167
+      ],
+      "blockedSpawns": []
+    }
+  },
+  "reef": {
+    "layoutHash": "5147ad09600cf02cb9e79aea6d36d9641a69b15a90314715264e82df875dcc86",
+    "routeHash": "ec899836c705ac82c8b3497562e60ab91523dc5a26f1d3d41e06726ea826ffd9",
+    "stats": {
+      "map": "reef",
+      "calls": 337,
+      "triangles": 157641,
+      "colliders": 231,
+      "issues": 0,
+      "meshes": 232
+    },
+    "errors": []
+  },
+  "atrium": {
+    "layoutHash": "5aa27983df3556216852a82980dda230880118892b5eac640a6d6f0ec4dcb078",
+    "routeHash": "d6c9f8cef0a5ca52549ae6059b372f9cf780efe86591e6a0bee99d2e1736584f",
+    "stats": {
+      "map": "atrium",
+      "calls": 378,
+      "triangles": 24402,
+      "colliders": 328,
+      "issues": 0,
+      "meshes": 491
+    },
+    "errors": []
+  }
+}

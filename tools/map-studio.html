@@ -5,6 +5,7 @@
     <base href="/" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Nerf map studio</title>
+    <link rel="icon" href="/assets/favicon.ico" />
     <style>
       body {
         margin: 0;
@@ -51,8 +52,8 @@
     <script type="importmap">
       {
         "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+          "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
         }
       }
     </script>
@@ -89,7 +90,7 @@
       renderer.setPixelRatio(1);
       renderer.setSize(innerWidth, innerHeight);
       renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       document.body.append(renderer.domElement);
       const camera = new THREE.PerspectiveCamera(

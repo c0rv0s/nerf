@@ -314,7 +314,17 @@ export function auditEnvironment(scene, world, mapId) {
   )
     check(components.length === 1, "Disconnected environment navigation");
   const blockedSpawns = world.spawns.ffa
-    .filter((p) => pointHitsWorld(p.clone().add(V(0, 1, 0)), 0.35, world))
+    .filter((p) => {
+      const up = V(0, 1, 0);
+      if (world.escher) {
+        // Each spawn lies on the inside of one of the six cube faces.
+        const { cx, cy, cz } = world.cube;
+        const offset = p.clone().sub(V(cx, cy, cz));
+        const axis = ["x", "y", "z"].reduce((a, b) => Math.abs(offset[a]) > Math.abs(offset[b]) ? a : b);
+        up.set(0, 0, 0)[axis] = -Math.sign(offset[axis]);
+      }
+      return pointHitsWorld(p.clone().add(up), 0.35, world);
+    })
     .map((p) => p.toArray());
   if (mapId !== "reef") check(blockedSpawns.length === 0, "Spawn clearance");
   return {
